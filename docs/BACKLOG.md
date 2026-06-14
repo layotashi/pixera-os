@@ -37,6 +37,37 @@
 - `[P3]` **kernel.js の未使用 `frameCount` 変数の削除**
   — `frameCount` が宣言・インクリメントされているが、どこからも参照されていない。
 
+- ~~`[P0]` **Pixel Grid / Glow / Noise の撤廃 (描画パイプライン簡素化)**~~ ✅ 実装済み (本コミット)
+  — 撤廃の経緯と判断根拠を記録として残す。将来「なぜ無いのか」が分かるように。
+
+  **撤廃した機能**:
+  - **Pixel Grid** (LCD ドット/ギャップ構造の 3x 拡大) ─ ジオメトリ層全体
+  - **Glow** (gap 位置を隣接ピクセル色で着色) ─ Pixel Grid に依存していたため自動的に意味喪失
+  - **Noise** (RGB ランダムノイズ) ─ 毎フレーム重い処理だがインパクトが薄かった
+
+  **残した機能**: Vignette (周辺減光) と Diagonal scanline (流動する CRT 走査線)。
+  この 2 つは CRT 系の表現として一貫しており、視覚的にも機能している。
+
+  **撤廃理由 (技術)**:
+  - Canvas internal = `VRAM × CELL(=3)`、CSS = `VRAM × autoScale` という二重スケーリングで、
+    ブラウザ補間倍率 = `autoScale / 3` が整数になるのは autoScale ∈ {3, 6, 9...} のときだけ。
+    それ以外 (1, 2, 4, 5...) は分数比でブラウザ側補間が走り、ぼやけ・モアレが発生していた。
+  - 当初の方針 (2/4/8 のべき乗で SNS 投稿向けクリーン出力) と矛盾していた。
+  - CELL 撤廃で Canvas internal = VRAM になり、CSS 倍率 = autoScale (常に整数) で完全クリーン。
+
+  **撤廃理由 (デザイン)**:
+  - PRODUCT_BRIEF §1 / §2.1 の「2 色 1-bit による本質的なデザイン」は LCD ドットマトリクスの
+    再現を要求していない。Pixel Grid はむしろ §5.1「美しい再解釈 over 正確なエミュレーション」と
+    緊張していた (実機 LCD の物理構造を模倣する方向だった)。
+  - LCD 系 (Pixel Grid) と CRT 系 (Diagonal scanline / Vignette) が物理的に成立しない
+    組合せで併存していた。LCD 側を撤廃することで、Vignette / Diagonal の CRT 系で
+    内部仕様が一貫した。
+  - Display Profile (LCD/CRT/PLASMA/PAPER の切替) という分類概念自体が不要になった。
+
+  **メモ**: 「Pixel Grid マスタートグル」(コミット 70117e3) と「Display Profile P1 エントリ」
+  (コミット 160c70b) は、本撤廃に伴い両方とも削除した。トグル機能を一度入れた後で
+  全削除する判断に至った経緯は本エントリで保存する。
+
 ---
 
 ## Window Manager — ウィンドウマネージャ
@@ -293,46 +324,6 @@
     VRAM ベースの描画パイプラインとの整合性を考慮する必要がある
   - Settings UI にスライダー (または NumberBox) を配置
     レトロ OS 的な「モニター調整」の雰囲気が出せると世界観にも合致する。
-
-- `[P1]` **Display Profile の導入と表示効果の分類整理**
-  — 現状の DISPLAY_TUNING は LCD 由来 (Pixel Grid) と CRT 由来
-  (Diagonal scanline / Vignette / Glow) のエフェクトを「レトロ風」という
-  漠然としたまとまりで混在させており、物理的に成立しない組合せが
-  デフォルトで発火している (例: Game Boy LCD パレット + CRT 走査線)。
-  パレット側は `origin` フィールドで既に表示テクノロジー
-  (CRT 蛍光体 / LCD / Plasma / 紙 等) を暗に宣言しているが、
-  エフェクト側には対応する分類が無い。
-
-  PRODUCT_BRIEF §1「空想のマシン」は不整合を許す前提ではあるが、
-  §5.3「美しさの妥協なし」と緊張する。「空想」と「ご都合主義」は別物であり、
-  デフォルト状態の物理的整合性を整える価値がある。
-
-  **改修方針**:
-  - DISPLAY_TUNING の最上段に **Display Profile** セレクタを追加
-    (LCD / CRT / PLASMA / PAPER / CUSTOM)
-  - プロファイル切替で対応するエフェクト一式が一括 ON/OFF + 推奨初期値が適用される
-  - UI はプロファイル系統ごとにセクション見出しを付ける
-    (`LCD EFFECTS` / `CRT EFFECTS` / `UNIVERSAL`)
-  - パレット選択時に推奨プロファイルをヒント表示する
-    (強制はしない — PRODUCT_BRIEF §5.1)
-
-  **プロファイル ↔ パレット対応案**:
-  - **LCD**: Pixel Grid ON, Glow ON (微), 他 OFF → dmg, pocket_lcd, blue_lcd, el_teal
-  - **CRT**: Pixel Grid OFF, Glow ON, Diagonal ON, Vignette ON, Noise 微 → p1_green, p3_amber, p4_white, p7_blue, macintosh, vectrex
-  - **PLASMA**: Pixel Grid OFF, Glow 強, 他 OFF → plato
-  - **PAPER**: 全エフェクト OFF (または紙質感ノイズのみ) → blueprint, thermal, e_ink
-  - **CUSTOM**: 個別調整 (既存ユーザーの値はここに保存される)
-
-  **未確定事項**:
-  - PAPER プロファイルで Noise を「紙の質感」に流用するか別エフェクトにするか
-  - パレットとプロファイルの連動の強さ (自動切替 / 推奨提示のみ / 完全独立)
-  - 新プロファイル候補: VFD (蛍光表示管), OLED, Vector CRT (Vectrex 専用) 等
-  - 既存ユーザーの体験を壊さないためのマイグレーション
-    (現状値を "CUSTOM" として保存)
-
-  **前提作業**: Pixel Grid マスタートグル
-  (ジオメトリ層 = LCD ドットマトリクスと、フォト層 = 積層エフェクトの責務分離)。
-  単独でも有用なため別エントリとして先行実装する。
 
 - `[P1]` **各アプリのアイコン作成**
   — ウィンドウヘッダ・デスクトップアイコン・タスクバー等に表示するアプリ固有のアイコン。
