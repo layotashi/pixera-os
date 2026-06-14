@@ -630,11 +630,6 @@ export function getCustomPaletteRgb() {
 
 /** エフェクトパラメータのデフォルト値 */
 export const EFFECT_DEFAULTS = {
-  // ピクセルグリッド (LCD ドット/ギャップ構造) のマスタートグル。
-  // OFF にすると CELL=3 出力のまま gap/diag が中和され、
-  // 純粋なブロック状 3x 拡大として描画される。
-  // Glow / Diagonal は gap/diag 位置に依存するため自動的に視覚的に無効化される。
-  pixelGridEnabled: true,
   vignetteEnabled: true,
   vignetteStrength: 30,
   vignetteRadius: 35,
@@ -643,10 +638,6 @@ export const EFFECT_DEFAULTS = {
   diagSpeed: 5,
   diagSpacing: 12,
   diagThickness: 4,
-  glowEnabled: true,
-  glowIntensity: 35,
-  noiseEnabled: false,
-  noiseStrength: 10,
 };
 
 let _effectParams = { ...EFFECT_DEFAULTS };

@@ -24,11 +24,10 @@ import * as WM from "../wm/index.js";
 import * as UI from "../ui/index.js";
 import { initAudio, getAudioStream } from "../core/audio.js";
 import {
-  CELL,
   getDiagOffset,
   ensureLut,
-  applyPixelGridIndexed,
-  getPixelGridPalette,
+  applyVramIndexed,
+  getDisplayPalette,
 } from "../core/pixel_grid.js";
 
 const APP_NAME = "CAPTURE";
@@ -111,7 +110,7 @@ function refreshOutputLabel() {
       h = VRAM_HEIGHT;
     }
   }
-  lblOutput.text = `${w * CELL * screenshotScale}x${h * CELL * screenshotScale} px`;
+  lblOutput.text = `${w * screenshotScale}x${h * screenshotScale} px`;
 }
 
 /** ドロップダウンの項目を更新 */
@@ -141,11 +140,11 @@ function doScreenshotDownload() {
   let resultCanvas;
 
   if (screenshotTargetId < 0) {
-    // ── Full screen: 合成済み canvas (3x pixel grid) から取得 ──
+    // ── Full screen: 合成済み canvas (VRAM 1:1) から取得 ──
     const src = GPU.getCanvas();
-    // src は既に VRAM_WIDTH*CELL x VRAM_HEIGHT*CELL
-    const srcW = VRAM_WIDTH * CELL;
-    const srcH = VRAM_HEIGHT * CELL;
+    // src は VRAM_WIDTH x VRAM_HEIGHT (CELL 撤廃後は等倍)
+    const srcW = VRAM_WIDTH;
+    const srcH = VRAM_HEIGHT;
     const outW = srcW * screenshotScale;
     const outH = srcH * screenshotScale;
     resultCanvas = document.createElement("canvas");
@@ -266,9 +265,9 @@ function doStartRecording() {
   recordCapW = capW;
   recordCapH = capH;
 
-  // 録画用オフスクリーン canvas (pixel grid 3x + 追加スケーリング)
-  const outW = capW * CELL * screenshotScale;
-  const outH = capH * CELL * screenshotScale;
+  // 録画用オフスクリーン canvas (VRAM 1:1 + 追加スケーリング)
+  const outW = capW * screenshotScale;
+  const outH = capH * screenshotScale;
   recordCanvas = document.createElement("canvas");
   recordCanvas.width = outW;
   recordCanvas.height = outH;
@@ -412,9 +411,9 @@ function stopGifRecording() {
   setTimeout(() => {
     const bg = [...palette.bg];
     const fg = [...palette.fg];
-    const pal = getPixelGridPalette(fg, bg);
-    // gifFrames は indexed-color pixel grid フレーム
-    // フレームサイズは既に 3x (gifFrameWidth*CELL x gifFrameHeight*CELL)
+    const pal = getDisplayPalette(fg, bg);
+    // gifFrames は 4 色 indexed フレーム (bg / fg / bg+diag / fg+diag)
+    // フレームサイズは VRAM 等倍 (CELL 撤廃後)
     const blob = encodeGifN(
       gifFrames,
       gifFrames[0].width,
@@ -442,7 +441,7 @@ function stopGifRecording() {
 }
 
 /**
- * VRAM のスナップショットを取得 (indexed-color pixel grid フレーム)。
+ * VRAM のスナップショットを取得 (4 色 indexed フレーム: bg/fg/bg+diag/fg+diag)。
  * ウィンドウ単体録画時、ウィンドウが閉じられたかリサイズされた場合は null を返す。
  * @returns {{ data: Uint8Array, width: number, height: number }|null}
  */
@@ -452,9 +451,9 @@ function captureVramSnapshot() {
   ensureLut(fg, bg);
 
   if (gifTargetId < 0) {
-    // Full screen: VRAM を pixel grid indexed に変換
+    // Full screen: VRAM を 4 色 indexed に変換 (1:1)
     const len = VRAM_WIDTH * VRAM_HEIGHT;
-    return applyPixelGridIndexed(
+    return applyVramIndexed(
       GPU.vram.subarray(0, len),
       VRAM_WIDTH,
       VRAM_HEIGHT,
@@ -467,7 +466,7 @@ function captureVramSnapshot() {
   if (!r || r.w !== gifFrameWidth || r.h !== gifFrameHeight) return null;
   GPU.beginCapture(gifFrameWidth, gifFrameHeight);
   WM.wmDrawSingleWindow(gifTargetId);
-  return GPU.endCapturePixelGrid();
+  return GPU.endCaptureIndexed();
 }
 
 // ── ウィジェット (遅延初期化) ──

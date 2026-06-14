@@ -16,31 +16,22 @@
 import * as Config from "../config.js";
 import { BAYER_4x4, BAYER_8x8 } from "./dither.js";
 import {
-  CELL,
   tickDiag,
   getDiagOffset,
   ensureLut,
-  rebuildLut,
-  applyPixelGrid,
-  applyPixelGridIndexed,
+  applyVramRgba,
+  applyVramIndexed,
   applyVignette,
-  applyNoise,
   rebuildVignetteLut,
   isVignetteEnabled,
   setVignetteEnabled,
   setVignetteStrength,
   setVignetteRadius,
-  isNoiseEnabled,
-  setNoiseEnabled,
-  setNoiseStrength,
   setDiagEnabled,
   setDiagDarkness,
   setDiagSpeed,
   setDiagSpacing,
   setDiagThickness,
-  setGlowEnabled,
-  setGlowIntensity,
-  setPixelGridEnabled,
 } from "./pixel_grid.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -92,27 +83,29 @@ let clipY1 = Config.VRAM_HEIGHT;
 export function initGpu() {
   canvas = document.getElementById("screen");
   const s = Config.autoScale();
-  canvas.width = Config.VRAM_WIDTH * CELL;
-  canvas.height = Config.VRAM_HEIGHT * CELL;
+  // Canvas internal = VRAM 解像度 (1:1)。CSS スケールは autoScale が整数倍で適用。
+  // → ブラウザ補間は常に整数倍 (= クリーン、モアレ無し)。
+  canvas.width = Config.VRAM_WIDTH;
+  canvas.height = Config.VRAM_HEIGHT;
   canvas.style.width = `${Config.VRAM_WIDTH * s}px`;
   canvas.style.height = `${Config.VRAM_HEIGHT * s}px`;
   ctx = canvas.getContext("2d");
-  imgData = ctx.createImageData(Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+  imgData = ctx.createImageData(Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
   pixels = imgData.data;
   pixels32 = new Uint32Array(pixels.buffer);
-  rebuildVignetteLut(Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+  rebuildVignetteLut(Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
 
   // 解像度変更時に canvas / ImageData を再生成し、スケールも再算出
   Config.onResize(() => {
     const s = Config.autoScale();
-    canvas.width = Config.VRAM_WIDTH * CELL;
-    canvas.height = Config.VRAM_HEIGHT * CELL;
+    canvas.width = Config.VRAM_WIDTH;
+    canvas.height = Config.VRAM_HEIGHT;
     canvas.style.width = `${Config.VRAM_WIDTH * s}px`;
     canvas.style.height = `${Config.VRAM_HEIGHT * s}px`;
-    imgData = ctx.createImageData(Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+    imgData = ctx.createImageData(Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
     pixels = imgData.data;
     pixels32 = new Uint32Array(pixels.buffer);
-    rebuildVignetteLut(Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+    rebuildVignetteLut(Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
     activeW = Config.VRAM_WIDTH;
     activeH = Config.VRAM_HEIGHT;
     resetClip();
@@ -129,25 +122,20 @@ export function initGpu() {
   // エフェクトパラメータ変更コールバック
   Config.onEffectChange((key, value) => {
     switch (key) {
-      case "pixelGridEnabled": setPixelGridEnabled(value); break;
       case "vignetteEnabled": setVignetteEnabled(value); break;
       case "vignetteStrength":
         setVignetteStrength(value / 100);
-        rebuildVignetteLut(Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+        rebuildVignetteLut(Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
         break;
       case "vignetteRadius":
         setVignetteRadius(value / 100);
-        rebuildVignetteLut(Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+        rebuildVignetteLut(Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
         break;
       case "diagEnabled": setDiagEnabled(value); break;
       case "diagDarkness": setDiagDarkness(value / 100); break;
       case "diagSpeed": setDiagSpeed(value); break;
       case "diagSpacing": setDiagSpacing(value); break;
       case "diagThickness": setDiagThickness(value); break;
-      case "glowEnabled": setGlowEnabled(value); break;
-      case "glowIntensity": setGlowIntensity(value / 100); break;
-      case "noiseEnabled": setNoiseEnabled(value); break;
-      case "noiseStrength": setNoiseStrength(value / 100); break;
     }
   });
 }
@@ -766,9 +754,9 @@ export function beginCapture(w, h) {
 
 /**
  * キャプチャを終了し、結果をキャンバスとして返す。
- * ピクセルグリッドエフェクトを適用した 3x 拡大出力。
+ * VRAM を 1:1 で RGBA 化 + Diagonal + Vignette を適用した出力。
  * アクティブバッファを通常の vram に復元する。
- * @param {number} [scale=1]  出力倍率 (pixel grid 後の追加倍率)
+ * @param {number} [scale=1]  出力倍率 (ニアレストネイバー、整数倍推奨)
  * @returns {HTMLCanvasElement}  キャプチャ結果のキャンバス
  */
 export function endCapture(scale = 1) {
@@ -776,25 +764,20 @@ export function endCapture(scale = 1) {
   const h = activeH;
   const buf = activeBuffer;
 
-  // pixel grid 適用 (3x 拡大)
-  const pgW = w * CELL;
-  const pgH = h * CELL;
-  const img = new ImageData(pgW, pgH);
+  const img = new ImageData(w, h);
   const p32 = new Uint32Array(img.data.buffer);
 
   const fg = Config.palette.fg;
   const bg = Config.palette.bg;
   ensureLut(fg, bg);
-  applyPixelGrid(p32, buf, w, h, getDiagOffset());
+  applyVramRgba(p32, buf, w, h, getDiagOffset());
   if (isVignetteEnabled()) {
-    applyVignette(img.data, pgW, pgH);
+    applyVignette(img.data, w, h);
   }
-  applyNoise(img.data, pgW, pgH);
 
-  // pixel grid canvas
   const c1 = document.createElement("canvas");
-  c1.width = pgW;
-  c1.height = pgH;
+  c1.width = w;
+  c1.height = h;
   const ctx1 = c1.getContext("2d");
   ctx1.putImageData(img, 0, 0);
 
@@ -804,14 +787,14 @@ export function endCapture(scale = 1) {
   activeH = Config.VRAM_HEIGHT;
   resetClip();
 
-  // 追加スケーリング
+  // 追加スケーリング (整数倍ニアレストネイバー)
   if (scale <= 1) return c1;
   const out = document.createElement("canvas");
-  out.width = pgW * scale;
-  out.height = pgH * scale;
+  out.width = w * scale;
+  out.height = h * scale;
   const octx = out.getContext("2d");
   octx.imageSmoothingEnabled = false;
-  octx.drawImage(c1, 0, 0, pgW * scale, pgH * scale);
+  octx.drawImage(c1, 0, 0, w * scale, h * scale);
   return out;
 }
 
@@ -834,16 +817,16 @@ export function endCaptureRaw() {
 }
 
 /**
- * キャプチャを終了し、indexed-color のピクセルグリッドフレームを返す。
- * GIF エンコード (encodeGifN) 用。
+ * キャプチャを終了し、indexed-color の VRAM フレームを返す。
+ * GIF エンコード (encodeGifN) 用。4 色パレット (bg/fg/bg+diag/fg+diag)。
  * @returns {{ data: Uint8Array, width: number, height: number }}
  */
-export function endCapturePixelGrid() {
+export function endCaptureIndexed() {
   const w = activeW;
   const h = activeH;
   const buf = activeBuffer;
 
-  const result = applyPixelGridIndexed(buf, w, h, getDiagOffset());
+  const result = applyVramIndexed(buf, w, h, getDiagOffset());
 
   // 復元
   activeBuffer = vram;
@@ -855,17 +838,16 @@ export function endCapturePixelGrid() {
 }
 
 /** vram の内容を Canvas に描画する。毎フレーム draw() の末尾で呼ぶ。
- *  pixel_grid モジュールで 3x 拡大 + エフェクト適用後に putImageData。 */
+ *  pixel_grid モジュールで VRAM → RGBA 1:1 + Vignette を適用して putImageData。 */
 export function flush() {
   const fg = Config.palette.fg;
   const bg = Config.palette.bg;
   ensureLut(fg, bg);
   tickDiag();
-  applyPixelGrid(pixels32, vram, Config.VRAM_WIDTH, Config.VRAM_HEIGHT, getDiagOffset());
+  applyVramRgba(pixels32, vram, Config.VRAM_WIDTH, Config.VRAM_HEIGHT, getDiagOffset());
   if (isVignetteEnabled()) {
-    applyVignette(pixels, Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
+    applyVignette(pixels, Config.VRAM_WIDTH, Config.VRAM_HEIGHT);
   }
-  applyNoise(pixels, Config.VRAM_WIDTH * CELL, Config.VRAM_HEIGHT * CELL);
   ctx.putImageData(imgData, 0, 0);
 }
 
