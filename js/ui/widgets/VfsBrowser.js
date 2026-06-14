@@ -167,11 +167,10 @@ export class VfsBrowser extends FocusableWidget {
    */
   refresh() {
     this._items = this._rebuildItems();
-    this._treeView.items = this._items;
+    this._treeView.items = this._items; // setter がスクロール長を自動同期
     if (this._treeView.selectedIndex >= this._items.length) {
       this._treeView.selectedIndex = Math.max(0, this._items.length - 1);
     }
-    this._treeView.setContentLength(this._items.length);
   }
 
   /**

@@ -29,7 +29,7 @@ export class RadioButton extends ButtonBase {
    * @param {boolean} [initial=false] 初期値
    */
   constructor(x, y, label, group, onChange, initial = false) {
-    super(x, y, buttonAutoWidth(label), BUTTON_AUTO_HEIGHT);
+    super(x, y, 0, 0); // w/h は label セッター経由で確定
     this.label = label;
     /** @type {string} ラジオグループ名 */
     this.group = group;
@@ -38,8 +38,8 @@ export class RadioButton extends ButtonBase {
   }
 
   /** @override */
-  remeasure() {
-    this.w = buttonAutoWidth(this.label);
+  _recomputeLabelSize() {
+    this.w = buttonAutoWidth(this._label);
     this.h = BUTTON_AUTO_HEIGHT;
   }
 

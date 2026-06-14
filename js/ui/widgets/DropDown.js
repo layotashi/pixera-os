@@ -35,17 +35,9 @@ export class DropDown extends FocusableWidget {
    * @param {number[]} [opts.separators] セパレーター挿入位置の配列
    */
   constructor(x, y, items, selectedIndex, onChange, opts) {
-    const maxItemWidth = items.length > 0
-      ? Math.max(...items.map((s) => Helpers.textWidth(s)))
-      : 0;
-    const w =
-      maxItemWidth +
-      Helpers.DROPDOWN_CHECK_WIDTH +
-      Helpers.BUTTON_PADDING * 2 +
-      Ports.ICON_W +
-      8;
-    super(x, y, w, Helpers.BUTTON_AUTO_HEIGHT);
-    this.items = items;
+    super(x, y, 0, 0); // w/h は items セッター経由で確定
+    /** @private */
+    this._items = items;
     this.selectedIndex = Math.max(0, Math.min(items.length - 1, selectedIndex));
     /** @type {boolean} ポップアップ展開中か */
     this.open = false;
@@ -57,13 +49,24 @@ export class DropDown extends FocusableWidget {
     this.onChange = onChange || null;
     /** @type {number[]|null} セパレーター位置 */
     this.separators = (opts && opts.separators) || null;
+    this._recomputeSize();
   }
 
-  /** @override */
-  remeasure() {
-    const maxItemWidth = this.items.length > 0
-      ? Math.max(...this.items.map((s) => Helpers.textWidth(s)))
-      : 0;
+  get items() {
+    return this._items;
+  }
+
+  set items(v) {
+    this._items = v;
+    this._recomputeSize();
+  }
+
+  /** @private items から w/h を再計算 */
+  _recomputeSize() {
+    const maxItemWidth =
+      this._items.length > 0
+        ? Math.max(...this._items.map((s) => Helpers.textWidth(s)))
+        : 0;
     this.w =
       maxItemWidth +
       Helpers.DROPDOWN_CHECK_WIDTH +
@@ -71,6 +74,11 @@ export class DropDown extends FocusableWidget {
       Ports.ICON_W +
       8;
     this.h = Helpers.BUTTON_AUTO_HEIGHT;
+  }
+
+  /** @override — フォント切替時に外部から呼ばれる */
+  remeasure() {
+    this._recomputeSize();
   }
 
   /** @override — ポップアップを持つ */

@@ -24,7 +24,6 @@ import {
   HBox,
   VBox,
   FOCUS_MARGIN,
-  textWidth,
 } from "../ui/index.js";
 
 const APP_NAME = "DISPLAY_TUNING";
@@ -46,12 +45,6 @@ function formatPercent(v) {
 // SPEED は 0–100 の無次元スケール値なので単位なし
 function formatPx(v) {
   return String(v).padStart(4);
-}
-
-/** ラベルのテキストと幅を更新する */
-function setLabel(lbl, str) {
-  lbl.text = str;
-  lbl.w = textWidth(str);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -106,7 +99,7 @@ function _initWidgets() {
     100,
     ep.vignetteStrength,
     (v) => {
-      setLabel(valVigStrength, formatPercent(v));
+      valVigStrength.text = formatPercent(v);
       Config.setEffectParam("vignetteStrength", v);
     },
   );
@@ -114,7 +107,7 @@ function _initWidgets() {
   lblVigRadius = new Label(0, 0, "Radius:");
   valVigRadius = new Label(0, 0, formatPercent(ep.vignetteRadius));
   sldVigRadius = new Slider(0, 0, SLIDER_W, 0, 50, ep.vignetteRadius, (v) => {
-    setLabel(valVigRadius, formatPercent(v));
+    valVigRadius.text = formatPercent(v);
     Config.setEffectParam("vignetteRadius", v);
   });
 
@@ -134,14 +127,14 @@ function _initWidgets() {
   lblDiagDarkness = new Label(0, 0, "Darkness:");
   valDiagDarkness = new Label(0, 0, formatPercent(ep.diagDarkness));
   sldDiagDarkness = new Slider(0, 0, SLIDER_W, 0, 100, ep.diagDarkness, (v) => {
-    setLabel(valDiagDarkness, formatPercent(v));
+    valDiagDarkness.text = formatPercent(v);
     Config.setEffectParam("diagDarkness", v);
   });
 
   lblDiagSpeed = new Label(0, 0, "Speed:");
   valDiagSpeed = new Label(0, 0, formatPx(ep.diagSpeed));
   sldDiagSpeed = new Slider(0, 0, SLIDER_W, 0, 100, ep.diagSpeed, (v) => {
-    setLabel(valDiagSpeed, formatPx(v));
+    valDiagSpeed.text = formatPx(v);
     Config.setEffectParam("diagSpeed", v);
   });
 
@@ -238,14 +231,14 @@ wmRegister(APP_NAME, () => {
   const ep = Config.getEffectParams();
   tglVignette.value = ep.vignetteEnabled;
   sldVigStrength.value = ep.vignetteStrength;
-  setLabel(valVigStrength, formatPercent(ep.vignetteStrength));
+  valVigStrength.text = formatPercent(ep.vignetteStrength);
   sldVigRadius.value = ep.vignetteRadius;
-  setLabel(valVigRadius, formatPercent(ep.vignetteRadius));
+  valVigRadius.text = formatPercent(ep.vignetteRadius);
   tglDiagonal.value = ep.diagEnabled;
   sldDiagDarkness.value = ep.diagDarkness;
-  setLabel(valDiagDarkness, formatPercent(ep.diagDarkness));
+  valDiagDarkness.text = formatPercent(ep.diagDarkness);
   sldDiagSpeed.value = ep.diagSpeed;
-  setLabel(valDiagSpeed, formatPx(ep.diagSpeed));
+  valDiagSpeed.text = formatPx(ep.diagSpeed);
   nbDiagSpacing.value = ep.diagSpacing;
   nbDiagThickness.max = ep.diagSpacing - 1;
   nbDiagThickness.value = ep.diagThickness;

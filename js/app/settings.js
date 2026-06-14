@@ -79,8 +79,7 @@ function listPbmFiles(dir) {
 function refreshImageFileList() {
   if (!ddImageFile) return;
   const files = listPbmFiles(imageDir);
-  ddImageFile.items = files.length > 0 ? files : ["(none)"];
-  ddImageFile.remeasure();
+  ddImageFile.items = files.length > 0 ? files : ["(none)"]; // setter が w/h を自動再計算
   // 現在の壁紙パスがこのディレクトリ内なら選択
   const curPath = Wallpaper.getImagePath();
   if (curPath && parentPath(curPath) === imageDir) {

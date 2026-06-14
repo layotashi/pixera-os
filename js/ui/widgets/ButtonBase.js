@@ -5,6 +5,10 @@
  * PushButton / ToggleButton / RadioButton の共通描画ロジックを提供する。
  * value=true または pressed=true のとき反転表示 (塗りつぶし+反転色)。
  * icon プロパティが設定されている場合はアイコンモードで描画される。
+ *
+ * label プロパティはセッターでカプセル化されており、代入時にサブクラスの
+ * _recomputeLabelSize() が自動で呼ばれて w/h が再計算される
+ * (派生状態の不変条件を機械的に維持)。
  */
 
 import { FocusableWidget } from "../FocusableWidget.js";
@@ -20,14 +24,34 @@ export class ButtonBase extends FocusableWidget {
    */
   constructor(x, y, w, h) {
     super(x, y, w, h);
-    /** @type {string} 表示テキスト */
-    this.label = "";
+    /** @private 表示テキスト */
+    this._label = "";
     /** @type {boolean} 状態値 (Toggle/Radio で ON/OFF) */
     this.value = false;
     /** @type {boolean} マウスプレス中か */
     this.pressed = false;
     /** @type {string|null} アイコン名 (null でテキストモード) */
     this.icon = null;
+  }
+
+  get label() {
+    return this._label;
+  }
+
+  set label(v) {
+    this._label = v;
+    this._recomputeLabelSize();
+  }
+
+  /**
+   * @protected サブクラスが label から w/h を再計算するロジックを実装する。
+   * デフォルトは何もしない (基底クラス単独では w/h を扱わない)。
+   */
+  _recomputeLabelSize() {}
+
+  /** @override — フォント切替時に外部から呼ばれる */
+  remeasure() {
+    this._recomputeLabelSize();
   }
 
   /** @override — 操作中 (プレスされている) */
@@ -66,11 +90,10 @@ export class ButtonBase extends FocusableWidget {
       const textY = fillY + BUTTON_PADDING;
       if (active) {
         Ports.fillRect(fillX, fillY, fillW, fillH, 1);
-        Ports.drawText(textX, textY, this.label, 0);
+        Ports.drawText(textX, textY, this._label, 0);
       } else {
-        Ports.drawText(textX, textY, this.label, 1);
+        Ports.drawText(textX, textY, this._label, 1);
       }
     }
   }
 }
-

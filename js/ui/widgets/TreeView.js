@@ -33,7 +33,8 @@ export class TreeView extends FocusableWidget {
   constructor(x, y, w, visibleRows, items, onSelect, onActivate, onToggle) {
     const h = visibleRows * Helpers.TREEVIEW_ITEM_HEIGHT + 4;
     super(x, y, w, h);
-    this.items = items;
+    /** @private */
+    this._items = items;
     this.visibleRows = visibleRows;
     this.selectedIndex = 0;
     /** @private */
@@ -52,6 +53,17 @@ export class TreeView extends FocusableWidget {
     /** @private */ this._dragStartX = 0;
     /** @private */ this._dragStartY = 0;
     /** @private */ this._dropTargetIndex = -1;
+  }
+
+  get items() {
+    return this._items;
+  }
+
+  set items(v) {
+    this._items = v;
+    // w/h は固定 (w はアプリ指定、h は visibleRows から確定)。
+    // スクロール状態のみ自動同期 (setContentLength の呼び忘れ防止)。
+    if (this._vScroll) Scroll.scrollSetContent(this._vScroll, v.length);
   }
 
   /** @override — h のみ更新 (w はアプリが指定するため不変) */

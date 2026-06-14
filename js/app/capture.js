@@ -117,7 +117,7 @@ function refreshOutputLabel() {
 function refreshTargetItems() {
   const wins = WM.wmGetWindowList().filter((w) => w.title !== APP_NAME);
   const items = ["Full screen", ...wins.map((w) => w.title)];
-  ddTarget.items = items;
+  ddTarget.items = items; // setter が w/h を自動再計算
   if (ddTarget.selectedIndex >= items.length) {
     ddTarget.selectedIndex = 0;
     screenshotTargetId = -1;

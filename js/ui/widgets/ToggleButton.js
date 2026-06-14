@@ -29,16 +29,16 @@ export class ToggleButton extends ButtonBase {
    * @param {boolean} [initial=false] 初期値
    */
   constructor(x, y, label, onChange, initial = false) {
-    super(x, y, buttonAutoWidth(label), BUTTON_AUTO_HEIGHT);
+    super(x, y, 0, 0); // w/h は label セッター経由で確定
     this.label = label;
     this.value = initial;
     this.onChange = onChange || null;
   }
 
   /** @override — アイコンボタンはアプリ側で w/h を手動設定するためスキップ */
-  remeasure() {
+  _recomputeLabelSize() {
     if (this.icon) return;
-    this.w = buttonAutoWidth(this.label);
+    this.w = buttonAutoWidth(this._label);
     this.h = BUTTON_AUTO_HEIGHT;
   }
 

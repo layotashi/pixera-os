@@ -29,7 +29,7 @@ export class PushButton extends ButtonBase {
    * @param {function} [onClick] クリック時コールバック
    */
   constructor(x, y, label, onClick) {
-    super(x, y, buttonAutoWidth(label), BUTTON_AUTO_HEIGHT);
+    super(x, y, 0, 0); // w/h は label セッター経由で確定
     this.label = label;
     this.onClick = onClick || null;
     /** @private Enter キー押下追跡 */
@@ -37,9 +37,9 @@ export class PushButton extends ButtonBase {
   }
 
   /** @override — アイコンボタンはアプリ側で w/h を手動設定するためスキップ */
-  remeasure() {
+  _recomputeLabelSize() {
     if (this.icon) return;
-    this.w = buttonAutoWidth(this.label);
+    this.w = buttonAutoWidth(this._label);
     this.h = BUTTON_AUTO_HEIGHT;
   }
 

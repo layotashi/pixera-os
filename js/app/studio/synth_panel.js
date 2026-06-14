@@ -140,12 +140,6 @@ function formatPercent(v) {
   return String(v).padStart(4) + "%";
 }
 
-/** ラベルのテキストと幅を更新する */
-function setLabel(lbl, str) {
-  lbl.text = str;
-  lbl.w = UI.textWidth(str);
-}
-
 function formatDegrees(v) {
   return String(v).padStart(4) + "DEG";
 }
@@ -228,7 +222,7 @@ function _initWidgets() {
   labelVolume = new UI.Label(0, 0, "VOL:");
   labelVolumeValue = new UI.Label(0, 0, formatPercent(50));
   sliderVolume = new UI.Slider(0, 0, SLIDER_WIDTH, 0, 100, 50, (v) => {
-    setLabel(labelVolumeValue, formatPercent(v));
+    labelVolumeValue.text = formatPercent(v);
     getActiveTrackChannel().setVolume(v);
   });
 
@@ -236,7 +230,7 @@ function _initWidgets() {
   labelPhase = new UI.Label(0, 0, "PHS:");
   labelPhaseValue = new UI.Label(0, 0, formatDegrees(0));
   sliderPhase = new UI.Slider(0, 0, SLIDER_WIDTH, 0, 359, 0, (v) => {
-    setLabel(labelPhaseValue, formatDegrees(v));
+    labelPhaseValue.text = formatDegrees(v);
     getActiveTrackChannel().setStartPhase(v / 360);
   });
   sliderPhase.wheelStep = 5; // 1ノッチ = 5°
@@ -290,12 +284,12 @@ function _syncFromChannel() {
   // 音量
   const vol = Math.round(ch.getVolume());
   sliderVolume.value = vol;
-  setLabel(labelVolumeValue, formatPercent(vol));
+  labelVolumeValue.text = formatPercent(vol);
 
   // 位相
   const phaseDeg = Math.round(ch.getStartPhase() * 360);
   sliderPhase.value = phaseDeg;
-  setLabel(labelPhaseValue, formatDegrees(phaseDeg));
+  labelPhaseValue.text = formatDegrees(phaseDeg);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -323,7 +317,7 @@ function applyPhaseDeg(deg) {
   deg = ((deg % 360) + 360) % 360; // 0〜359 に正規化
   getActiveTrackChannel().setStartPhase(deg / 360);
   sliderPhase.value = deg;
-  setLabel(labelPhaseValue, formatDegrees(deg));
+  labelPhaseValue.text = formatDegrees(deg);
 }
 
 /** プレビュー領域のヒットテスト (コンテンツ領域ローカル座標) */

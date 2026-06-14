@@ -32,18 +32,10 @@ export class ListBox extends FocusableWidget {
    * @param {function} [onChange] 選択変更コールバック (newIndex) => void
    */
   constructor(x, y, visibleRows, items, selectedIndex, onChange) {
-    const maxItemWidth = items.length > 0
-      ? Math.max(...items.map((s) => Helpers.textWidth(s)))
-      : 0;
-    const w =
-      maxItemWidth +
-      Helpers.BUTTON_PADDING * 2 +
-      Scroll.SCROLLBAR_SLOT_WIDTH +
-      4;
-    const h = visibleRows * Helpers.LISTBOX_ITEM_HEIGHT + 4;
-    super(x, y, w, h);
-    this.items = items;
+    super(x, y, 0, 0); // w/h は items セッター経由で確定
     this.visibleRows = visibleRows;
+    /** @private */
+    this._items = items;
     this.selectedIndex = Math.max(0, Math.min(items.length - 1, selectedIndex));
     /** @private */
     this._vScroll = Scroll.createScrollState(visibleRows, items.length);
@@ -51,19 +43,37 @@ export class ListBox extends FocusableWidget {
     this.onChange = onChange || null;
     /** @type {((index: number) => string | null) | null} */
     this.onItemTooltip = null;
+    this._recomputeSize();
   }
 
-  /** @override */
-  remeasure() {
-    const maxItemWidth = this.items.length > 0
-      ? Math.max(...this.items.map((s) => Helpers.textWidth(s)))
-      : 0;
+  get items() {
+    return this._items;
+  }
+
+  set items(v) {
+    this._items = v;
+    this._recomputeSize();
+    // スクロール状態のコンテンツ長も同期 (setContentLength の呼び忘れ防止)
+    if (this._vScroll) Scroll.scrollSetContent(this._vScroll, v.length);
+  }
+
+  /** @private items / visibleRows から w/h を再計算 */
+  _recomputeSize() {
+    const maxItemWidth =
+      this._items.length > 0
+        ? Math.max(...this._items.map((s) => Helpers.textWidth(s)))
+        : 0;
     this.w =
       maxItemWidth +
       Helpers.BUTTON_PADDING * 2 +
       Scroll.SCROLLBAR_SLOT_WIDTH +
       4;
     this.h = this.visibleRows * Helpers.LISTBOX_ITEM_HEIGHT + 4;
+  }
+
+  /** @override — フォント切替時に外部から呼ばれる */
+  remeasure() {
+    this._recomputeSize();
   }
 
   // ── パブリック スクロール操作 ──
