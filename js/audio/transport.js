@@ -109,7 +109,8 @@ let numberBoxEndBeat;
 let numberBoxEndSub;
 let transportGroup;
 let transportRoot;
-let bpmIconX;
+/** BPM 行の四分音符アイコン用スペーサー (手動描画される icon の位置基準) */
+let bpmSpacer;
 let _ready = false;
 
 function _initWidgets() {
@@ -253,9 +254,13 @@ function _initWidgets() {
   vsep1.h = BTN_H;
   vsep2.h = BTN_H;
 
-  // BPM アイコン用スペーサー (手動描画される四分音符アイコンの占有幅)
-  const bpmSpacer = new UI.Label(0, 0, "");
-  bpmSpacer.w = ICON_W + 2; // ICON_W + ICON_MARGIN
+  // BPM アイコン用スペーサー (手動描画される四分音符アイコンの占有領域)。
+  // natural h = ICON_H にしておくことで HBox stretch loop が
+  //   bpmSpacer.y = row_top + (maxH − ICON_H) / 2
+  // を自動算出する。これが ICON_H 高さの icon を行に縦中央配置する正解の y。
+  // drawTransport ではこの bpmSpacer.x / .y をそのまま icon の左上に使う。
+  bpmSpacer = new UI.Label(0, 0, "");
+  bpmSpacer.w = ICON_W + 2; // ICON_W + 右余白 2px
   bpmSpacer.h = ICON_H;
 
   const startNbs = UI.HBox(
@@ -286,9 +291,6 @@ function _initWidgets() {
   );
   // WidgetGroup(root, opts) は初期 layout (M, M) + auto-layout を実行
   transportGroup = new UI.WidgetGroup(transportRoot, { x: M, y: M });
-
-  // bpmIconX = スペーサーの位置 (手動描画用)。初回 layout 後の bpmSpacer.x を取得。
-  bpmIconX = bpmSpacer.x;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -344,9 +346,10 @@ export function drawTransport(cr) {
 
   transportGroup.draw(cr);
 
-  // BPM 行の四分音符アイコンを手動描画
-  const iconY = cr.y + labelBpm.y + Math.floor((labelBpm.h - ICON_H) / 2);
-  drawIcon("note-quarter", cr.x + bpmIconX, iconY, 1);
+  // BPM 行の四分音符アイコンを手動描画。
+  // bpmSpacer は natural h=ICON_H で作られているため、HBox stretch 後の
+  // bpmSpacer.x / .y がそのまま icon の正しい左上座標になる。
+  drawIcon("note-quarter", cr.x + bpmSpacer.x, cr.y + bpmSpacer.y, 1);
 }
 
 export function onTransportInput(ev) {
