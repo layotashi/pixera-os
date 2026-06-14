@@ -34,6 +34,7 @@ import "./ascii_art_demo.js";
 import "./breakout.js";
 import "./graze.js";
 import "./genart.js";
+import "./telex.js";
 import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 
 // ── デスクトップアイコン初期化 ──
