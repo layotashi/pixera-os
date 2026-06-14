@@ -35,6 +35,7 @@ import "./breakout.js";
 import "./graze.js";
 import "./genart.js";
 import "./telex.js";
+import "./aquarium.js";
 import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 
 // ── デスクトップアイコン初期化 ──
