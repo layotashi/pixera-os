@@ -294,6 +294,46 @@
   - Settings UI にスライダー (または NumberBox) を配置
     レトロ OS 的な「モニター調整」の雰囲気が出せると世界観にも合致する。
 
+- `[P1]` **Display Profile の導入と表示効果の分類整理**
+  — 現状の DISPLAY_TUNING は LCD 由来 (Pixel Grid) と CRT 由来
+  (Diagonal scanline / Vignette / Glow) のエフェクトを「レトロ風」という
+  漠然としたまとまりで混在させており、物理的に成立しない組合せが
+  デフォルトで発火している (例: Game Boy LCD パレット + CRT 走査線)。
+  パレット側は `origin` フィールドで既に表示テクノロジー
+  (CRT 蛍光体 / LCD / Plasma / 紙 等) を暗に宣言しているが、
+  エフェクト側には対応する分類が無い。
+
+  PRODUCT_BRIEF §1「空想のマシン」は不整合を許す前提ではあるが、
+  §5.3「美しさの妥協なし」と緊張する。「空想」と「ご都合主義」は別物であり、
+  デフォルト状態の物理的整合性を整える価値がある。
+
+  **改修方針**:
+  - DISPLAY_TUNING の最上段に **Display Profile** セレクタを追加
+    (LCD / CRT / PLASMA / PAPER / CUSTOM)
+  - プロファイル切替で対応するエフェクト一式が一括 ON/OFF + 推奨初期値が適用される
+  - UI はプロファイル系統ごとにセクション見出しを付ける
+    (`LCD EFFECTS` / `CRT EFFECTS` / `UNIVERSAL`)
+  - パレット選択時に推奨プロファイルをヒント表示する
+    (強制はしない — PRODUCT_BRIEF §5.1)
+
+  **プロファイル ↔ パレット対応案**:
+  - **LCD**: Pixel Grid ON, Glow ON (微), 他 OFF → dmg, pocket_lcd, blue_lcd, el_teal
+  - **CRT**: Pixel Grid OFF, Glow ON, Diagonal ON, Vignette ON, Noise 微 → p1_green, p3_amber, p4_white, p7_blue, macintosh, vectrex
+  - **PLASMA**: Pixel Grid OFF, Glow 強, 他 OFF → plato
+  - **PAPER**: 全エフェクト OFF (または紙質感ノイズのみ) → blueprint, thermal, e_ink
+  - **CUSTOM**: 個別調整 (既存ユーザーの値はここに保存される)
+
+  **未確定事項**:
+  - PAPER プロファイルで Noise を「紙の質感」に流用するか別エフェクトにするか
+  - パレットとプロファイルの連動の強さ (自動切替 / 推奨提示のみ / 完全独立)
+  - 新プロファイル候補: VFD (蛍光表示管), OLED, Vector CRT (Vectrex 専用) 等
+  - 既存ユーザーの体験を壊さないためのマイグレーション
+    (現状値を "CUSTOM" として保存)
+
+  **前提作業**: Pixel Grid マスタートグル
+  (ジオメトリ層 = LCD ドットマトリクスと、フォト層 = 積層エフェクトの責務分離)。
+  単独でも有用なため別エントリとして先行実装する。
+
 - `[P1]` **各アプリのアイコン作成**
   — ウィンドウヘッダ・デスクトップアイコン・タスクバー等に表示するアプリ固有のアイコン。
   1-bit 美学に沿ったピクセルアートとして制作する。
