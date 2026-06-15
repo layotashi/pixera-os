@@ -38,7 +38,12 @@ const EDITOR_W = GLYPH_GRID_W * EDITOR_CELL_PX;
 const EDITOR_H = GLYPH_GRID_H * EDITOR_CELL_PX;
 
 const EDITABLE_LETTERS = ["A", "B", "C", "D"];
-const SELECTOR_CELL_PX = 16;
+// セルサイズは「(SELECTOR_CELL_PX - GLYPH_W) が偶数」になるよう選ぶ。
+// GLYPH_W = 5 のとき、SELECTOR_CELL_PX = 15 なら (15-5)/2 = 5 で
+// 上下左右とも余白 4px で 1px 対称になる (PRODUCT_BRIEF §5.3)。
+// CELL_PX = 16 だと (16-5)/2 = 5.5 となり整数 padding 不可、グリフが
+// 右下に 1px 寄ってしまうため避ける。
+const SELECTOR_CELL_PX = 15;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  状態
