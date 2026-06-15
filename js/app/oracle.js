@@ -270,7 +270,7 @@ function onDraw(cr) {
   }
 
   // 入力欄
-  const inputY = cr.y + WIN_H - INPUT_H;
+  const inputY = cr.y + cr.h - INPUT_H;
   hline(cr.x, cr.x + cr.w - 1, inputY - 1, 1);
   drawText(cr.x + 4, inputY + 2, "> " + inputBuffer, 1);
   // カーソル点滅
