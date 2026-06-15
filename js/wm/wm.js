@@ -15,8 +15,12 @@
  *   input.js の Input.hasInputEvent('dblclick', 0) でタイミングを判定し、
  *   lastXxxClickWin で同一ウィンドウ確認を行う。
  *   ヘッダーダブルクリック → 最大化トグル
- *   境界線ダブルクリック → コンテンツサイズに自動リサイズ
  *   ボディダブルクリック → アプリに dblclick イベント伝播
+ *   (境界線 DC autosize は廃止: ヘッダー右クリック → FIT TO CONTENT に集約)
+ *
+ * ── ウィンドウ右クリック (コンテキストメニュー) ──
+ *   ヘッダー右クリック → FIT TO CONTENT / MAXIMIZE-RESTORE / CLOSE を表示。
+ *   ボディ右クリック → アプリに "rdown" を伝播 (アプリ独自メニュー用)。
  *
  * ── ドラッグ (ウィンドウ移動) ──
  *   ヘッダークリックで move-pending モードに入り、
@@ -498,9 +502,16 @@ const MENU_SEPARATOR_HEIGHT = 3;
 let _modalWinId = null;
 
 // ── メニューアイテム型 ──
-// { type: 'app',   entry }                — アプリ (リーフ)
-// { type: 'sub',   label, children[] }    — サブメニュー (ブランチ)
-// { type: 'sep' }                         — セパレーター
+// { type: 'app',    entry }                   — アプリ (リーフ)
+// { type: 'sub',    label, children[] }       — サブメニュー (ブランチ)
+// { type: 'action', label, action: () => * }  — 任意アクション (コンテキストメニュー用)
+// { type: 'sep' }                             — セパレーター
+
+/** メニューアイテムの表示ラベルを返す (sep は呼び出し側で除外しておく)。 */
+function _menuItemLabel(item) {
+  if (item.type === "app") return item.entry.name;
+  return item.label;
+}
 
 /**
  * メニュースタック。各要素は1階層分のパネル情報。
@@ -671,7 +682,7 @@ function calcPanelSize(items) {
     if (item.type === "sep") {
       h += MENU_SEPARATOR_HEIGHT;
     } else {
-      const label = item.type === "sub" ? item.label : item.entry.name;
+      const label = _menuItemLabel(item);
       if (label.length > maxLabelLen) maxLabelLen = label.length;
       if (item.type === "sub") hasSubmenu = true;
       h += MENU_ITEM_HEIGHT;
@@ -713,7 +724,15 @@ function itemTopY(items, idx) {
 }
 
 function openMenu(x, y) {
-  const items = buildMenuTree();
+  openContextMenu(buildMenuTree(), x, y);
+}
+
+/**
+ * 任意のアイテム配列でコンテキストメニューを開く。
+ * デスクトップ launcher (openMenu)、ウィンドウヘッダー右クリック、将来の
+ * アイコン右クリック等で共通利用する基盤 API。
+ */
+function openContextMenu(items, x, y) {
   const { w, h } = calcPanelSize(items);
   // 画面内に収まるよう補正
   const px = Math.max(0, Math.min(x, Config.VRAM_WIDTH - w));
@@ -788,7 +807,7 @@ function drawMenuPanel(panel) {
       continue;
     }
 
-    const label = item.type === "sub" ? item.label : item.entry.name;
+    const label = _menuItemLabel(item);
     const isHover = i === hover;
     const tx = x + MENU_PADDING + MENU_CHECK_WIDTH;
     const iconY = iy + ((MENU_ITEM_HEIGHT - ICON_H) >> 1);
@@ -906,6 +925,11 @@ function handleMenuClick(mx, my) {
     if (_sfxCallbacks?.onMenuItem) _sfxCallbacks.onMenuItem();
     toggleRegistered(item.entry);
     closeMenu();
+  } else if (item.type === "action") {
+    if (_sfxCallbacks?.onMenuItem) _sfxCallbacks.onMenuItem();
+    // action は別ウィンドウを開く可能性があるので、メニューを先に閉じてから実行
+    closeMenu();
+    item.action();
   }
   // sub / sep をクリックしても何もしない (サブメニューは hover で開く)
 }
@@ -939,7 +963,6 @@ let snapPreview = null;
  * タイミング判定は input.js の Input.hasInputEvent('dblclick', 0) に委譲する。
  */
 let lastHeaderClickWin = null;
-let lastBorderClickWin = null;
 let lastBodyClickWin = null;
 
 // ── 解像度変更対応 ──
@@ -1525,6 +1548,93 @@ export function wmOpenOrFocus(name) {
 }
 
 /**
+ * scrollable ウィンドウの初期サイズを work area の SCROLL_INIT_RATIO 倍へ
+ * クランプする。
+ *
+ * クランプしないと画面外にはみ出し、かつ contentRect.h == virtualH となって
+ * スクロールバーが出ない (= 最大化するまで下部に到達不可) という矛盾が発生する。
+ * 100% でなく ~85% にすることで画面上下に余白を作り、圧迫感を緩和する。
+ *
+ * @returns {{ w: number, h: number, clamped: boolean }} clamped: 高さが clamp されたか
+ */
+const SCROLL_INIT_RATIO = 0.85;
+function clampScrollableInitSize(w, h) {
+  const workAreaH = Config.VRAM_HEIGHT - workAreaTop;
+  const maxH = Math.floor(workAreaH * SCROLL_INIT_RATIO);
+  let clamped = false;
+  if (h > maxH) {
+    h = maxH;
+    clamped = true;
+  }
+  if (w > Config.VRAM_WIDTH) w = Config.VRAM_WIDTH;
+  return { w, h, clamped };
+}
+
+/**
+ * ウィンドウを「ちょうど良いサイズ」(自然サイズ、scrollable は ratio クランプ後)
+ * にリサイズし、現在の中心位置を保ったまま再配置する。最後に画面内クランプ。
+ * 右クリックメニューの "FIT TO CONTENT" から呼ばれる。
+ */
+function fitWindowToContent(win) {
+  if (!win.onMeasure || win.noResize) return;
+  const size = win.onMeasure();
+  const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
+  let newW = fit.w;
+  let newH = fit.h;
+  if (win._scrollable) {
+    const c = clampScrollableInitSize(newW, newH);
+    newW = c.w;
+    newH = c.h;
+  }
+  // 中心保持で新位置算出 → 画面内クランプ
+  const cx = win.x + win.w / 2;
+  const cy = win.y + win.h / 2;
+  let newX = Math.floor(cx - newW / 2);
+  let newY = Math.floor(cy - newH / 2);
+  newX = Math.max(0, Math.min(newX, Config.VRAM_WIDTH - newW));
+  newY = Math.max(workAreaTop, Math.min(newY, Config.VRAM_HEIGHT - newH));
+  win.x = newX;
+  win.y = newY;
+  win.w = newW;
+  win.h = newH;
+  win.restoreRect = null;
+  win.snapState = "none";
+  recalcLayout(win);
+}
+
+/**
+ * ウィンドウヘッダー右クリック用のコンテキストメニューアイテムを構築する。
+ * noResize / noMaximize の指定に応じて該当項目を省略する。
+ */
+function buildWindowContextMenu(win) {
+  const items = [];
+  if (win.onMeasure && !win.noResize) {
+    items.push({
+      type: "action",
+      label: "FIT TO CONTENT",
+      action: () => fitWindowToContent(win),
+    });
+  }
+  if (!win.noMaximize) {
+    items.push({
+      type: "action",
+      label: win.restoreRect ? "RESTORE" : "MAXIMIZE",
+      action: () => toggleMaximize(win),
+    });
+  }
+  if (items.length > 0) items.push({ type: "sep" });
+  items.push({
+    type: "action",
+    label: "CLOSE",
+    action: () => {
+      if (win.onBeforeClose && !win.onBeforeClose()) return;
+      wmClose(win.id);
+    },
+  });
+  return items;
+}
+
+/**
  * ウィンドウを追加する。配列の末尾が最前面。
  * w, h に 0 を指定すると onMeasure から自動算出する。
  * x, y に負値を指定するとカスケード自動配置になる。
@@ -1560,22 +1670,11 @@ export function wmOpen(
     const fit = calcWindowSize(size.w, size.h, footer, scrollable);
     if (w === 0) w = fit.w;
     if (h === 0) h = fit.h;
-    // scrollable ウィンドウは自然サイズが work area を超える場合に
-    // 初期高さを work area の SCROLL_INIT_RATIO 倍へクランプする。
-    // クランプしないと画面外に窓がはみ出し、かつ contentRect.h == virtualH
-    // となってスクロールバーが出ない (= 最大化するまで下部に到達不可)
-    // という矛盾が発生する。
-    // 100% でなく ~85% にすることで画面上下に余白を作り、圧迫感を緩和する。
     if (scrollable) {
-      const waTopAuto = wmGetWorkAreaTop();
-      const workAreaH = Config.VRAM_HEIGHT - waTopAuto;
-      const SCROLL_INIT_RATIO = 0.85;
-      const maxH = Math.floor(workAreaH * SCROLL_INIT_RATIO);
-      if (h > maxH) {
-        h = maxH;
-        scrollableClamped = true;
-      }
-      if (w > Config.VRAM_WIDTH) w = Config.VRAM_WIDTH;
+      const c = clampScrollableInitSize(w, h);
+      w = c.w;
+      h = c.h;
+      scrollableClamped = c.clamped;
     }
   }
 
@@ -1860,8 +1959,15 @@ function handleRightClick(mx, my) {
       }
       return;
     }
-    // ヘッダーや境界線上なら何もしない (移動/リサイズは左ボタン)
-    if (hitTestHeader(win, mx, my) || hitTestBorder(win, mx, my) !== 0) {
+    // ヘッダー → ウィンドウコンテキストメニュー
+    if (hitTestHeader(win, mx, my)) {
+      bringToFront(i);
+      const target = windows[windows.length - 1];
+      openContextMenu(buildWindowContextMenu(target), mx, my);
+      return;
+    }
+    // 境界線上は何もしない (リサイズは左ボタン drag のみ。DC autosize は廃止)
+    if (hitTestBorder(win, mx, my) !== 0) {
       return;
     }
   }
@@ -1931,36 +2037,7 @@ function handleBorderClick(i, edges, mx, my) {
   // noResize ウィンドウではリサイズ不可 (最前面昇格のみ)
   if (target.noResize) return;
 
-  // ダブルクリック: input.js のタイミング判定 + 同一ウィンドウ確認
-  if (
-    lastBorderClickWin === target &&
-    Input.hasInputEvent("dblclick", 0) &&
-    target.onMeasure
-  ) {
-    lastBorderClickWin = null;
-    const size = target.onMeasure();
-    const fit = calcWindowSize(
-      size.w,
-      size.h,
-      target.footer,
-      target._scrollable,
-    );
-
-    if (edges & (EDGE_LEFT | EDGE_RIGHT)) {
-      if (edges & EDGE_LEFT) target.x = target.x + target.w - fit.w;
-      target.w = fit.w;
-    }
-    if (edges & (EDGE_TOP | EDGE_BOTTOM)) {
-      if (edges & EDGE_TOP) target.y = target.y + target.h - fit.h;
-      target.h = fit.h;
-    }
-    target.restoreRect = null;
-    target.snapState = "none";
-    recalcLayout(target);
-    return;
-  }
-  lastBorderClickWin = target;
-
+  // 自動リサイズはヘッダー右クリック → FIT TO CONTENT に集約。境界線 DC は廃止。
   mode = "resize";
   resizeEdges = edges;
   resizeStartMX = mx;
