@@ -57,6 +57,7 @@ import * as Input from "../core/input.js";
 import { setCursor } from "../core/cursor.js";
 import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
 import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
+import { BAYER_4x4 } from "../core/dither.js";
 import { FOCUS_MARGIN } from "../ui/ui_constants.js";
 import * as Scroll from "../ui/scrollbar.js";
 import * as Desktop from "./desktop.js";
@@ -367,9 +368,9 @@ function safeOnDraw(win, contentRect) {
 
 /** onInput を try-catch で囲んで呼ぶ */
 function safeOnInput(win, ev) {
-  // ABOUT パネル表示中はアプリへ入力を渡さない (背後の誤操作防止)。
-  // メニュー操作は WM 側で処理されるため影響しない。
-  if (win._aboutMode) return;
+  // ABOUT パネル表示中 / ディゾルブ遷移中はアプリへ入力を渡さない
+  // (背後の誤操作防止)。メニュー操作は WM 側で処理されるため影響しない。
+  if (win._aboutMode || win._aboutAnim) return;
   try {
     win.onInput(ev);
   } catch (e) {
@@ -1634,9 +1635,7 @@ function buildWindowContextMenu(win) {
     items.push({
       type: "action",
       label: win._aboutMode ? "HIDE ABOUT" : "ABOUT",
-      action: () => {
-        win._aboutMode = !win._aboutMode;
-      },
+      action: () => _startAboutTransition(win, !win._aboutMode),
     });
   }
   if (items.length > 0) items.push({ type: "sep" });
@@ -2755,6 +2754,81 @@ function drawAboutPanel(win, cr) {
   drawText(x, cr.y + cr.h - GLYPH_H - 1, hint, 1);
 }
 
+// ── ABOUT ⇄ ボディの dither ディゾルブ遷移 ──
+
+/** ディゾルブのフレーム数 (60fps で約 0.2 秒。ディザの texture が見える程度) */
+const ABOUT_ANIM_FRAMES = 12;
+
+/** ディゾルブ遷移を開始する (既に遷移中なら無視) */
+function _startAboutTransition(win, toMode) {
+  if (win._aboutAnim) return;
+  win._aboutAnim = { to: toMode, t: 0, cw: 0, ch: 0, from: null, toBuf: null };
+}
+
+/** content rect の現在のピクセルをバッファにコピーする */
+function _snapshotRect(cr) {
+  const buf = new Uint8Array(cr.w * cr.h);
+  for (let yy = 0; yy < cr.h; yy++) {
+    for (let xx = 0; xx < cr.w; xx++) {
+      buf[yy * cr.w + xx] = GPU.pget(cr.x + xx, cr.y + yy);
+    }
+  }
+  return buf;
+}
+
+/** 指定した面 (about or ボディ) を content rect に描画する (スナップショット用) */
+function _renderAboutFace(win, cr, aboutMode) {
+  GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0);
+  GPU.setClip(cr.x, cr.y, cr.w, cr.h);
+  if (aboutMode) {
+    drawAboutPanel(win, cr);
+  } else if (win.onDraw) {
+    const scrollY = win._scrollable && win._vScroll ? win._vScroll.offset : 0;
+    const drawCr = scrollY
+      ? { x: cr.x, y: cr.y - scrollY, w: cr.w, h: cr.h }
+      : cr;
+    safeOnDraw(win, drawCr);
+  }
+  GPU.resetClip();
+}
+
+/**
+ * ABOUT ⇄ ボディのディゾルブを 1 フレーム描画する。
+ * 初回に from/to 両面をスナップショットし、以降は Bayer 閾値を進めて合成する。
+ */
+function _drawAboutTransition(win, cr) {
+  const anim = win._aboutAnim;
+  // content rect サイズが遷移中に変わったら (リサイズ等) 即座に確定する
+  if (anim.from && (cr.w !== anim.cw || cr.h !== anim.ch)) {
+    win._aboutMode = anim.to;
+    win._aboutAnim = null;
+    return;
+  }
+  if (!anim.from) {
+    anim.cw = cr.w;
+    anim.ch = cr.h;
+    _renderAboutFace(win, cr, win._aboutMode); // FROM = 現在の面
+    anim.from = _snapshotRect(cr);
+    _renderAboutFace(win, cr, anim.to); // TO = 遷移先の面
+    anim.toBuf = _snapshotRect(cr);
+  }
+  // Bayer 4x4 (0..15) を閾値に、t に応じて from→to を ordered dither で混ぜる
+  const thr = Math.round(anim.t * 17); // 0 → 全 from, 17 → 全 to
+  for (let yy = 0; yy < cr.h; yy++) {
+    const brow = BAYER_4x4[yy & 3]; // BAYER_4x4 は [row][col] の 2 次元配列
+    for (let xx = 0; xx < cr.w; xx++) {
+      const idx = yy * cr.w + xx;
+      const v = brow[xx & 3] < thr ? anim.toBuf[idx] : anim.from[idx];
+      GPU.pset(cr.x + xx, cr.y + yy, v);
+    }
+  }
+  anim.t += 1 / ABOUT_ANIM_FRAMES;
+  if (anim.t >= 1) {
+    win._aboutMode = anim.to;
+    win._aboutAnim = null;
+  }
+}
+
 function drawWindowFrame(win) {
   const L = win._layout;
 
@@ -2787,9 +2861,11 @@ function drawWindowFrame(win) {
     }
   }
 
-  // ── コンテンツ描画: ABOUT パネル or アプリ ──
+  // ── コンテンツ描画: ディゾルブ遷移 > ABOUT パネル > アプリ ──
   const cr = L.contentRect;
-  if (win._aboutMode && win.about) {
+  if (win._aboutAnim) {
+    if (cr.w > 0 && cr.h > 0) _drawAboutTransition(win, cr);
+  } else if (win._aboutMode && win.about) {
     if (cr.w > 0 && cr.h > 0) {
       GPU.setClip(cr.x, cr.y, cr.w, cr.h);
       drawAboutPanel(win, cr);
