@@ -72,8 +72,8 @@ function drawBars(cr) {
   if (!analyser) return;
   analyser.getByteFrequencyData(freqData);
   const drawY = cr.y + HEADER_H;
-  const drawH = WIN_H - HEADER_H - 2;
-  const drawW = WIN_W - 4;
+  const drawH = cr.h - HEADER_H - 2;
+  const drawW = cr.w - 4;
   const numBars = 48;
   const barW = Math.max(1, ((drawW - numBars) / numBars) | 0);
   const step = Math.floor(freqData.length / numBars);
@@ -93,9 +93,9 @@ function drawWave(cr) {
   if (!analyser) return;
   analyser.getByteTimeDomainData(timeData);
   const drawY = cr.y + HEADER_H;
-  const drawH = WIN_H - HEADER_H - 2;
+  const drawH = cr.h - HEADER_H - 2;
   const cy = drawY + drawH / 2;
-  const drawW = WIN_W - 4;
+  const drawW = cr.w - 4;
   let prevX = cr.x + 2;
   let prevY = cy;
   for (let i = 0; i < drawW; i++) {
@@ -132,9 +132,9 @@ function drawRipple(cr) {
     ripples.push({ r: 1, age: 0 });
   }
 
-  const cx = cr.x + WIN_W / 2;
-  const cy = cr.y + HEADER_H + (WIN_H - HEADER_H) / 2;
-  const maxR = Math.min(WIN_W, WIN_H - HEADER_H) / 2 - 2;
+  const cx = cr.x + cr.w / 2;
+  const cy = cr.y + HEADER_H + (cr.h - HEADER_H) / 2;
+  const maxR = Math.min(cr.w, cr.h - HEADER_H) / 2 - 2;
 
   for (const ring of ripples) {
     ring.r += 0.7 + bass * 1.5;
@@ -167,17 +167,21 @@ function drawRipple(cr) {
 //  ヘッダー (モード切替ボタン)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+// 最新の contentRect 幅を onInput hit-test と共有する
+let _crW = 0;
+
 function drawHeader(cr) {
+  _crW = cr.w;
   // モード名表示
   const label = `MODE: ${MODES[modeIdx]}`;
   drawText(cr.x + 4, cr.y + 4, label, 1);
   // 「>」ボタン (右側)
   const btnW = 14;
-  const btnX = cr.x + WIN_W - btnW - 2;
+  const btnX = cr.x + cr.w - btnW - 2;
   drawRect(btnX, cr.y + 2, btnW, HEADER_H - 4, 1);
   drawText(btnX + 4, cr.y + 4, ">", 1);
   // セパレータ
-  hline(cr.x, cr.x + WIN_W - 1, cr.y + HEADER_H - 1, 1);
+  hline(cr.x, cr.x + cr.w - 1, cr.y + HEADER_H - 1, 1);
 }
 
 function isHeaderClick(ev) {
@@ -187,8 +191,8 @@ function isHeaderClick(ev) {
 function isModeButtonClick(ev) {
   const btnW = 14;
   return (
-    ev.localX >= WIN_W - btnW - 2 &&
-    ev.localX < WIN_W - 2 &&
+    ev.localX >= _crW - btnW - 2 &&
+    ev.localX < _crW - 2 &&
     ev.localY >= 2 &&
     ev.localY < HEADER_H - 2
   );
