@@ -36,7 +36,8 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, "..");
 const PORT = 8765;
 const BOOT_TIMEOUT_MS = 15000;
-const SETTLE_MS = 800; // ウィンドウ open 後にレイアウトが落ち着くまで待つ
+const SETTLE_MS = 2000; // ウィンドウ open 後にレイアウト + アニメーションが落ち着くまで待つ
+// (TELEX のタイプライタや AQUARIUM の魚の動きが初期遷移を終えるのに十分な時間)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Args

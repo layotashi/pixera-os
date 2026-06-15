@@ -110,13 +110,6 @@ function appendCurrentLine() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function onDraw(cr) {
-  // 紙のテクスチャを模した薄い区切り線 (用紙の罫線風)
-  for (let i = 0; i < 6; i++) {
-    const y = cr.y + PADDING + i * (LINE_H * 2);
-    hline(cr.x + PADDING, cr.x + cr.w - PADDING - 1, y, 1);
-  }
-  // ↑ 1-bit パンチカード/印字紙の雰囲気。線が多すぎたら間引く。
-
   // 完成済み行を描画
   for (let i = 0; i < lines.length; i++) {
     drawText(cr.x + PADDING, cr.y + PADDING + i * LINE_H, lines[i], 1);
@@ -126,7 +119,7 @@ function onDraw(cr) {
     const y = cr.y + PADDING + lines.length * LINE_H;
     drawText(cr.x + PADDING, y, typingLine, 1);
     // カーソル (印字ヘッド)
-    const cursorX = cr.x + PADDING + typingLine.length * GLYPH_W;
+    const cursorX = cr.x + PADDING + typingLine.length * (GLYPH_W + 1);
     if (((typingFrameCount / 15) | 0) % 2 === 0) {
       fillRect(cursorX, y, 3, GLYPH_H, 1);
     }
