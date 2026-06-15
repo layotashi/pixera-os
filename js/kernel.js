@@ -244,6 +244,9 @@ async function boot() {
       wmOpenByName: WM.wmOpenByName,
       wmGetRegistry: WM.wmGetRegistry,
       wmGetWindowList: WM.wmGetWindowList,
+      // capture.mjs が screenshot 撮影前に視覚効果 (Diagonal scanline /
+      // Vignette) を切るために使う。production には影響しない。
+      setEffect: Config.setEffectParam,
     };
 
     mainLoop();

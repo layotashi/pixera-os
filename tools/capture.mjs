@@ -132,6 +132,15 @@ async function main() {
       { timeout: BOOT_TIMEOUT_MS },
     );
 
+    // 視覚効果 (Diagonal / Vignette) を OFF にする。
+    // screenshot レビューの判別精度を上げるため。production への影響無し
+    // (capture 専用の一時設定で、page を閉じれば消える)。
+    console.log(`[capture] disabling diag + vignette for clarity`);
+    await page.evaluate(() => {
+      window.__synesta.setEffect("diagEnabled", false);
+      window.__synesta.setEffect("vignetteEnabled", false);
+    });
+
     // ウィンドウを開く (desktop モードはスキップ)
     if (windowName.toLowerCase() !== "desktop") {
       console.log(`[capture] opening window: ${windowName}`);
