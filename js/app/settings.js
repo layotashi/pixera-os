@@ -42,7 +42,7 @@ const allPaletteLabels = [...paletteLabels, Config.CUSTOM_PALETTE_NAME];
 
 // ── Widget instance variables (deferred) ──
 let labelResolution, dropDownResolution;
-let lblFont, ddFont;
+let lblFont, ddFont, lblFontPreview;
 let lblHeaderPad, numberBoxHeaderPad;
 let lblContentPad, nbContentPad;
 let lblInputOverlay, tglInputOverlay;
@@ -134,6 +134,14 @@ function _initWidgets() {
   lblFont = new Label(0, 0, "Font:");
   ddFont = new DropDown(0, 0, fontLabels, Math.max(0, curFontIdx), (i) =>
     Config.setSystemFont(Config.FONTS[i].id),
+  );
+  // フォントの見た目を即時プレビュー (pangram = 全アルファベット含む英文)。
+  // システムフォントで描画されるため、ドロップダウンを切替えると onRelayout
+  // → remeasureAll でこの Label が新しいフォントで再計測・再描画される。
+  lblFontPreview = new Label(
+    0,
+    0,
+    "THE QUICK BROWN FOX\nJUMPS OVER THE LAZY DOG",
   );
 
   // ── Header Pad ──
@@ -398,6 +406,7 @@ function _initWidgets() {
     // ── DISPLAY ──
     HBox([labelResolution, dropDownResolution]),
     HBox([lblFont, ddFont]),
+    lblFontPreview,
     HBox([lblHeaderPad, numberBoxHeaderPad, new Label(0, 0, "DOT")]),
     HBox([lblContentPad, nbContentPad, new Label(0, 0, "DOT")]),
     sep1,

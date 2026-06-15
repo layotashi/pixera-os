@@ -142,6 +142,20 @@ async function main() {
       window.__synesta.setEffect("vignetteEnabled", false);
     });
 
+    // 環境変数 SYNESTA_FONT で起動時のシステムフォントを切替えられる
+    // (デバッグ用。例: SYNESTA_FONT=default_5x7 npm run capture SETTINGS)
+    const fontOverride = process.env.SYNESTA_FONT;
+    if (fontOverride) {
+      console.log(`[capture] switching font to: ${fontOverride}`);
+      await page.evaluate(async (id) => {
+        // Config.setSystemFont は kernel.js の boot で公開していないため
+        // import() で動的に取得する
+        const Config = await import("/js/config.js");
+        await Config.setSystemFont(id);
+      }, fontOverride);
+      await page.waitForTimeout(300);
+    }
+
     // ウィンドウを開く (desktop モードはスキップ)
     if (windowName.toLowerCase() !== "desktop") {
       console.log(`[capture] opening window: ${windowName}`);
