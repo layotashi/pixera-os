@@ -90,9 +90,9 @@ function autoName(starId) {
 
 function drawStar(cr, star) {
   const x = cr.x + Math.floor(((star.x - scrollX) % STAR_FIELD_W + STAR_FIELD_W) % STAR_FIELD_W);
-  if (x < cr.x || x >= cr.x + WIN_W) return;
+  if (x < cr.x || x >= cr.x + cr.w) return;
   const y = cr.y + Math.floor(star.y);
-  if (y < cr.y + 1 || y >= cr.y + WIN_H - FOOTER_H) return;
+  if (y < cr.y + 1 || y >= cr.y + cr.h - FOOTER_H) return;
 
   if (star.size === 1) {
     pset(x, y, 1);
@@ -125,8 +125,8 @@ function onDraw(cr) {
   // 星描画
   for (const s of stars) drawStar(cr, s);
 
-  // 仮の地平線
-  const horizonY = cr.y + WIN_H - FOOTER_H - 1;
+  // 仮の地平線 (フッターの上の区切り)
+  const horizonY = cr.y + cr.h - FOOTER_H - 1;
   hline(cr.x, cr.x + cr.w - 1, horizonY, 1);
 
   // フッター: 最後に命名した星 or 案内
