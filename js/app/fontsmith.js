@@ -41,7 +41,7 @@ import * as UI from "../ui/index.js";
 const APP_NAME = "FONTSMITH";
 
 const WIN_W = 172;
-const WIN_H = 234;
+const WIN_H = 244;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  レイアウト定数 (content-relative)
@@ -49,14 +49,15 @@ const WIN_H = 234;
 
 const PAD = 5;
 
-// キャラクタマップ: 全 ASCII を現フォントで一覧表示
+// キャラクタマップ: 編集対象の文字を現フォントで一覧表示 (小文字は除外)
 const CMAP_COLS = 16;
 const CMAP_CELL = 9; // (CMAP_CELL - glyphW=5) = 4 → 上下左右 2px で対称配置
 const CMAP_X = PAD;
-const CMAP_Y = 6;
+const CMAP_LABEL_Y = PAD; // "GLYPHS:" ラベル
+const CMAP_Y = PAD + 8; // ラベルの下にマップ
 
 // エディタ: 選択中グリフの拡大編集グリッド
-const EDIT_SCALE = 13;
+const EDIT_SCALE = 15; // 5x5 を 75px に拡大 (編集しやすさ + 幅の収まり)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  状態
@@ -68,8 +69,10 @@ let metrics = null;
 let working = null;
 /** @type {Uint8Array[]|null} 起動時のスナップショット (REVERT 用) */
 let seed = null;
-/** 編集対象の文字インデックス (0..charCount-1) */
+/** 編集対象の文字インデックス (0..charCount-1、working への実インデックス) */
 let selIndex = 0;
+/** UI に表示・編集する文字の実インデックス一覧 (小文字 a-z を除外) */
+let EDITABLE = [];
 
 // 動的レイアウト (metrics 確定後に算出)
 let CMAP_ROWS = 6;
@@ -90,6 +93,15 @@ function _copyBuf(b) {
 /** 現在のシステムフォントを取り込んで編集対象にする (REVERT 用スナップも保存) */
 function _seedFromSystem() {
   metrics = getFontMetrics();
+  // 編集対象 = 小文字 a-z (0x61-0x7A) を除く全 ASCII。
+  // SYNESTA は全テキストを大文字化するため小文字は表示されず、5x5 フォントでも
+  // プレースホルダ (塗りつぶしブロック) のまま。UI に出しても無意味なので除外。
+  EDITABLE = [];
+  for (let i = 0; i < metrics.charCount; i++) {
+    const code = metrics.firstChar + i;
+    if (code >= 0x61 && code <= 0x7a) continue;
+    EDITABLE.push(i);
+  }
   const len = metrics.glyphW * metrics.glyphH;
   working = new Array(metrics.charCount);
   seed = new Array(metrics.charCount);
@@ -111,11 +123,12 @@ function _seedFromSystem() {
 function _computeLayout() {
   const gw = metrics.glyphW;
   const gh = metrics.glyphH;
-  CMAP_ROWS = Math.ceil(metrics.charCount / CMAP_COLS);
+  CMAP_ROWS = Math.ceil(EDITABLE.length / CMAP_COLS);
   CMAP_H = CMAP_ROWS * CMAP_CELL;
-  EDIT_LABEL_Y = CMAP_Y + CMAP_H + 5;
+  // EDIT ラベルは editor のすぐ上に寄せる (近接: editor を指すと明確に)
+  EDIT_LABEL_Y = CMAP_Y + CMAP_H + 7;
   EDITOR_X = PAD;
-  EDITOR_Y = EDIT_LABEL_Y + 9;
+  EDITOR_Y = EDIT_LABEL_Y + 8;
   EDITOR_W = gw * EDIT_SCALE;
   EDITOR_H = gh * EDIT_SCALE;
   TOOLBAR_X = EDITOR_X + EDITOR_W + 12;
@@ -180,6 +193,7 @@ let widgetGroup;
 function _initWidgets() {
   if (widgetGroup) return;
   // レイアウトは _seedFromSystem 内で確定済み (factory で seed → init の順)
+  // 右カラム: グリフ単位の編集ツール (現在の文字に作用)
   btnClear = new UI.PushButton(TOOLBAR_X, EDITOR_Y, "CLEAR", _clearGlyph);
   btnInvert = new UI.PushButton(
     TOOLBAR_X,
@@ -187,7 +201,7 @@ function _initWidgets() {
     "INVERT",
     _invertGlyph,
   );
-  btnSave = new UI.PushButton(TOOLBAR_X, EDITOR_Y + 36, "SAVE", _save);
+  // 下段: フォント単位のアクション (APPLY / REVERT / SAVE)
   btnApply = new UI.PushButton(PAD, BTN_ROW_Y, "APPLY", _applyToSystem);
   btnRevert = new UI.PushButton(
     PAD + btnApply.w + 6,
@@ -195,12 +209,18 @@ function _initWidgets() {
     "REVERT",
     _revert,
   );
+  btnSave = new UI.PushButton(
+    PAD + btnApply.w + 6 + btnRevert.w + 6,
+    BTN_ROW_Y,
+    "SAVE",
+    _save,
+  );
   widgetGroup = new UI.WidgetGroup([
     btnClear,
     btnInvert,
-    btnSave,
     btnApply,
     btnRevert,
+    btnSave,
   ]);
 }
 
@@ -223,23 +243,25 @@ function drawGlyphBuf(buf, gw, gh, cx, cy, scale, color) {
 function drawCharMap(cr) {
   const gw = metrics.glyphW;
   const gh = metrics.glyphH;
+  drawText(cr.x + PAD, cr.y + CMAP_LABEL_Y, "GLYPHS:", 1);
   const baseX = cr.x + CMAP_X;
   const baseY = cr.y + CMAP_Y;
   const gx = Math.floor((CMAP_CELL - gw) / 2);
   const gy = Math.floor((CMAP_CELL - gh) / 2);
   // 外枠 (グループ化: 近接の原則)
   drawRect(baseX - 1, baseY - 1, CMAP_COLS * CMAP_CELL + 2, CMAP_H + 2, 1);
-  for (let i = 0; i < metrics.charCount; i++) {
-    const col = i % CMAP_COLS;
-    const row = (i / CMAP_COLS) | 0;
+  for (let k = 0; k < EDITABLE.length; k++) {
+    const gi = EDITABLE[k];
+    const col = k % CMAP_COLS;
+    const row = (k / CMAP_COLS) | 0;
     const cx = baseX + col * CMAP_CELL;
     const cy = baseY + row * CMAP_CELL;
-    if (i === selIndex) {
+    if (gi === selIndex) {
       // 選択セルは反転 (塗りつぶし背景 + 前景 0 でグリフを彫る)
       fillRect(cx, cy, CMAP_CELL, CMAP_CELL, 1);
-      drawGlyphBuf(working[i], gw, gh, cx + gx, cy + gy, 1, 0);
+      drawGlyphBuf(working[gi], gw, gh, cx + gx, cy + gy, 1, 0);
     } else {
-      drawGlyphBuf(working[i], gw, gh, cx + gx, cy + gy, 1, 1);
+      drawGlyphBuf(working[gi], gw, gh, cx + gx, cy + gy, 1, 1);
     }
   }
 }
@@ -325,9 +347,9 @@ function _charMapHit(localX, localY) {
   const col = (dx / CMAP_CELL) | 0;
   const row = (dy / CMAP_CELL) | 0;
   if (col >= CMAP_COLS || row >= CMAP_ROWS) return null;
-  const idx = row * CMAP_COLS + col;
-  if (idx < 0 || idx >= metrics.charCount) return null;
-  return idx;
+  const k = row * CMAP_COLS + col;
+  if (k < 0 || k >= EDITABLE.length) return null;
+  return EDITABLE[k]; // セル位置 → working への実インデックス
 }
 
 /** エディタグリッドのヒットテスト → {x,y} or null */
