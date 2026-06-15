@@ -235,6 +235,17 @@ async function boot() {
     // autoScale() 側でスキップする。復帰時にここで正しい値に再計算する。
     window.addEventListener("focus", () => Config.autoScale());
 
+    // ── テストフック (visual review harness 用) ──
+    // tools/capture.mjs などのオフブラウザツールが SYNESTA の起動完了を
+    // 検知し、ウィンドウを開いて canvas をスクリーンショットするためのフック。
+    // 通常運用には影響しない (= 単なる名前空間注入)。
+    /** @type {any} */ (window).__synesta = {
+      booted: true,
+      wmOpenByName: WM.wmOpenByName,
+      wmGetRegistry: WM.wmGetRegistry,
+      wmGetWindowList: WM.wmGetWindowList,
+    };
+
     mainLoop();
   } catch (e) {
     console.error("[SYNESTA] Boot failed:", e);
