@@ -371,12 +371,18 @@
   寸法依存のメトリクス・アイコン・レイアウト再計算が不要になる (シンプルさを優先)。
   `switchFont()` はブート時の単一フォント読み込みに使用。
 
-- ~~`[P2]` **システムフォントの切り替え機能**~~ ✅ 実装済み → **5x5 内での切替に再設計予定**
-  — フォント切替の枠組み (`config.js` の getter/setter/callback + Settings の Font DropDown) は維持。
-  全フォントが 5x5 同一寸法になったため、切替は `font.js` の `setGlyphs()` による
-  グリフ内容スワップで実現する (寸法不変なので relayout 不要)。
-  FONTSMITH が作る複数のユーザーフォント + システムデフォルトを切り替える形へ発展させる。
-  → 詳細は Applications > FONTSMITH 完成計画 を参照。
+- ~~`[P2]` **システムフォントの切り替え機能**~~ ✅ 実装済み (5x5 content-swap に再設計)
+  — 全フォントが 5x5 同一寸法のため、切替は `font.js` の `setGlyphs()` による
+  グリフ内容スワップで実現 (寸法不変なので relayout 不要)。各 FONTS 定義が
+  `_glyphs` を保持し、Settings の Font DropDown で切替。FONTSMITH 製の
+  ユーザーフォント + 組込デフォルトを切り替えられる。
+
+- ~~**FONTSMITH 完成 (自作フォントが OS の chrome になる)**~~ ✅ 実装済み
+  — 全 ASCII 編集 + キャラクタマップ + 現フォント取込 (P1)、`setGlyphs` での
+  ライブ APPLY/REVERT (P2)、名前付き保存 → VFS 永続化 → Settings 切替 (P3)。
+  `core/user_fonts.js` が `/Fonts/<name>.font` を管理し、boot 時に再登録。
+  残: REVERT の「組込デフォルトへ戻す」明示ボタン、フォント削除 UI、
+  エクスポート/インポート (共有) は今後の検討。
 
 ---
 

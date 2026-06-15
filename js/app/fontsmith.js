@@ -20,9 +20,9 @@
  * 寸法はシステムフォントと同一 (5x5) を保つため、適用してもメトリクス・
  * アイコン・レイアウトは一切変わらず、純粋に字形だけが置き換わる。
  *
- * 未実装 (今後の検討事項):
- *   - 名前付き保存 → Config.FONTS 登録 → Settings ドロップダウンで切替
- *   - VFS への永続化 (リロード後も自作フォントを保持)
+ *   - SAVE: 名前を付けて VFS (/Fonts/<name>.font) に保存 → Config.FONTS に
+ *     登録 → Settings ドロップダウンで切替可能に。boot 時に再読込されるため
+ *     リロード後も自作フォントが残る (core/user_fonts.js)。
  */
 
 import { pset, fillRect, drawRect, hline, vline } from "../core/gpu.js";
