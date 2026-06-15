@@ -38,6 +38,7 @@ import "./telex.js";
 import "./aquarium.js";
 import "./observatory.js";
 import "./band.js";
+import "./oracle.js";
 import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 
 // ── デスクトップアイコン初期化 ──
