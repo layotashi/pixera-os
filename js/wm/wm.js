@@ -1554,31 +1554,44 @@ export function wmOpen(
   const footer = !!(opts && opts.footer);
   const scrollable = !!(opts && opts.scrollable);
   // w=0 or h=0 なら onMeasure で自動算出
+  let scrollableClamped = false;
   if (onMeasure && (w === 0 || h === 0)) {
     const size = onMeasure();
     const fit = calcWindowSize(size.w, size.h, footer, scrollable);
     if (w === 0) w = fit.w;
     if (h === 0) h = fit.h;
     // scrollable ウィンドウは自然サイズが work area を超える場合に
-    // 初期高さを work area へクランプする。クランプしないと
-    // 画面外に窓がはみ出し、かつ contentRect.h == virtualH となって
-    // スクロールバーが出ない (= 最大化するまで下部に到達不可) という
-    // 矛盾が発生する。
+    // 初期高さを work area の SCROLL_INIT_RATIO 倍へクランプする。
+    // クランプしないと画面外に窓がはみ出し、かつ contentRect.h == virtualH
+    // となってスクロールバーが出ない (= 最大化するまで下部に到達不可)
+    // という矛盾が発生する。
+    // 100% でなく ~85% にすることで画面上下に余白を作り、圧迫感を緩和する。
     if (scrollable) {
       const waTopAuto = wmGetWorkAreaTop();
-      const maxH = Config.VRAM_HEIGHT - waTopAuto;
-      if (h > maxH) h = maxH;
+      const workAreaH = Config.VRAM_HEIGHT - waTopAuto;
+      const SCROLL_INIT_RATIO = 0.85;
+      const maxH = Math.floor(workAreaH * SCROLL_INIT_RATIO);
+      if (h > maxH) {
+        h = maxH;
+        scrollableClamped = true;
+      }
       if (w > Config.VRAM_WIDTH) w = Config.VRAM_WIDTH;
     }
   }
 
   // 自動カスケード配置 (x < 0 で opt-in)
   if (x < 0) {
+    const waTop = wmGetWorkAreaTop();
     if (opts && opts.center) {
       // 画面中央配置
-      const waTop = wmGetWorkAreaTop();
       x = ((Config.VRAM_WIDTH - w) / 2) | 0;
       y = (waTop + (Config.VRAM_HEIGHT - waTop - h) / 2) | 0;
+    } else if (scrollableClamped) {
+      // scrollable で work area より大きく、初期高がクランプされた場合は
+      // cascade ではなく画面中央に置く。上下対称な余白で「映える」配置に。
+      const workAreaH = Config.VRAM_HEIGHT - waTop;
+      x = ((Config.VRAM_WIDTH - w) / 2) | 0;
+      y = waTop + Math.floor((workAreaH - h) / 2);
     } else {
       const pos = nextCascadePos(w, h);
       x = pos.x;
@@ -2200,8 +2213,14 @@ function propagateBodyEvents(mx, my) {
           Scroll.scrollNeeded(win._vScroll) &&
           !Input.wheelHasCtrl()
         ) {
-          const dir = wy > 0 ? 1 : wy < 0 ? -1 : 0;
-          if (dir !== 0) Scroll.scrollBy(win._vScroll, dir * 3);
+          // ウィンドウスクロール単位は px。ホイール delta (典型値: 100/clk on
+          // Windows、trackpad では小さい連続値) を ~1/6 してスクロール量に変換する。
+          // 最低 1px を保証してトラックパッドの微細な操作も拾う。
+          if (wy !== 0) {
+            const step =
+              Math.sign(wy) * Math.max(1, Math.round(Math.abs(wy) / 6));
+            Scroll.scrollBy(win._vScroll, step);
+          }
         }
         break;
       }
