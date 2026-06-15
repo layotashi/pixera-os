@@ -35,24 +35,36 @@ npm run capture desktop          # ウィンドウを開かず、デスクトッ
 1. 軽量な静的ファイルサーバーを `http://localhost:8765` で起動
 2. Playwright で headless Chromium 起動 (viewport 1280×720)
 3. SYNESTA ロード → `window.__synesta.booted` が `true` になるのを待つ
-4. `window.__synesta.wmOpenByName(name)` でアプリを起動
-5. 800ms 待機してレイアウトが落ち着いた後、canvas#screen を screenshot
-6. PNG を `screenshots/` に保存
+4. **レビュー精度向上の調整** を適用 (下記)
+5. `window.__synesta.wmOpenByName(name)` でアプリを起動
+6. 待機してレイアウトが落ち着いた後、canvas#screen を screenshot
+7. PNG を `screenshots/` に保存
+
+### レビュー精度向上の調整 (production と見た目が異なる点)
+
+判別精度を上げるため、capture では以下を適用する。**production の見た目とは
+異なる**ので注意 (例: 壁紙のディザ模様やカーソルは出ない):
+
+- Diagonal scanline / Vignette を OFF
+- カーソルを非表示 (UI に重なって判読を妨げるため)
+- 背景を単色 Solid (level 0) にしてディザ模様のノイズを除去
+
+いずれも capture 専用の一時設定で、page を閉じれば消える (production 不変)。
 
 ### SYNESTA 側のテストフック
 
-`js/kernel.js` のブート完了時に以下を露出している:
+`js/kernel.js` のブート完了時に以下を露出している (名前空間の追加のみ、
+通常運用には影響しない):
 
 ```js
 window.__synesta = {
   booted: true,
-  wmOpenByName,
-  wmGetRegistry,
-  wmGetWindowList,
+  wmOpenByName, wmGetRegistry, wmGetWindowList,
+  wmGetWindowRect, wmGetContentRect, // ウィンドウ矩形取得 (スクリプト操作用)
+  setEffect,        // Diagonal / Vignette 等の視覚効果切替
+  setCursorHidden,  // カーソル非表示 (レビュー用)
 };
 ```
-
-通常運用にはまったく影響しない (名前空間の追加のみ)。
 
 ### 限界
 
