@@ -57,16 +57,14 @@ const APP_NAME = "GENART";
 let artWidth = 256;
 let artHeight = 192;
 
-/** サイズプリセット (末尾の CUSTOM は NumberBox 直接入力時に自動選択) */
+/** キャンバスサイズのプリセット (w=0 は画面全体) */
 const SIZE_PRESETS = [
   { label: "256x192", w: 256, h: 192 },
   { label: "320x240", w: 320, h: 240 },
   { label: "400x300", w: 400, h: 300 },
   { label: "512x384", w: 512, h: 384 },
   { label: "SCREEN", w: 0, h: 0 },
-  { label: "CUSTOM", w: -1, h: -1 },
 ];
-const SIZE_CUSTOM_IDX = SIZE_PRESETS.length - 1;
 let currentSizeIdx = 0;
 
 /** キャンバスサイズの許容範囲 */
@@ -718,8 +716,6 @@ function applyArtSize(w, h) {
   w = Math.max(ART_W_MIN, Math.min(ART_W_MAX, w));
   h = Math.max(ART_H_MIN, Math.min(ART_H_MAX, h));
   resizeArt(w, h);
-  if (nbArtW) nbArtW.value = w;
-  if (nbArtH) nbArtH.value = h;
   startGeneration();
 }
 
@@ -2584,7 +2580,7 @@ function autoNext() {
 let toolbar;
 let toolbarRoot;
 let ddAlgo, ddPreset, lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto;
-let ddSize, nbArtW, nbArtH, ddScale, btnSave, btnFile;
+let ddSize, ddScale, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2606,7 +2602,7 @@ function buildToolbar() {
     startGeneration();
   });
 
-  lblSeed = new UI.Label(0, 0, "SEED");
+  lblSeed = new UI.Label(0, 0, "SEED:");
   nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
 
   btnDice = new UI.PushButton(0, 0, "", () => {
@@ -2665,21 +2661,7 @@ function buildToolbar() {
     }
     // CUSTOM 選択時は NumberBox の現在値をそのまま使用
   });
-  ddSize.tooltip = "Size preset";
-
-  nbArtW = new UI.NumberBox(0, 0, ART_W_MIN, ART_W_MAX, artWidth, 1, (v) => {
-    currentSizeIdx = SIZE_CUSTOM_IDX;
-    ddSize.selectedIndex = SIZE_CUSTOM_IDX;
-    applyArtSize(v, nbArtH.value);
-  });
-  nbArtW.tooltip = "Canvas width";
-
-  nbArtH = new UI.NumberBox(0, 0, ART_H_MIN, ART_H_MAX, artHeight, 1, (v) => {
-    currentSizeIdx = SIZE_CUSTOM_IDX;
-    ddSize.selectedIndex = SIZE_CUSTOM_IDX;
-    applyArtSize(nbArtW.value, v);
-  });
-  nbArtH.tooltip = "Canvas height";
+  ddSize.tooltip = "Canvas size";
 
   const scaleLabels = EXPORT_SCALES.map((s) => `x${s}`);
   ddScale = new UI.DropDown(
@@ -2704,9 +2686,14 @@ function buildToolbar() {
   btnFile.tooltip = "Save as PBM to VFS";
 
   // ── レイアウト ──
-  const row1 = UI.HBox([ddAlgo, ddPreset]);
+  // 無ラベルだと FLOW/SILK/256X192 が何の設定か初見で分からないため、
+  // 各グループにラベルを付けて用途を明示する。
+  const lblAlgo = new UI.Label(0, 0, "ALGO:");
+  const lblStyle = new UI.Label(0, 0, "STYLE:");
+  const lblSize = new UI.Label(0, 0, "SIZE:");
+  const row1 = UI.HBox([lblAlgo, ddAlgo, lblStyle, ddPreset]);
   const row2 = UI.HBox([lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto]);
-  const row3 = UI.HBox([ddSize, nbArtW, nbArtH, ddScale, btnSave, btnFile]);
+  const row3 = UI.HBox([lblSize, ddSize, ddScale, btnSave, btnFile]);
   toolbarRoot = UI.VBox([row1, row2, row3]);
   toolbar = new UI.WidgetGroup(toolbarRoot);
   toolbarH = toolbarRoot.y + toolbarRoot.h;
@@ -2730,10 +2717,13 @@ function onDraw(contentRect) {
 
   toolbar.draw(contentRect);
 
-  const cx = contentRect.x + 1,
+  // キャンバスの左端をツールバー (FOCUS_MARGIN 起点) に揃える。
+  // 以前は contentRect.x 起点で、ツールバーより FOCUS_MARGIN px 左にずれていた。
+  const ax = contentRect.x + UI.FOCUS_MARGIN;
+  const cx = ax + 1,
     cy = contentRect.y + toolbarH + CANVAS_GAP + 1;
   GPU.drawRect(
-    contentRect.x,
+    ax,
     contentRect.y + toolbarH + CANVAS_GAP,
     artWidth + 2,
     artHeight + 2,
@@ -2755,7 +2745,7 @@ function onDraw(contentRect) {
   if (generating) {
     const barW = artWidth + 2,
       barH = 3,
-      barX = contentRect.x,
+      barX = ax,
       barY = cy + artHeight + 2;
     GPU.fillRect(barX, barY, barW, barH, 0);
     GPU.drawRect(barX, barY, barW, barH, 1);
@@ -2782,7 +2772,7 @@ function onInput(ev) {
 function onMeasure() {
   const tbSize = toolbar.measure();
   return {
-    w: Math.max(tbSize.w, artWidth + 2),
+    w: Math.max(tbSize.w, UI.FOCUS_MARGIN + artWidth + 2),
     h: toolbarH + CANVAS_GAP + artHeight + 2 + 6,
   };
 }
