@@ -56,7 +56,7 @@ import * as GPU from "../core/gpu.js";
 import * as Input from "../core/input.js";
 import { setCursor } from "../core/cursor.js";
 import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
-import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
+import { drawText, GLYPH_W, GLYPH_H, textWidth } from "../core/font.js";
 import { BAYER_4x4 } from "../core/dither.js";
 import { FOCUS_MARGIN } from "../ui/ui_constants.js";
 import * as Scroll from "../ui/scrollbar.js";
@@ -1692,6 +1692,17 @@ export function wmOpen(
       h = c.h;
       scrollableClamped = c.clamped;
     }
+  }
+
+  // タイトルがヘッダのアイコン (×・最大化) と衝突しない最小幅を保証する。
+  // 窓幅が内容のみで決まると、内容より長いタイトル (例: ダイアログの
+  // "! IMPORTANT !") が × ボタンに食い込んで「! IMPORTANTX!」と潰れる。
+  {
+    const noMax = !!(opts && opts.noMaximize);
+    const iconsW = ICON_W + (noMax ? 0 : ICON_SLOT);
+    const minTitleW =
+      BORDER * 2 + HEADER_PADDING * 2 + textWidth(title) + ICON_GAP + iconsW;
+    if (w < minTitleW) w = minTitleW;
   }
 
   // 自動カスケード配置 (x < 0 で opt-in)
