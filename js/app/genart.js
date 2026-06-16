@@ -109,6 +109,7 @@ let gifRecording = false;
 let gifFrames = [];
 let gifNextSample = 0; // 次にサンプルする progress 閾値
 let gifScale = 8;
+let gifLoopFrame = 0; // アニメ算法のループ GIF 用フレームカウンタ
 
 /** アルゴリズム定義 */
 const ALGO_KEYS = [
@@ -183,6 +184,27 @@ const FIELD_ALGOS = new Set([
 let renderMode = "dot";
 
 const RENDER_LABELS = { dot: "DOT", ascii: "ASCII" };
+
+/**
+ * 連続アニメ (時間発展) する場アルゴリズム。
+ * 場を時刻 t∈[0,2π) で毎フレーム再計算し、常に動き続ける「生きたキャンバス」。
+ * 位相を進める (plasma/grid/wave) か、ノイズ標本点を円運動させる (drift/land) ことで
+ * t が一周すると元に戻る ＝ 周期的 ＝ シームレスにループする (GIF ループの素地)。
+ * 構造系・VORONOI・REACT・RAIN は一回生成 (時間発展しない)。
+ */
+const ANIM_ALGOS = new Set(["plasma", "drift", "grid", "land", "wave"]);
+/** アニメ 1 周期のフレーム数 (≈3秒@60fps)。GIF ループもこの周期で撮る。 */
+const ANIM_PERIOD = 180;
+const ANIM_DT = (Math.PI * 2) / ANIM_PERIOD;
+/** drift/land のノイズ標本点を円運動させる半径 (セル単位) — 場がゆっくり漂う */
+const DRIFT_ANIM_RADIUS = 6;
+const LAND_ANIM_RADIUS = 5;
+/** アニメの現在時刻 t∈[0,2π) */
+let animTime = 0;
+
+function isAnimated() {
+  return ANIM_ALGOS.has(ALGO_KEYS[currentAlgoIdx]);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  プリセット定義
@@ -964,7 +986,11 @@ function downloadArt() {
   }
 }
 
-/** 生成過程の GIF 録画を開始する (現在の設定で再生成し、その過程をキャプチャ) */
+/**
+ * GIF 録画を開始する。
+ *   - アニメ系: 現在の場のまま 1 周期 (2π) を撮ってシームレスループ GIF にする。
+ *   - 一回生成系: 現在の設定で再生成し、その生成過程を撮る。
+ */
 function startGifRecording() {
   if (gifRecording) return;
   if (renderMode === "ascii") {
@@ -975,10 +1001,16 @@ function startGifRecording() {
   gifRecording = true;
   gifScale = gifEffectiveScale();
   gifFrames = [];
-  gifNextSample = 0;
-  statusText = "RECORDING GIF...";
-  seed = nbSeed.value;
-  startGeneration();
+  if (isAnimated()) {
+    // 現在の場パラメータを保ったまま 1 周期をループ撮影 (再生成しない)
+    gifLoopFrame = 0;
+    statusText = "RECORDING LOOP...";
+  } else {
+    gifNextSample = 0;
+    statusText = "RECORDING GIF...";
+    seed = nbSeed.value;
+    startGeneration();
+  }
 }
 
 /** 録画した GIF をエンコードしてダウンロードする */
@@ -1820,22 +1852,23 @@ function waveInit(preset, s) {
       angle: rng() * Math.PI * 2,
     });
   }
-  waveScanY = 0;
-  generating = true;
-  progress = 0;
+  animTime = 0;
+  generating = false; // 即時生成 → 連続アニメへ
+  progress = 1;
+  waveFill(0);
 }
 
-function waveStep() {
+/**
+ * 波動干渉場を時刻 t で全面再計算する。
+ * 各波源の位相を t だけ進めると、干渉縞 (波面) が伝播し続ける (周期 2π)。
+ */
+function waveFill(t) {
+  if (!waveSources || !fieldBuf) return;
   const p = wavePreset;
-  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 120));
   const maxDim = Math.max(artWidth, artHeight);
-  for (
-    let row = 0;
-    row < rowsPerFrame && waveScanY < fieldRows;
-    row++, waveScanY++
-  ) {
-    const py = fieldPixelY(waveScanY);
-    const base = waveScanY * fieldCols;
+  for (let r = 0; r < fieldRows; r++) {
+    const py = fieldPixelY(r);
+    const base = r * fieldCols;
     for (let c = 0; c < fieldCols; c++) {
       const px = fieldPixelX(c);
       let sum = 0;
@@ -1859,19 +1892,13 @@ function waveStep() {
             dy = py - s.y;
           amp = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy) / maxDim);
         }
-        sum += Math.sin(d * s.freq + s.phase) * amp;
+        sum += Math.sin(d * s.freq + s.phase + t) * amp;
       }
       fieldBuf[base + c] = (sum / waveSources.length + 1) * 0.5;
     }
   }
   commitField();
-  progress = waveScanY / fieldRows;
-  statusText = `SCAN: ${waveScanY}/${fieldRows}`;
-  if (waveScanY >= fieldRows) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${waveSources.length} SOURCES`;
-  }
+  statusText = `WAVE ${waveSources.length} SOURCES`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2122,18 +2149,14 @@ function automataStep() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  AA_PLASMA — ASCII Art プラズマ
+//  PLASMA — sin/cos 干渉プラズマ場 (アニメ)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
-// sin/cos 干渉の多重合成で生成したグレースケール値を、
-// 文字の塗り面積率 (density) にマッピングして描く。
-// ピクセルではなく「文字」が画素となる、もう一つの 1-bit 表現。
-//
-// 各レイヤーは seed 由来のランダムなパラメータ
-// (周波数・位相・中心位置) を持ち、seed ごとに
-// まったく異なる干渉模様が生まれる。
+// sin/cos 干渉の多重合成でスカラー場を生む。各レイヤーは seed 由来の
+// 周波数・位相・中心を持ち、seed ごとに別の干渉模様になる。
+// 時刻 t で各レイヤーの位相を進めると、模様がうねり続ける (周期 2π)。
 
-/** @type {string[]|null} AA 出力行 */
+/** @type {string[]|null} ASCII 出力行 */
 let aaLines = null;
 
 /** AA キャンバスの列数・行数 */
@@ -2184,26 +2207,20 @@ function plasmaInit(preset, s) {
     });
   }
 
-  plasmaScanRow = 0;
-  generating = true;
-  progress = 0;
+  animTime = 0;
+  generating = false; // 場は即時生成 → 連続アニメへ
+  progress = 1;
+  plasmaFill(0);
 }
 
-function plasmaStep() {
+/** プラズマ場を時刻 t で全面再計算する (t で位相が進み、模様がうねる) */
+function plasmaFill(t) {
   if (!plasmaLayers || !fieldBuf) return;
   const invGamma = 1.0 / plasmaGamma;
   const layers = plasmaLayers;
   const nLayers = layers.length;
 
-  // 1 フレームで数行ずつ漸進的に塗る
-  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
-
-  for (
-    let i = 0;
-    i < rowsPerFrame && plasmaScanRow < fieldRows;
-    i++, plasmaScanRow++
-  ) {
-    const r = plasmaScanRow;
+  for (let r = 0; r < fieldRows; r++) {
     const cy = fieldCellY(r);
     const base = r * fieldCols;
 
@@ -2212,15 +2229,15 @@ function plasmaStep() {
       let sum = 0;
       for (let li = 0; li < nLayers; li++) {
         const L = layers[li];
-        // sin/cos 干渉 + 放射成分
+        // sin/cos 干渉 + 放射成分。位相に t を加えると場全体が時間発展する。
         const dx = cx - L.cx,
           dy = cy - L.cy;
         const dist = Math.sqrt(dx * dx + dy * dy);
         sum +=
           L.weight *
-          (Math.sin(cx * L.freqX + L.phaseX) +
-            Math.sin(cy * L.freqY + L.phaseY) +
-            Math.sin(dist * L.radialFreq));
+          (Math.sin(cx * L.freqX + L.phaseX + t) +
+            Math.sin(cy * L.freqY + L.phaseY + t) +
+            Math.sin(dist * L.radialFreq - t));
       }
 
       // [-3*nLayers, +3*nLayers] → [0, 1]
@@ -2235,14 +2252,7 @@ function plasmaStep() {
     }
   }
   commitField();
-
-  progress = plasmaScanRow / fieldRows;
-  statusText = `ROW: ${plasmaScanRow}/${fieldRows}`;
-  if (plasmaScanRow >= fieldRows) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${fieldCols}x${fieldRows}`;
-  }
+  statusText = `PLASMA ${fieldCols}x${fieldRows}`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2267,30 +2277,32 @@ function driftInit(preset, s) {
   // seed 由来オフセット
   driftOffX = rng() * 1000;
   driftOffY = rng() * 1000;
-  driftScanRow = 0;
-  generating = true;
-  progress = 0;
+  animTime = 0;
+  generating = false; // 即時生成 → 連続アニメへ
+  progress = 1;
+  driftFill(0);
 }
 
-function driftStep() {
+/**
+ * ノイズ密度場を時刻 t で全面再計算する。
+ * ノイズ標本点を半径 DRIFT_ANIM_RADIUS の円で動かすことで、場が漂い続け、
+ * t が一周 (2π) すると元に戻る ＝ シームレスループする。
+ */
+function driftFill(t) {
   if (!driftPreset || !fieldBuf) return;
   const p = driftPreset;
   const invGamma = 1.0 / p.gamma;
-  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
+  const ox = driftOffX + DRIFT_ANIM_RADIUS * Math.cos(t);
+  const oy = driftOffY + DRIFT_ANIM_RADIUS * Math.sin(t);
 
-  for (
-    let i = 0;
-    i < rowsPerFrame && driftScanRow < fieldRows;
-    i++, driftScanRow++
-  ) {
-    const r = driftScanRow;
+  for (let r = 0; r < fieldRows; r++) {
     const cy = fieldCellY(r);
     const base = r * fieldCols;
 
     for (let c = 0; c < fieldCols; c++) {
       const cx = fieldCellX(c);
-      const nx = (cx + driftOffX) * p.scale;
-      const ny = (cy + driftOffY) * p.scale;
+      const nx = (cx + ox) * p.scale;
+      const ny = (cy + oy) * p.scale;
       let v = (fbm(nx, ny, p.octaves) + 1) * 0.5; // -1..1 → 0..1
       if (v < 0) v = 0;
       else if (v > 1) v = 1;
@@ -2299,14 +2311,7 @@ function driftStep() {
     }
   }
   commitField();
-
-  progress = driftScanRow / fieldRows;
-  statusText = `ROW: ${driftScanRow}/${fieldRows}`;
-  if (driftScanRow >= fieldRows) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${fieldCols}x${fieldRows}`;
-  }
+  statusText = `DRIFT ${fieldCols}x${fieldRows}`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2452,7 +2457,7 @@ function aaGridInit(preset, s) {
 
   allocField(preset.chars);
 
-  // seed 由来のパラメータ
+  // seed 由来のパラメータ (アニメ中に rng を消費しないよう、ここで確定させる)
   aaGridParams = {
     phaseX: rng() * Math.PI * 2,
     phaseY: rng() * Math.PI * 2,
@@ -2460,35 +2465,41 @@ function aaGridInit(preset, s) {
     offsetX: rng() * 100,
     offsetY: rng() * 100,
     stripeAngle: rng() * Math.PI,
+    checkerSize: Math.max(2, (4 + rng() * 4) | 0),
   };
 
-  aaGridScanRow = 0;
-  generating = true;
-  progress = 0;
+  animTime = 0;
+  generating = false; // 即時生成 → 連続アニメへ
+  progress = 1;
+  gridFill(0);
 }
 
-function _gridValue(patFn, c, r, freq, params, cellCols, cellRows) {
+// 各パターンに時刻 t を与えて時間発展させる (位相を進める / 標本点を円運動)。
+function _gridValue(patFn, c, r, freq, params, cellCols, cellRows, t) {
   switch (patFn) {
     case "wave": {
-      const v1 = Math.sin(c * freq * params.freqMod + params.phaseX);
-      const v2 = Math.sin(r * freq + params.phaseY);
-      const v3 = Math.sin((c + r) * freq * 0.7 + params.phaseX * 0.5);
+      const v1 = Math.sin(c * freq * params.freqMod + params.phaseX + t);
+      const v2 = Math.sin(r * freq + params.phaseY + t);
+      const v3 = Math.sin((c + r) * freq * 0.7 + params.phaseX * 0.5 - t);
       return ((v1 + v2 + v3) / 3) * 0.5 + 0.5;
     }
     case "checker": {
-      const size = Math.max(2, (4 + rng() * 4) | 0);
-      const cx = ((c + params.offsetX) / size) | 0;
-      const cy = ((r + params.offsetY) / size) | 0;
+      const size = params.checkerSize;
+      // オフセットを小さく揺らすと市松がゆっくり揺れる (sin/cos で周期的)
+      const cx = ((c + params.offsetX + 2 * Math.sin(t)) / size) | 0;
+      const cy = ((r + params.offsetY + 2 * Math.cos(t)) / size) | 0;
       return (cx + cy) % 2 === 0 ? 0.8 : 0.2;
     }
     case "diamond": {
       const dx = Math.abs(c - cellCols / 2);
       const dy = Math.abs(r - cellRows / 2);
-      const d = (dx + dy) * freq + params.phaseX;
+      const d = (dx + dy) * freq + params.phaseX + t; // 同心菱形が脈動
       return Math.sin(d) * 0.5 + 0.5;
     }
     case "noise": {
-      const v = fbm((c + params.offsetX) * freq, (r + params.offsetY) * freq, 3);
+      const ox = params.offsetX + DRIFT_ANIM_RADIUS * Math.cos(t);
+      const oy = params.offsetY + DRIFT_ANIM_RADIUS * Math.sin(t);
+      const v = fbm((c + ox) * freq, (r + oy) * freq, 3);
       return v * 0.5 + 0.5;
     }
     default:
@@ -2496,27 +2507,22 @@ function _gridValue(patFn, c, r, freq, params, cellCols, cellRows) {
   }
 }
 
-function aaGridStep() {
+/** グリッド場を時刻 t で全面再計算する */
+function gridFill(t) {
   if (!aaGridPreset || !fieldBuf) return;
   const p = aaGridPreset;
   const invGamma = 1.0 / p.gamma;
   const params = aaGridParams;
   const cellCols = calcAACols(),
     cellRows = calcAARows();
-  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
 
-  for (
-    let i = 0;
-    i < rowsPerFrame && aaGridScanRow < fieldRows;
-    i++, aaGridScanRow++
-  ) {
-    const r = aaGridScanRow;
+  for (let r = 0; r < fieldRows; r++) {
     const cy = fieldCellY(r);
     const base = r * fieldCols;
 
     for (let c = 0; c < fieldCols; c++) {
       const cx = fieldCellX(c);
-      let v = _gridValue(p.patFn, cx, cy, p.freq, params, cellCols, cellRows);
+      let v = _gridValue(p.patFn, cx, cy, p.freq, params, cellCols, cellRows, t);
       if (v < 0) v = 0;
       if (v > 1) v = 1;
       if (invGamma !== 1.0) v = v ** invGamma;
@@ -2524,14 +2530,7 @@ function aaGridStep() {
     }
   }
   commitField();
-
-  progress = aaGridScanRow / fieldRows;
-  statusText = `ROW: ${aaGridScanRow}/${fieldRows}`;
-  if (aaGridScanRow >= fieldRows) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${fieldCols}x${fieldRows}`;
-  }
+  statusText = `GRID ${fieldCols}x${fieldRows}`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2559,30 +2558,32 @@ function aaLandInit(preset, s) {
   aaLandOffX = rng() * 1000;
   aaLandOffY = rng() * 1000;
 
-  aaLandScanRow = 0;
-  generating = true;
-  progress = 0;
+  animTime = 0;
+  generating = false; // 即時生成 → 連続アニメへ
+  progress = 1;
+  landFill(0);
 }
 
-function aaLandStep() {
+/**
+ * 地形場を時刻 t で全面再計算する。
+ * ノイズ標本点を半径 LAND_ANIM_RADIUS の円で動かし、地形がゆっくり流れる
+ * (上空をゆっくり旋回するイメージ)。t 一周で元に戻る ＝ ループする。
+ */
+function landFill(t) {
   if (!aaLandPreset || !fieldBuf) return;
   const p = aaLandPreset;
   const invGamma = 1.0 / p.gamma;
-  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
+  const ox = aaLandOffX + LAND_ANIM_RADIUS * Math.cos(t);
+  const oy = aaLandOffY + LAND_ANIM_RADIUS * Math.sin(t);
 
-  for (
-    let i = 0;
-    i < rowsPerFrame && aaLandScanRow < fieldRows;
-    i++, aaLandScanRow++
-  ) {
-    const r = aaLandScanRow;
+  for (let r = 0; r < fieldRows; r++) {
     const cy = fieldCellY(r);
     const base = r * fieldCols;
 
     for (let c = 0; c < fieldCols; c++) {
       const cx = fieldCellX(c);
-      const nx = (cx + aaLandOffX) * p.scale;
-      const ny = (cy + aaLandOffY) * p.scale;
+      const nx = (cx + ox) * p.scale;
+      const ny = (cy + oy) * p.scale;
       const raw = fbm(nx, ny, p.octaves); // -1..1
       const h = (raw + 1) * 0.5; // 0..1
 
@@ -2600,14 +2601,7 @@ function aaLandStep() {
     }
   }
   commitField();
-
-  progress = aaLandScanRow / fieldRows;
-  statusText = `ROW: ${aaLandScanRow}/${fieldRows}`;
-  if (aaLandScanRow >= fieldRows) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${fieldCols}x${fieldRows}`;
-  }
+  statusText = `LAND ${fieldCols}x${fieldRows}`;
 }
 
 function startGeneration() {
@@ -2661,6 +2655,8 @@ function startGeneration() {
   }
 }
 
+// 一回生成 (漸進描画) 系のステップ。アニメ系 (plasma/drift/grid/land/wave) は
+// stepGeneration を通らず、onDraw が animateFill() で毎フレーム更新する。
 function stepGeneration() {
   if (!generating) return;
   switch (ALGO_KEYS[currentAlgoIdx]) {
@@ -2682,29 +2678,35 @@ function stepGeneration() {
     case "voronoi":
       voronoiStep();
       break;
-    case "wave":
-      waveStep();
-      break;
     case "spiral":
       spiralStep();
       break;
     case "automata":
       automataStep();
       break;
-    case "plasma":
-      plasmaStep();
-      break;
-    case "drift":
-      driftStep();
-      break;
     case "rain":
       aaRainStep();
       break;
+  }
+}
+
+/** アニメ系の場を現在の animTime で全面更新する (onDraw / ループ GIF から呼ぶ) */
+function animateFill() {
+  switch (ALGO_KEYS[currentAlgoIdx]) {
+    case "plasma":
+      plasmaFill(animTime);
+      break;
+    case "drift":
+      driftFill(animTime);
+      break;
     case "grid":
-      aaGridStep();
+      gridFill(animTime);
       break;
     case "land":
-      aaLandStep();
+      landFill(animTime);
+      break;
+    case "wave":
+      waveFill(animTime);
       break;
   }
 }
@@ -2906,20 +2908,36 @@ function buildToolbar() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function onDraw(contentRect) {
-  if (generating) stepGeneration();
+  if (gifRecording && isAnimated()) {
+    // ── ループ GIF: 1 周期 (2π) を GIF_FRAME_COUNT 等分でサンプル → シームレスループ ──
+    animTime = (gifLoopFrame / GIF_FRAME_COUNT) * Math.PI * 2;
+    animateFill();
+    gifFrames.push(artBuf.slice());
+    gifLoopFrame++;
+    statusText = `RECORDING LOOP ${gifLoopFrame}/${GIF_FRAME_COUNT}`;
+    if (gifLoopFrame >= GIF_FRAME_COUNT) finishGifRecording();
+  } else if (isAnimated()) {
+    // ── 連続アニメ (常時)。場を毎フレーム再計算し、t をシームレスに周回 ──
+    animTime += ANIM_DT;
+    if (animTime >= Math.PI * 2) animTime -= Math.PI * 2;
+    animateFill();
+  } else {
+    // ── 一回生成系 (漸進描画) ──
+    if (generating) stepGeneration();
 
-  // GIF 録画: 生成過程を progress 閾値ごとに artBuf スナップショットでサンプル。
-  // 完了したら最終形を数フレーム保持してエンコード → ダウンロード。
-  if (gifRecording) {
-    if (generating) {
-      if (progress >= gifNextSample) {
-        gifFrames.push(artBuf.slice());
-        gifNextSample += 1 / GIF_FRAME_COUNT;
+    // GIF 録画: 生成過程を progress 閾値ごとに artBuf スナップショットでサンプル。
+    // 完了したら最終形を数フレーム保持してエンコード → ダウンロード。
+    if (gifRecording) {
+      if (generating) {
+        if (progress >= gifNextSample) {
+          gifFrames.push(artBuf.slice());
+          gifNextSample += 1 / GIF_FRAME_COUNT;
+        }
+      } else {
+        const final = artBuf.slice();
+        for (let k = 0; k < 5; k++) gifFrames.push(final); // 完成形を少しホールド
+        finishGifRecording();
       }
-    } else {
-      const final = artBuf.slice();
-      for (let k = 0; k < 5; k++) gifFrames.push(final); // 完成形を少しホールド
-      finishGifRecording();
     }
   }
 
@@ -3020,6 +3038,9 @@ function onBeforeClose() {
   autoTimer = 0;
   currentRatioIdx = 3; // 16:9
   renderMode = "dot";
+  animTime = 0;
+  gifRecording = false;
+  gifLoopFrame = 0;
   exportFormatIdx = 0; // PNG
   exportScale = 8;
   resizeArt(320, 180); // 既定 16:9 320x180
