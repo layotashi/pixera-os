@@ -54,17 +54,22 @@ const APP_NAME = "GENART";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /** アートキャンバスサイズ (可変) */
-let artWidth = 256;
+let artWidth = 320; // SIZE_PRESETS[0] と一致させる
 let artHeight = 192;
 
-/** キャンバスサイズのプリセット (w=0 は画面全体) */
+/** キャンバスサイズのプリセット (w=0 は画面全体、w=-1 は CUSTOM=W/H 直接入力) */
+// 既定 (index 0) は 320x192: ツールバー幅とほぼ一致し、左右の死に空間が出ない。
 const SIZE_PRESETS = [
+  { label: "320x192", w: 320, h: 192 },
   { label: "256x192", w: 256, h: 192 },
   { label: "320x240", w: 320, h: 240 },
   { label: "400x300", w: 400, h: 300 },
   { label: "512x384", w: 512, h: 384 },
+  { label: "SQUARE", w: 256, h: 256 }, // SNS 向けの正方形
   { label: "SCREEN", w: 0, h: 0 },
+  { label: "CUSTOM", w: -1, h: -1 },
 ];
+const SIZE_CUSTOM_IDX = SIZE_PRESETS.length - 1;
 let currentSizeIdx = 0;
 
 /** キャンバスサイズの許容範囲 */
@@ -716,6 +721,8 @@ function applyArtSize(w, h) {
   w = Math.max(ART_W_MIN, Math.min(ART_W_MAX, w));
   h = Math.max(ART_H_MIN, Math.min(ART_H_MAX, h));
   resizeArt(w, h);
+  if (nbArtW) nbArtW.value = w;
+  if (nbArtH) nbArtH.value = h;
   startGeneration();
 }
 
@@ -2580,7 +2587,7 @@ function autoNext() {
 let toolbar;
 let toolbarRoot;
 let ddAlgo, ddPreset, lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto;
-let ddSize, ddScale, btnSave, btnFile;
+let ddSize, nbArtW, nbArtH, ddScale, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2632,23 +2639,24 @@ function buildToolbar() {
   );
   tglInvert.tooltip = "Invert colors";
 
+  // AUTO シャッフル: STUDIO/LIFE と同じ play/pause アイコンのトランスポート流儀。
   tglAuto = new UI.ToggleButton(
     0,
     0,
     "",
     (v) => {
       autoMode = v;
-      tglAuto.icon = v ? "pause" : "loop";
+      tglAuto.icon = v ? "pause" : "play";
       autoTimer = 0;
     },
     autoMode,
   );
-  tglAuto.icon = autoMode ? "pause" : "loop";
+  tglAuto.icon = autoMode ? "pause" : "play";
   tglAuto.w = ICON_W + BTN_PAD + BTN_BORDER;
   tglAuto.h = ICON_H + BTN_PAD + BTN_BORDER;
-  tglAuto.tooltip = "Auto shuffle";
+  tglAuto.tooltip = "Auto shuffle (play/pause)";
 
-  // ── Row 3: サイズ / 倍率 / 保存 ──
+  // ── サイズ ──
   const sizeLabels = SIZE_PRESETS.map((s) => s.label);
   ddSize = new UI.DropDown(0, 0, sizeLabels, currentSizeIdx, (i) => {
     currentSizeIdx = i;
@@ -2656,12 +2664,25 @@ function buildToolbar() {
     if (sp.w > 0) {
       applyArtSize(sp.w, sp.h);
     } else if (sp.w === 0) {
-      // SCREEN
-      applyArtSize(VRAM_WIDTH, VRAM_HEIGHT);
+      applyArtSize(VRAM_WIDTH, VRAM_HEIGHT); // SCREEN
     }
-    // CUSTOM 選択時は NumberBox の現在値をそのまま使用
+    // CUSTOM (w=-1) 選択時は W/H NumberBox の現在値をそのまま使用
   });
-  ddSize.tooltip = "Canvas size";
+  ddSize.tooltip = "Canvas size preset";
+
+  // CUSTOM サイズ用の W/H 直接入力 (SNS 向け正方形など任意寸法)。
+  nbArtW = new UI.NumberBox(0, 0, ART_W_MIN, ART_W_MAX, artWidth, 1, (v) => {
+    currentSizeIdx = SIZE_CUSTOM_IDX;
+    ddSize.selectedIndex = SIZE_CUSTOM_IDX;
+    applyArtSize(v, nbArtH.value);
+  });
+  nbArtW.tooltip = "Canvas width";
+  nbArtH = new UI.NumberBox(0, 0, ART_H_MIN, ART_H_MAX, artHeight, 1, (v) => {
+    currentSizeIdx = SIZE_CUSTOM_IDX;
+    ddSize.selectedIndex = SIZE_CUSTOM_IDX;
+    applyArtSize(nbArtW.value, v);
+  });
+  nbArtH.tooltip = "Canvas height";
 
   const scaleLabels = EXPORT_SCALES.map((s) => `x${s}`);
   ddScale = new UI.DropDown(
@@ -2675,25 +2696,40 @@ function buildToolbar() {
   );
   ddScale.tooltip = "Export scale";
 
-  btnSave = new UI.PushButton(0, 0, "SAVE", () => {
+  // PC へ書き出す (PNG) = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
+  // 旧 "SAVE"/"FILE" は違いが分かりにくかったため明確化。
+  btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
     saveArtAsPng();
   });
-  btnSave.tooltip = "Save as PNG";
+  btnSave.tooltip = "Download as PNG to your computer";
 
-  btnFile = new UI.PushButton(0, 0, "FILE", () => {
+  btnFile = new UI.PushButton(0, 0, "SAVE", () => {
     saveArtToVfs();
   });
-  btnFile.tooltip = "Save as PBM to VFS";
+  btnFile.tooltip = "Save as PBM to the SYNESTA disk (VFS)";
 
   // ── レイアウト ──
-  // 無ラベルだと FLOW/SILK/256X192 が何の設定か初見で分からないため、
-  // 各グループにラベルを付けて用途を明示する。
+  // 無ラベルだと FLOW/SILK/256X192 が何の設定か初見で分からないため、各グループに
+  // ラベルを付けて整理する (近接: ラベル + 行で機能をまとめる)。
   const lblAlgo = new UI.Label(0, 0, "ALGO:");
   const lblStyle = new UI.Label(0, 0, "STYLE:");
   const lblSize = new UI.Label(0, 0, "SIZE:");
+  const lblWH = new UI.Label(0, 0, "X");
+  // 1行目: 何を作るか
   const row1 = UI.HBox([lblAlgo, ddAlgo, lblStyle, ddPreset]);
-  const row2 = UI.HBox([lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto]);
-  const row3 = UI.HBox([lblSize, ddSize, ddScale, btnSave, btnFile]);
+  // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
+  const row2 = UI.HBox([lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert]);
+  // 3行目: サイズ (preset + W×H) + 書き出し (倍率 + DOWNLOAD/SAVE)
+  const row3 = UI.HBox([
+    lblSize,
+    ddSize,
+    nbArtW,
+    lblWH,
+    nbArtH,
+    ddScale,
+    btnSave,
+    btnFile,
+  ]);
   toolbarRoot = UI.VBox([row1, row2, row3]);
   toolbar = new UI.WidgetGroup(toolbarRoot);
   toolbarH = toolbarRoot.y + toolbarRoot.h;
