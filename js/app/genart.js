@@ -127,6 +127,11 @@ const SPACING_MIN = 0,
 
 /** この環境で選べる書き出し形式 (MP4 は WebCodecs 対応時のみ) */
 function availableFormats() {
+  // ASCII レンダーは artBuf を使わず動画 (GIF/MP4) を撮れないため PNG のみ提示する。
+  // (これを出すと DOWNLOAD が "DOT MODE ONLY" で無反応になり、効かないように見える)
+  if (renderMode === "ascii") {
+    return EXPORT_FORMATS.filter((f) => f.key === "png");
+  }
   return EXPORT_FORMATS.filter((f) => f.key !== "mp4" || isMp4Supported());
 }
 /** 現在選択中の形式キー */
@@ -1028,6 +1033,20 @@ function downloadArt() {
 }
 
 /**
+ * 進行中のフレーム捕捉 (GIF/MP4 録画) を中断して状態をリセットする。
+ * アルゴリズム・レンダーモード変更などで録画が無意味になる場面で呼ぶ。
+ * これを呼ばないと、録画が完了せず gifRecording が立ったままになり
+ * DOWNLOAD が無反応になりうる (SAVE は別経路なので生き続ける)。
+ */
+function cancelRecording() {
+  if (!gifRecording) return;
+  gifRecording = false;
+  gifFrames = [];
+  gifLoopFrame = 0;
+  if (statusText.startsWith("RECORDING")) statusText = "";
+}
+
+/**
  * 動画録画 (フレーム捕捉) を開始する。GIF / MP4 共通。
  *   - アニメ系: 現在の場のまま 1 周期 (2π) を撮ってシームレスループにする。
  *   - 一回生成系: 現在の設定で再生成し、その生成過程を撮る。
@@ -1078,12 +1097,17 @@ function finishVideoRecording() {
   const matte = (f) => composeDotBuffer(f).buf;
 
   if (videoFormat === "mp4") {
-    // MP4: WebCodecs で非同期エンコード
+    // MP4: WebCodecs で非同期エンコード。
+    // 万一エンコーダの flush が解決しなくても videoEncoding が立ったまま
+    // DOWNLOAD を永久に塞がないよう、タイムアウトで必ず決着させる。
     statusText = "ENCODING MP4...";
     videoEncoding = true;
     const frames = gifFrames.map(matte);
     gifFrames = [];
-    encodeMp4(frames, cw, ch, bg, fg, GIF_FPS, gifScale)
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
+    );
+    Promise.race([encodeMp4(frames, cw, ch, bg, fg, GIF_FPS, gifScale), timeout])
       .then((blob) => {
         downloadVideoBlob(blob, "mp4");
         statusText = "";
@@ -2815,6 +2839,7 @@ function buildToolbar() {
   const presetNames = PRESETS[ALGO_KEYS[currentAlgoIdx]].map((p) => p.name);
 
   ddAlgo = new UI.DropDown(0, 0, ALGO_NAMES, currentAlgoIdx, (i) => {
+    cancelRecording(); // 録画中の切替は録画を破棄 (跨ぐと無意味 + フラグ残り防止)
     currentAlgoIdx = i;
     currentPresetIdx = 0;
     // 新アルゴリズムが現在のレンダーモードに非対応なら既定モードへ
@@ -2836,10 +2861,11 @@ function buildToolbar() {
   let renderSel = renderModes.indexOf(renderMode);
   if (renderSel < 0) renderSel = 0;
   ddRender = new UI.DropDown(0, 0, renderLabels, renderSel, (i) => {
+    cancelRecording(); // モード切替で録画を破棄 (DOT↔ASCII を跨ぐ録画は無意味)
     renderMode = renderModes[i];
     // ASCII ならセル倍数にスナップ + バッファ再確保 + 再生成
     applyArtSize(artWidth, artHeight);
-    buildToolbar(); // GAP (字間) の表示/非表示をモードに合わせて切替
+    buildToolbar(); // GAP (字間) の表示/非表示・形式候補をモードに合わせて切替
   });
   ddRender.tooltip =
     "Render: DOT = 1-bit pixels (GIF-able), ASCII = character cells";
