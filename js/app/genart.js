@@ -193,23 +193,39 @@ const ALGO_NAMES = [
  *   "ascii" — 文字セル (tone ramp 濃淡)。
  * 場系は両対応、RAIN は ASCII 専用。先頭要素が既定モード。
  */
+// 場系すべてで使えるレンダーモード (方式)。fieldBuf を消費する点は共通で、
+// ASCII 以外は fieldBuf→artBuf の 1bit レンダラ (合成・書き出し・サイズは DOT と共有)。
+const FIELD_MODES = [
+  "dot",
+  "ascii",
+  "notan",
+  "contour",
+  "edge",
+  "hatch",
+  "screen",
+  "mosaic",
+  "stipple",
+  "blocks",
+  "braille",
+  "scanline",
+];
 const ALGO_MODES = {
-  react: ["dot", "ascii"],
-  voronoi: ["dot", "ascii"],
-  wave: ["dot", "ascii"],
-  plasma: ["dot", "ascii"],
-  drift: ["dot", "ascii"],
-  rain: ["ascii"],
-  grid: ["dot", "ascii"],
-  land: ["dot", "ascii"],
-  metaball: ["dot", "ascii"],
-  moire: ["dot", "ascii"],
-  caustic: ["dot", "ascii"],
-  quasic: ["dot", "ascii"],
-  julia: ["dot", "ascii"],
-  curl: ["dot", "ascii"],
-  bz: ["dot", "ascii"],
-  worley: ["dot", "ascii"],
+  react: FIELD_MODES,
+  voronoi: FIELD_MODES,
+  wave: FIELD_MODES,
+  plasma: FIELD_MODES,
+  drift: FIELD_MODES,
+  rain: ["ascii"], // 文字を直接書くため ASCII 専用
+  grid: FIELD_MODES,
+  land: FIELD_MODES,
+  metaball: FIELD_MODES,
+  moire: FIELD_MODES,
+  caustic: FIELD_MODES,
+  quasic: FIELD_MODES,
+  julia: FIELD_MODES,
+  curl: FIELD_MODES,
+  bz: FIELD_MODES,
+  worley: FIELD_MODES,
 };
 
 /** 場 (fieldBuf) パイプラインを使うアルゴリズム (RAIN は文字を直接書くため除外) */
@@ -234,7 +250,20 @@ const FIELD_ALGOS = new Set([
 /** 現在のレンダーモード ("dot" | "ascii")。ALGO_MODES の制約下で選択される。 */
 let renderMode = "dot";
 
-const RENDER_LABELS = { dot: "DOT", ascii: "ASCII" };
+const RENDER_LABELS = {
+  dot: "DOT",
+  ascii: "ASCII",
+  notan: "NOTAN",
+  contour: "CONTOUR",
+  edge: "EDGE",
+  hatch: "HATCH",
+  screen: "SCREEN",
+  mosaic: "MOSAIC",
+  stipple: "STIPPLE",
+  blocks: "BLOCKS",
+  braille: "BRAILLE",
+  scanline: "SCAN",
+};
 
 /**
  * 連続アニメ (時間発展) する場アルゴリズム。
@@ -879,7 +908,7 @@ function fieldPixelY(r) {
   return renderMode === "ascii" ? (r + 0.5) * AsciiArt.CELL_H : r;
 }
 
-/** fieldBuf → 出力 (DOT:artBuf / ASCII:aaLines)。場系の各ステップ末尾で呼ぶ。 */
+/** fieldBuf → 出力 (ASCII:aaLines / その他:artBuf を方式別レンダラで描く)。 */
 function commitField() {
   if (!fieldBuf) return;
   if (renderMode === "ascii") {
@@ -896,11 +925,177 @@ function commitField() {
       aaLines[r] = line;
     }
   } else {
-    for (let y = 0; y < fieldRows; y++) {
-      const base = y * fieldCols;
-      for (let x = 0; x < fieldCols; x++) {
-        artBuf[base + x] = bayerDither(x, y, fieldBuf[base + x]);
+    renderPixelMode(renderMode);
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  レンダー方式 (fieldBuf → artBuf の 1bit レンダラ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// すべて fieldBuf (W=fieldCols × H=fieldRows = artWidth×artHeight, 0..1) を読み、
+// artBuf (同寸, 0/1) を描く。座標・合成・書き出し・サイズは DOT と共有する。
+
+/** 位置ハッシュ (seed 依存で生成ごとに変わる) → [0,1) */
+function _hash2(x, y) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) ^ seed;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+/** fieldBuf 値 (境界クランプ) */
+function _F(x, y, W, H) {
+  if (x < 0) x = 0;
+  else if (x >= W) x = W - 1;
+  if (y < 0) y = 0;
+  else if (y >= H) y = H - 1;
+  return fieldBuf[y * W + x];
+}
+
+function renderPixelMode(mode) {
+  const W = fieldCols,
+    H = fieldRows;
+  const f = fieldBuf,
+    a = artBuf;
+  if (mode === "dot") {
+    for (let y = 0; y < H; y++) {
+      const base = y * W;
+      for (let x = 0; x < W; x++) a[base + x] = bayerDither(x, y, f[base + x]);
+    }
+    return;
+  }
+  a.fill(0);
+  switch (mode) {
+    case "notan": // 2値: 大胆な白黒の塊
+      for (let i = 0; i < W * H; i++) a[i] = f[i] > 0.5 ? 1 : 0;
+      break;
+    case "contour": { // 等高線: 量子化レベルの境界を線で
+      const L = 7;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const l = (f[y * W + x] * L) | 0;
+          if (l !== ((_F(x + 1, y, W, H) * L) | 0) ||
+              l !== ((_F(x, y + 1, W, H) * L) | 0))
+            a[y * W + x] = 1;
+        }
+      break;
+    }
+    case "edge": // 勾配の強い所だけ (輪郭スケッチ)
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const gx = Math.abs(_F(x + 1, y, W, H) - _F(x - 1, y, W, H));
+          const gy = Math.abs(_F(x, y + 1, W, H) - _F(x, y - 1, W, H));
+          if (gx + gy > 0.07) a[y * W + x] = 1;
+        }
+      break;
+    case "hatch": // 版画: 濃さを斜線クロスハッチの密度で
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const v = f[y * W + x];
+          let on = 0;
+          if (v > 0.12 && (x + y) % 4 === 0) on = 1; // /
+          if (v > 0.45 && (x - y + 4000) % 4 === 0) on = 1; // \
+          if (v > 0.72 && x % 4 === 0) on = 1; // |
+          if (v > 0.9 && y % 4 === 0) on = 1; // —
+          a[y * W + x] = on;
+        }
+      break;
+    case "screen": { // 網点: 濃さで成長する円ドット
+      const cell = 6;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const cx = ((x / cell) | 0) * cell + (cell >> 1);
+          const cy = ((y / cell) | 0) * cell + (cell >> 1);
+          const v = _F(cx, cy, W, H);
+          const dx = x - cx,
+            dy = y - cy;
+          const R = v * cell * 0.72;
+          if (dx * dx + dy * dy <= R * R) a[y * W + x] = 1;
+        }
+      break;
+    }
+    case "mosaic": { // モザイク: セル単位で白黒の塊
+      const cell = 5;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const cx = ((x / cell) | 0) * cell + (cell >> 1);
+          const cy = ((y / cell) | 0) * cell + (cell >> 1);
+          a[y * W + x] = _F(cx, cy, W, H) > 0.5 ? 1 : 0;
+        }
+      break;
+    }
+    case "stipple": { // 点描: 濃さに比例した密度で点を打つ
+      const cell = 3;
+      for (let cy = 0; cy * cell < H; cy++)
+        for (let cx = 0; cx * cell < W; cx++) {
+          const sx = cx * cell + (cell >> 1),
+            sy = cy * cell + (cell >> 1);
+          const v = _F(sx, sy, W, H);
+          if (_hash2(cx, cy) < v) {
+            const px = cx * cell + ((_hash2(cx + 7, cy) * cell) | 0);
+            const py = cy * cell + ((_hash2(cx, cy + 7) * cell) | 0);
+            if (px < W && py < H) a[py * W + px] = 1;
+          }
+        }
+      break;
+    }
+    case "blocks": { // テレテキスト: 2×2 象限ブロック
+      const cell = 4,
+        q = 2;
+      for (let cy = 0; cy * cell < H; cy++)
+        for (let cx = 0; cx * cell < W; cx++)
+          for (let qy = 0; qy < 2; qy++)
+            for (let qx = 0; qx < 2; qx++) {
+              const ox = cx * cell + qx * q,
+                oy = cy * cell + qy * q;
+              if (_F(ox + 1, oy + 1, W, H) > 0.5)
+                for (let dy = 0; dy < q; dy++)
+                  for (let dx = 0; dx < q; dx++) {
+                    const xx = ox + dx,
+                      yy = oy + dy;
+                    if (xx < W && yy < H) a[yy * W + xx] = 1;
+                  }
+            }
+      break;
+    }
+    case "braille": { // 点字: 2×4 サブドットセル
+      const CW = 4,
+        CH = 8;
+      const dots = [0, 2]; // x オフセット
+      const dotsY = [0, 2, 4, 6];
+      for (let cy = 0; cy * CH < H; cy++)
+        for (let cx = 0; cx * CW < W; cx++)
+          for (const ddx of dots)
+            for (const ddy of dotsY) {
+              const px = cx * CW + ddx,
+                py = cy * CH + ddy;
+              if (px < W && py < H && _F(px, py, W, H) > 0.5) a[py * W + px] = 1;
+            }
+      break;
+    }
+    case "scanline": { // 波形 (Joy Division): 場で上下に変位した横線を積む
+      const step = 4;
+      const amp = step * 2.4;
+      const top = new Int32Array(W).fill(H + amp); // 列ごとの最前面 (最小 y)
+      // 前 (下) から後ろ (上) へ。手前の稜線が奥を隠す
+      for (let R = H - 1; R >= 0; R -= step) {
+        let py = -1;
+        for (let x = 0; x < W; x++) {
+          let yy = (R - _F(x, R, W, H) * amp) | 0;
+          if (yy < 0) yy = 0;
+          if (yy < top[x]) {
+            top[x] = yy;
+            if (yy < H) a[yy * W + x] = 1;
+            if (py >= 0) {
+              // 隣と縦に繋ぐ
+              const lo = Math.min(py, yy),
+                hi = Math.max(py, yy);
+              for (let v = lo; v <= hi; v++) if (v >= 0 && v < H) a[v * W + x] = 1;
+            }
+            py = yy;
+          } else py = -1;
+        }
       }
+      break;
     }
   }
 }
