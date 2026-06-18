@@ -100,9 +100,12 @@ const EXPORT_FORMATS = [
   { key: "mp4", label: "MP4" },
 ];
 let exportFormatIdx = 0; // availableFormats() のインデックス
-let exportScale = 8; // 倍率 (小さいドット絵を SNS 解像度へ拡大)
-const EXPORT_SCALE_MIN = 1,
-  EXPORT_SCALE_MAX = 32;
+// 出力の長辺 px。合成キャンバス (額縁込み) をこの長辺へ正確にリサンプルする
+// (1bit ニアレストネイバー = 滲まない)。短辺はアスペクトから自動。
+let outputLongEdge = 1080;
+const OUT_MIN = 64,
+  OUT_MAX = 4096;
+const OUTPUT_PRESETS = [720, 1080, 1440, 1920, 2160];
 
 /**
  * 額縁 (マット): アート内容と枠線の間に置く背景余白 (px)。DOT/ASCII 共通で、
@@ -135,11 +138,7 @@ function algoSupportsEdge() {
 
 /** この環境で選べる書き出し形式 (MP4 は WebCodecs 対応時のみ) */
 function availableFormats() {
-  // ASCII レンダーは artBuf を使わず動画 (GIF/MP4) を撮れないため PNG のみ提示する。
-  // (これを出すと DOWNLOAD が "DOT MODE ONLY" で無反応になり、効かないように見える)
-  if (renderMode === "ascii") {
-    return EXPORT_FORMATS.filter((f) => f.key === "png");
-  }
+  // DOT/ASCII とも録画可能 (ASCII はグリフをラスタライズして捕捉)。
   return EXPORT_FORMATS.filter((f) => f.key !== "mp4" || isMp4Supported());
 }
 /** 現在選択中の形式キー */
@@ -157,7 +156,6 @@ let gifRecording = false; // フレーム捕捉中フラグ (GIF/MP4 共通)
 /** @type {Uint8Array[]} 捕捉した artBuf スナップショット */
 let gifFrames = [];
 let gifNextSample = 0; // 次にサンプルする progress 閾値
-let gifScale = 8;
 let gifLoopFrame = 0; // アニメ算法のループ用フレームカウンタ
 
 /** アルゴリズム定義 */
@@ -942,24 +940,43 @@ const AUTO_INTERVAL = 90;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * 動画の実効倍率。フレーム数 × 面積 で巨大化するため出力長辺に上限を設ける。
- * GIF・MP4 とも長辺 ~1920px (FullHD 級)。これ未満だと SNS 側の拡大・再
- * エンコードで滲むため、X 等への投稿に耐える解像度を確保する。
- * (GIF は自前エンコーダの同期処理ゆえ、上限付近では書き出し時に一瞬固まる)
- * PNG は exportScale をそのまま使う。
+ * 出力寸法。合成キャンバス (額縁込み) の長辺を outputLongEdge px に合わせ、
+ * 短辺はアスペクトから算出する。PNG/GIF/MP4 で共通。
  */
-function videoEffectiveScale(key) {
-  const cap = 1920;
-  // 額縁マット込みのキャンバス長辺で上限判定する
-  const maxDim = Math.max(artWidth, artHeight) + outerMargin * 2;
-  return Math.max(1, Math.min(exportScale, Math.floor(cap / maxDim)));
+function outputDims() {
+  const cw = canvasDispW(),
+    ch = canvasDispH();
+  const f = outputLongEdge / Math.max(cw, ch);
+  return {
+    w: Math.max(1, Math.round(cw * f)),
+    h: Math.max(1, Math.round(ch * f)),
+  };
+}
+
+/**
+ * 1bit バッファを dw×dh へニアレストネイバーでリサンプルする。
+ * 1bit ゆえ拡大してもエッジは硬いまま (滲まない)。中央寄せ標本化なので
+ * 対称な入力は対称な出力になる (額縁マットの上下左右対称が保たれる)。
+ */
+function resample1bit(src, sw, sh, dw, dh) {
+  const out = new Uint8Array(dw * dh);
+  for (let y = 0; y < dh; y++) {
+    const sy = Math.min(sh - 1, (((y + 0.5) * sh) / dh) | 0);
+    const sbase = sy * sw,
+      dbase = y * dw;
+    for (let x = 0; x < dw; x++) {
+      const sx = Math.min(sw - 1, (((x + 0.5) * sw) / dw) | 0);
+      out[dbase + x] = src[sbase + sx];
+    }
+  }
+  return out;
 }
 
 /** ダウンロードボタン: 選択中の形式 (PNG / GIF / MP4) × 倍率で出力する */
 function downloadArt() {
   const key = currentFormatKey();
   if (key === "png") {
-    saveArtAsPng(); // exportScale を参照
+    saveArtAsPng(); // outputLongEdge へリサンプル
   } else {
     startVideoRecording(key); // "gif" | "mp4"
   }
@@ -986,14 +1003,8 @@ function cancelRecording() {
  */
 function startVideoRecording(format) {
   if (gifRecording || videoEncoding) return;
-  if (renderMode === "ascii") {
-    // ASCII レンダーは artBuf を使わない (文字描画) ため動画未対応。DOT を案内。
-    statusText = "VIDEO: DOT MODE ONLY";
-    return;
-  }
   videoFormat = format;
   gifRecording = true;
-  gifScale = videoEffectiveScale(format);
   gifFrames = [];
   const tag = format.toUpperCase();
   if (isAnimated()) {
@@ -1023,11 +1034,13 @@ function finishVideoRecording() {
     fg = t;
   }
 
-  // 各フレームを額縁付きキャンバスに合成 (動画は DOT 専用なので composeDotBuffer)
+  // 各フレーム (内容 artWidth×artHeight) を額縁合成し、出力長辺へ正確リサンプル。
+  // 捕捉フレームは DOT=artBuf / ASCII=グリフラスタ どちらも artWidth×artHeight。
   const m = outerMargin;
   const cw = artWidth + m * 2,
     ch = artHeight + m * 2;
-  const matte = (f) => composeDotBuffer(f).buf;
+  const { w: ow, h: oh } = outputDims();
+  const matte = (f) => resample1bit(composeDotBuffer(f).buf, cw, ch, ow, oh);
 
   if (videoFormat === "mp4") {
     // MP4: WebCodecs で非同期エンコード。
@@ -1040,7 +1053,7 @@ function finishVideoRecording() {
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
     );
-    Promise.race([encodeMp4(frames, cw, ch, bg, fg, GIF_FPS, gifScale), timeout])
+    Promise.race([encodeMp4(frames, ow, oh, bg, fg, GIF_FPS, 1), timeout])
       .then((blob) => {
         downloadVideoBlob(blob, "mp4");
         statusText = "";
@@ -1059,7 +1072,7 @@ function finishVideoRecording() {
   statusText = "ENCODING GIF...";
   setTimeout(() => {
     const frames = gifFrames.map(matte);
-    const blob = encodeGif(frames, cw, ch, bg, fg, GIF_FPS, gifScale);
+    const blob = encodeGif(frames, ow, oh, bg, fg, GIF_FPS, 1);
     downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
@@ -1082,12 +1095,14 @@ function downloadVideoBlob(blob, ext) {
 }
 
 function saveArtAsPng() {
-  // 額縁付きの合成キャンバスを書き出す (DOT/ASCII 両対応・マット込み)
+  // 額縁付きの合成キャンバスを出力長辺へ正確リサンプルして書き出す (DOT/ASCII 両対応)
   const { buf, w, h } = composeCanvas();
-  GPU.beginCapture(w, h);
-  GPU.blit(buf, w, h, 0, 0, 1);
-  if (invertMode) GPU.invertRect(0, 0, w, h);
-  const canvas = GPU.endCapture(exportScale);
+  const { w: ow, h: oh } = outputDims();
+  const out = resample1bit(buf, w, h, ow, oh);
+  GPU.beginCapture(ow, oh);
+  GPU.blit(out, ow, oh, 0, 0, 1);
+  if (invertMode) GPU.invertRect(0, 0, ow, oh);
+  const canvas = GPU.endCapture(1);
 
   canvas.toBlob((blob) => {
     if (!blob) return;
@@ -2577,7 +2592,7 @@ let toolbarRoot;
 let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge;
 let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
-let ddSize, nbPad, ddFormat, nbScale, btnSave, btnFile;
+let ddSize, nbPad, ddFormat, ddOut, nbOut, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2724,18 +2739,26 @@ function buildToolbar() {
   ddFormat.tooltip =
     "Export format: PNG = still, GIF = loop (any browser), MP4 = loop (SNS)";
 
-  nbScale = new UI.NumberBox(
+  // ── 出力長辺 (OUT): プリセット (720/1080/1440/1920/2160) + 任意 px 入力 ──
+  // 合成キャンバスをこの長辺へ正確リサンプル。短辺はアスペクトから自動。
+  let outSel = OUTPUT_PRESETS.indexOf(outputLongEdge);
+  if (outSel < 0) outSel = 1; // 一致しなければ 1080 を選択表示 (値は nbOut が真)
+  ddOut = new UI.DropDown(
     0,
     0,
-    EXPORT_SCALE_MIN,
-    EXPORT_SCALE_MAX,
-    exportScale,
-    1,
-    (v) => {
-      exportScale = v;
+    OUTPUT_PRESETS.map((v) => String(v)),
+    outSel,
+    (i) => {
+      outputLongEdge = OUTPUT_PRESETS[i];
+      if (nbOut) nbOut.value = outputLongEdge;
     },
   );
-  nbScale.tooltip = "Export scale (free integer; 1-bit art enlarges crisply for SNS)";
+  ddOut.tooltip = "Output long edge (px). Preset; short edge follows aspect.";
+
+  nbOut = new UI.NumberBox(0, 0, OUT_MIN, OUT_MAX, outputLongEdge, 8, (v) => {
+    outputLongEdge = v;
+  });
+  nbOut.tooltip = "Output long edge (px), free value. Crisp nearest-neighbor resample.";
 
   // ── 額縁マット (PAD): アートと枠の間の背景余白。DOT/ASCII 共通・書き出し込み ──
   nbPad = new UI.NumberBox(0, 0, MARGIN_MIN, MARGIN_MAX, outerMargin, 1, (v) => {
@@ -2763,7 +2786,7 @@ function buildToolbar() {
   const lblEdge = new UI.Label(0, 0, "EDGE:");
   const lblSize = new UI.Label(0, 0, "SIZE:");
   const lblPad = new UI.Label(0, 0, "PAD:");
-  const lblMul = new UI.Label(0, 0, "X"); // × scale
+  const lblOut = new UI.Label(0, 0, "OUT:");
   // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
   //   + ASCII なら字間 (GAP)、DOT ならディザ行列 (DITHER) を対称に出す
   const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
@@ -2772,21 +2795,13 @@ function buildToolbar() {
   const row1 = UI.HBox(row1Items);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
   //   + REACT/BZ なら境界条件 (EDGE) をここに置く (1 行目の幅に余裕がないため)
+  //   + 出力長辺 (OUT) もここ。3 行目は DOWNLOAD/SAVE で幅が足りないため。
   const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
   if (algoSupportsEdge()) row2Items.push(lblEdge, ddEdge);
+  row2Items.push(lblOut, ddOut, nbOut);
   const row2 = UI.HBox(row2Items);
-  // 3行目: サイズ (SIZE プリセット + 額縁PAD) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
-  const row3 = UI.HBox([
-    lblSize,
-    ddSize,
-    lblPad,
-    nbPad,
-    ddFormat,
-    lblMul,
-    nbScale,
-    btnSave,
-    btnFile,
-  ]);
+  // 3行目: サイズ (SIZE + 額縁PAD) + 書き出し (形式 + DOWNLOAD/SAVE)
+  const row3 = UI.HBox([lblSize, ddSize, lblPad, nbPad, ddFormat, btnSave, btnFile]);
   toolbarRoot = UI.VBox([row1, row2, row3]);
   toolbar = new UI.WidgetGroup(toolbarRoot);
   toolbarH = toolbarRoot.y + toolbarRoot.h;
@@ -2877,6 +2892,44 @@ function composeCanvas() {
     : composeDotBuffer(artBuf);
 }
 
+/**
+ * ASCII グリフ列をマット無しの内容バッファ (artWidth×artHeight) にラスタライズ。
+ * サイズ統一により ASCII グリフ列の実 extent = artWidth×artHeight なのでぴったり。
+ * 録画フレーム捕捉に使う (DOT の artBuf と同寸 = 同じ額縁合成・リサンプルに乗る)。
+ */
+function rasterizeAsciiContent() {
+  const s = charSpacing;
+  const out = new Uint8Array(artWidth * artHeight);
+  const lines = aaLines || [];
+  const stepX = GLYPH_W + s,
+    stepY = GLYPH_H + s;
+  for (let r = 0; r < lines.length; r++) {
+    const line = lines[r];
+    const oy = r * stepY;
+    for (let c = 0; c < line.length; c++) {
+      const g = getGlyph(line[c]);
+      if (!g) continue;
+      const ox = c * stepX;
+      for (let gy = 0; gy < GLYPH_H; gy++) {
+        const yy = oy + gy;
+        if (yy >= artHeight) break;
+        const dstRow = yy * artWidth + ox;
+        const gRow = gy * GLYPH_W;
+        for (let gx = 0; gx < GLYPH_W; gx++) {
+          if (ox + gx >= artWidth) break;
+          if (g[gRow + gx]) out[dstRow + gx] = 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** 録画用フレーム捕捉: DOT は artBuf、ASCII はグリフラスタ (どちらも内容寸法) */
+function captureFrame() {
+  return renderMode === "ascii" ? rasterizeAsciiContent() : artBuf.slice();
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  WM コールバック
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2886,7 +2939,7 @@ function onDraw(contentRect) {
     // ── ループ GIF: 1 周期 (2π) を GIF_FRAME_COUNT 等分でサンプル → シームレスループ ──
     animTime = (gifLoopFrame / GIF_FRAME_COUNT) * Math.PI * 2;
     animateFill();
-    gifFrames.push(artBuf.slice());
+    gifFrames.push(captureFrame());
     gifLoopFrame++;
     statusText = `RECORDING LOOP ${gifLoopFrame}/${GIF_FRAME_COUNT}`;
     if (gifLoopFrame >= GIF_FRAME_COUNT) finishVideoRecording();
@@ -2904,11 +2957,11 @@ function onDraw(contentRect) {
     if (gifRecording) {
       if (generating) {
         if (progress >= gifNextSample) {
-          gifFrames.push(artBuf.slice());
+          gifFrames.push(captureFrame());
           gifNextSample += 1 / GIF_FRAME_COUNT;
         }
       } else {
-        const final = artBuf.slice();
+        const final = captureFrame();
         for (let k = 0; k < 5; k++) gifFrames.push(final); // 完成形を少しホールド
         finishVideoRecording();
       }
@@ -2976,14 +3029,11 @@ function onMeasure() {
 
 function onDrawFooter(footerRect) {
   drawText(footerRect.x, footerRect.y, statusText, 1);
-  // 右側: 額縁込みキャンバス寸法 → 書き出し解像度 (倍率込み)。常時表示。
-  // 動画 (GIF/MP4) は実効倍率 (上限つき) を反映する。
+  // 右側: 額縁込みキャンバス寸法 → 出力解像度 (長辺リサンプル)。常時表示。
   const key = currentFormatKey();
-  const eScale = key === "png" ? exportScale : videoEffectiveScale(key);
   const cw = canvasDispW(),
     ch = canvasDispH();
-  const outW = cw * eScale;
-  const outH = ch * eScale;
+  const { w: outW, h: outH } = outputDims();
   const fmt = key.toUpperCase();
   const info = `${cw}x${ch} ->${fmt} ${outW}x${outH}`;
   const rw = textWidth(info);
@@ -3014,7 +3064,7 @@ function onBeforeClose() {
   videoFormat = "gif";
   videoEncoding = false;
   exportFormatIdx = 0; // PNG
-  exportScale = 8;
+  outputLongEdge = 1080;
   resizeArt(
     gridCols * GLYPH_W + (gridCols - 1) * charSpacing,
     gridRows * GLYPH_H + (gridRows - 1) * charSpacing,
