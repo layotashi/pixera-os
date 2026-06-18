@@ -33,6 +33,14 @@ const LAST_CHAR = 0x7e;
 /** 1 グリフのピクセル数 */
 let TOTAL_PIXELS = GLYPH_W * GLYPH_H;
 
+/**
+ * 豆腐 (未定義グリフのプレースホルダ箱) とみなす、同一ビットマップの最小重複数。
+ * SYNESTA フォントでは未定義スロット (英小文字など) が同一の箱グリフで埋まる。
+ * これ以上重複する非空ビットマップは豆腐と判定し tone ramp から除外する。
+ * 偶発的な字形一致 (5x5 では稀に起こる) を誤除外しないための閾値。
+ */
+const TOFU_MIN = 4;
+
 /** 描画時の文字セルピッチ (drawText と同じ) */
 export let CELL_W = GLYPH_W + 1;
 export let CELL_H = GLYPH_H + 1;
@@ -68,6 +76,19 @@ export function calcDensity(glyph) {
   return count / glyph.length;
 }
 
+/**
+ * グリフビットマップを文字列署名に変換する (豆腐検出用)。
+ * 同一ビットマップは同一署名になる。
+ *
+ * @param {Uint8Array} glyph  0/1 のビットマップ配列
+ * @returns {string}
+ */
+function glyphSignature(glyph) {
+  let s = "";
+  for (let i = 0; i < glyph.length; i++) s += glyph[i];
+  return s;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Tone Ramp
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -89,11 +110,40 @@ export function buildToneRamp(chars) {
     }
   }
 
-  const ramp = [];
+  // ── グリフ収集 (ビットマップ署名付き) ──
+  const entries = [];
   for (const ch of chars) {
     const glyph = getGlyph(ch);
     if (!glyph) continue;
-    ramp.push({ ch, density: calcDensity(glyph) });
+    entries.push({
+      ch,
+      sig: glyphSignature(glyph),
+      density: calcDensity(glyph),
+    });
+  }
+
+  // ── 豆腐 (未定義グリフのプレースホルダ箱) を除外 ──
+  // 未定義スロットは同一ビットマップで繰り返し現れる。非空ビットマップのうち
+  // 最頻の署名を豆腐とみなし、TOFU_MIN 個以上重複していればランプから落とす。
+  // (豆腐は塗り潰し箱 = density が高いため、除外しないと最暗部に箱が出る)
+  const freq = new Map();
+  for (const e of entries) {
+    if (e.density === 0) continue; // 空白は対象外
+    freq.set(e.sig, (freq.get(e.sig) || 0) + 1);
+  }
+  let tofuSig = null;
+  let tofuN = 0;
+  for (const [sig, n] of freq) {
+    if (n > tofuN) {
+      tofuN = n;
+      tofuSig = sig;
+    }
+  }
+
+  const ramp = [];
+  for (const e of entries) {
+    if (tofuN >= TOFU_MIN && e.sig === tofuSig) continue;
+    ramp.push({ ch: e.ch, density: e.density });
   }
 
   // density 昇順 (同 density なら文字コード順)

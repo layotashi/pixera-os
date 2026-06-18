@@ -923,6 +923,15 @@ let fieldCols = 0,
 /** ASCII レンダー用の現在の tone ramp */
 let currentRamp = null;
 
+/**
+ * 場系 ASCII の既定 tone ramp 文字セット。
+ * SYNESTA フォントの定義済みグリフのみで構成し、密度が単調に増えるよう
+ * 一段ごとに 1 文字を手選びしている (密度衝突による ASCII のチラつき防止)。
+ * preset が chars を明示しない場合 (chars:"") にこれを使う。
+ * 最暗部は最も密な定義済みグリフ `#` (density 0.64) で止まる — 1bit ASCII の質感。
+ */
+const FIELD_RAMP_CHARS = " .-:;+=*&%@$#";
+
 /** 現在のモードに応じて場の寸法を決め、fieldBuf (と ASCII なら aaLines/ramp) を確保 */
 function allocField(rampChars) {
   if (renderMode === "ascii") {
@@ -931,9 +940,7 @@ function allocField(rampChars) {
     fieldCols = aaCols;
     fieldRows = aaRows;
     aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
-    currentRamp = rampChars
-      ? AsciiArt.buildToneRamp(rampChars)
-      : AsciiArt.getDefaultRamp();
+    currentRamp = AsciiArt.buildToneRamp(rampChars || FIELD_RAMP_CHARS);
   } else {
     fieldCols = artWidth;
     fieldRows = artHeight;
