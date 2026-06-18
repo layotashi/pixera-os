@@ -61,33 +61,30 @@ const APP_NAME = "GENART";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /** アートキャンバスサイズ (可変)。既定 16:9 320x180 (ツールバー幅と一致し横長 SNS 向き) */
-let artWidth = 320;
-let artHeight = 180;
+let artWidth = 317; // = 16:9 グリッド 53×30 (字間1) の内容ピクセル
+let artHeight = 179;
 
 /**
  * アスペクト比プリセット (w:h)。サイズは「比率 → 寸法」で指定する。
  * 比率を選ぶと W/H が連動し、FREE は W/H を独立指定できる。
  * 黄金比 (PHI) / 白銀比 (SQRT2) など美的な比率も用意。
  */
-const ASPECT_RATIOS = [
-  { label: "1:1", w: 1, h: 1 },
-  { label: "4:3", w: 4, h: 3 },
-  { label: "3:4", w: 3, h: 4 },
-  { label: "16:9", w: 16, h: 9 },
-  { label: "9:16", w: 9, h: 16 },
-  { label: "PHI", w: 1618, h: 1000 }, // 黄金比 ≈ 1.618 (横長)
-  { label: "PHI V", w: 1000, h: 1618 }, // 黄金比 (縦長)
-  { label: "SQRT2", w: 1414, h: 1000 }, // 白銀比 ≈ 1.414 (横長)
-  { label: "SQRT2 V", w: 1000, h: 1414 }, // 白銀比 (縦長)
-  { label: "FREE", w: 0, h: 0 }, // W/H 独立
+// サイズは「文字グリッド (cols × rows)」で定義する。内容ピクセルは
+// cols×GLYPH_W + (cols-1)×字間 で決まり、DOT もこの寸法で場を描くため、
+// DOT/ASCII の外寸が完全一致する。外寸 = 内容 + マット×2 なのでマットは
+// 各辺きっかり PAD px (端数ゼロ = 1px 単位で上下左右対称)。
+const SIZE_PRESETS = [
+  { label: "1:1", cols: 40, rows: 40 }, // 239x239
+  { label: "4:3", cols: 44, rows: 33 }, // 263x197
+  { label: "3:4", cols: 33, rows: 44 }, // 197x263
+  { label: "16:9", cols: 53, rows: 30 }, // 317x179
+  { label: "9:16", cols: 30, rows: 53 }, // 179x317
+  { label: "PHI", cols: 53, rows: 33 }, // 317x197 (黄金比 ≈ 横)
+  { label: "PHI V", cols: 33, rows: 53 }, // 197x317 (黄金比 ≈ 縦)
 ];
-let currentRatioIdx = 3; // 16:9
-
-/** キャンバスサイズの許容範囲 (ドット絵向けに小さい値も許容) */
-const ART_W_MIN = 8,
-  ART_W_MAX = 800;
-const ART_H_MIN = 8,
-  ART_H_MAX = 600;
+let currentSizeIdx = 3; // 16:9
+let gridCols = 53,
+  gridRows = 30;
 
 /** ツールバーとキャンバスの間の間隔 */
 const CANVAS_GAP = 4;
@@ -744,68 +741,24 @@ function resizeArt(w, h) {
 }
 
 /**
- * キャンバスサイズを適用する。
- * ASCII レンダー時はセルピッチ (CELL_W × CELL_H) の倍数にスナップし、
- * 文字グリッドがキャンバス領域にぴったり収まるようにする。
- * NumberBox の表示値も同期し、ツールバーを再構築して再生成を開始する。
+ * 文字グリッド (gridCols × gridRows) と字間から内容ピクセルを確定し、
+ * その寸法でアートバッファを取り直して再生成する。
+ * DOT もこの内容寸法 (= ASCII グリフ列の実ピクセル) で場を描くので、
+ * DOT/ASCII の外寸が完全一致し、マットは各辺きっかり PAD px (対称) になる。
  */
-function applyArtSize(w, h) {
-  if (renderMode === "ascii") {
-    w = Math.max(
-      AsciiArt.CELL_W,
-      Math.round(w / AsciiArt.CELL_W) * AsciiArt.CELL_W,
-    );
-    h = Math.max(
-      AsciiArt.CELL_H,
-      Math.round(h / AsciiArt.CELL_H) * AsciiArt.CELL_H,
-    );
-  }
-  w = Math.max(ART_W_MIN, Math.min(ART_W_MAX, w));
-  h = Math.max(ART_H_MIN, Math.min(ART_H_MAX, h));
-  resizeArt(w, h);
-  if (nbArtW) nbArtW.value = w;
-  if (nbArtH) nbArtH.value = h;
+function applySize() {
+  artWidth = gridCols * GLYPH_W + (gridCols - 1) * charSpacing;
+  artHeight = gridRows * GLYPH_H + (gridRows - 1) * charSpacing;
+  resizeArt(artWidth, artHeight);
   startGeneration();
 }
 
-// ── アスペクト比 → 寸法 ──
-// 比率は「総寸法 (アート + 額縁 PAD×2)」に対して適用する。これにより最終的な
-// 書き出し画像 (額縁込み) が指定比率にぴったり揃う。W/H はアート (生成) 解像度を
-// 指す。FREE (w=0) は W/H を独立指定。
-
-/** 総寸法 (content + PAD×2) が現在の比率になる content 高さを返す */
-function ratioContentH(contentW) {
-  const r = ASPECT_RATIOS[currentRatioIdx];
-  const p = outerMargin;
-  return Math.round(((contentW + 2 * p) * r.h) / r.w - 2 * p);
-}
-
-/** 総寸法 (content + PAD×2) が現在の比率になる content 幅を返す */
-function ratioContentW(contentH) {
-  const r = ASPECT_RATIOS[currentRatioIdx];
-  const p = outerMargin;
-  return Math.round(((contentH + 2 * p) * r.w) / r.h - 2 * p);
-}
-
-/** 比率変更時: 現在の幅を基準に、総寸法が比率になるよう高さを合わせる */
-function applyRatio() {
-  const r = ASPECT_RATIOS[currentRatioIdx];
-  if (r.w === 0) return; // FREE: 現状維持
-  applyArtSize(artWidth, ratioContentH(artWidth));
-}
-
-/** 幅変更時: 総寸法が比率になる高さを算出 (FREE なら高さ据え置き) */
-function applyRatioFromWidth(w) {
-  const r = ASPECT_RATIOS[currentRatioIdx];
-  if (r.w === 0) applyArtSize(w, nbArtH.value);
-  else applyArtSize(w, ratioContentH(w));
-}
-
-/** 高さ変更時: 総寸法が比率になる幅を算出 (FREE なら幅据え置き) */
-function applyRatioFromHeight(h) {
-  const r = ASPECT_RATIOS[currentRatioIdx];
-  if (r.w === 0) applyArtSize(nbArtW.value, h);
-  else applyArtSize(ratioContentW(h), h);
+/** SIZE プリセットを適用する */
+function applySizePreset(idx) {
+  currentSizeIdx = idx;
+  gridCols = SIZE_PRESETS[idx].cols;
+  gridRows = SIZE_PRESETS[idx].rows;
+  applySize();
 }
 
 function artPset(x, y) {
@@ -1479,11 +1432,14 @@ let plasmaGamma = 1.0;
  * AA キャンバスの cols/rows をピクセルサイズから算出する。
  * 文字セルピッチ (CELL_W × CELL_H = 6×8) でキャンバス領域を割る。
  */
+// ASCII の文字グリッドはサイズプリセットが定める gridCols×gridRows。
+// artWidth = gridCols×GLYPH_W + (gridCols-1)×字間 なので、ASCII グリフ列の
+// 実ピクセル extent は artWidth に一致する (DOT と同寸 = 外寸一致)。
 function calcAACols() {
-  return Math.max(4, (artWidth / AsciiArt.CELL_W) | 0);
+  return Math.max(4, gridCols);
 }
 function calcAARows() {
-  return Math.max(3, (artHeight / AsciiArt.CELL_H) | 0);
+  return Math.max(3, gridRows);
 }
 
 function plasmaInit(preset, s) {
@@ -2621,7 +2577,7 @@ let toolbarRoot;
 let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge;
 let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
-let ddRatio, nbArtW, nbArtH, nbPad, ddFormat, nbScale, btnSave, btnFile;
+let ddSize, nbPad, ddFormat, nbScale, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2637,8 +2593,7 @@ function buildToolbar() {
     // 新アルゴリズムが現在のレンダーモードに非対応なら既定モードへ
     const modes = ALGO_MODES[ALGO_KEYS[i]];
     if (!modes.includes(renderMode)) renderMode = modes[0];
-    // ASCII ならセル倍数にスナップして再生成
-    applyArtSize(artWidth, artHeight);
+    applySize(); // 内容寸法を取り直して再生成
     buildToolbar();
   });
 
@@ -2655,8 +2610,7 @@ function buildToolbar() {
   ddRender = new UI.DropDown(0, 0, renderLabels, renderSel, (i) => {
     cancelRecording(); // モード切替で録画を破棄 (DOT↔ASCII を跨ぐ録画は無意味)
     renderMode = renderModes[i];
-    // ASCII ならセル倍数にスナップ + バッファ再確保 + 再生成
-    applyArtSize(artWidth, artHeight);
+    applySize(); // 内容寸法を取り直して再生成 (DOT/ASCII で外寸は同一)
     buildToolbar(); // GAP (字間) の表示/非表示・形式候補をモードに合わせて切替
   });
   ddRender.tooltip =
@@ -2672,6 +2626,7 @@ function buildToolbar() {
     1,
     (v) => {
       charSpacing = v;
+      applySize(); // 字間は内容ピクセルに含まれるので寸法を取り直す
     },
   );
   nbGap.tooltip = "Char spacing (ASCII): gap between glyphs, count unchanged";
@@ -2745,23 +2700,14 @@ function buildToolbar() {
   tglAuto.h = ICON_H + BTN_PAD + BTN_BORDER;
   tglAuto.tooltip = "Auto shuffle (play/pause)";
 
-  // ── サイズ: アスペクト比 → 寸法 ──
-  const ratioLabels = ASPECT_RATIOS.map((r) => r.label);
-  ddRatio = new UI.DropDown(0, 0, ratioLabels, currentRatioIdx, (i) => {
-    currentRatioIdx = i;
-    applyRatio();
+  // ── サイズ: プリセット (文字グリッド = アスペクト & 基準解像度) ──
+  // DOT/ASCII とも同じ内容寸法を使うので外寸が一致 (シャッフルで箱が動かない)。
+  const sizeLabels = SIZE_PRESETS.map((s) => s.label);
+  ddSize = new UI.DropDown(0, 0, sizeLabels, currentSizeIdx, (i) => {
+    applySizePreset(i);
   });
-  ddRatio.tooltip = "Aspect ratio (W/H follow it; FREE = independent W/H)";
-
-  // W/H 直接入力。比率が選択されていれば連動、FREE なら独立。
-  nbArtW = new UI.NumberBox(0, 0, ART_W_MIN, ART_W_MAX, artWidth, 1, (v) => {
-    applyRatioFromWidth(v);
-  });
-  nbArtW.tooltip = "Canvas width";
-  nbArtH = new UI.NumberBox(0, 0, ART_H_MIN, ART_H_MAX, artHeight, 1, (v) => {
-    applyRatioFromHeight(v);
-  });
-  nbArtH.tooltip = "Canvas height";
+  ddSize.tooltip =
+    "Size preset: aspect & base resolution (DOT/ASCII identical). Scale up via X.";
 
   // ── 書き出し: 形式 (PNG/GIF/MP4) + 自由倍率 ──
   const formats = availableFormats();
@@ -2793,11 +2739,9 @@ function buildToolbar() {
 
   // ── 額縁マット (PAD): アートと枠の間の背景余白。DOT/ASCII 共通・書き出し込み ──
   nbPad = new UI.NumberBox(0, 0, MARGIN_MIN, MARGIN_MAX, outerMargin, 1, (v) => {
-    outerMargin = v;
-    // PAD は総寸法に含まれるので、比率を保つようアートを取り直す (FREE は据え置き)
-    applyRatio();
+    outerMargin = v; // 各辺 PAD px の対称マット (アートは不変、合成で反映)
   });
-  nbPad.tooltip = "Frame matte: background margin around the art (in export too)";
+  nbPad.tooltip = "Frame matte: symmetric margin around the art (in export too)";
 
   // PC へ書き出す = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
   btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
@@ -2817,8 +2761,8 @@ function buildToolbar() {
   const lblGap = new UI.Label(0, 0, "GAP:");
   const lblDither = new UI.Label(0, 0, "DITHER:");
   const lblEdge = new UI.Label(0, 0, "EDGE:");
+  const lblSize = new UI.Label(0, 0, "SIZE:");
   const lblPad = new UI.Label(0, 0, "PAD:");
-  const lblWH = new UI.Label(0, 0, "X"); // W × H
   const lblMul = new UI.Label(0, 0, "X"); // × scale
   // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
   //   + ASCII なら字間 (GAP)、DOT ならディザ行列 (DITHER) を対称に出す
@@ -2831,12 +2775,10 @@ function buildToolbar() {
   const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
   if (algoSupportsEdge()) row2Items.push(lblEdge, ddEdge);
   const row2 = UI.HBox(row2Items);
-  // 3行目: サイズ (比率 + W×H + 額縁PAD) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
+  // 3行目: サイズ (SIZE プリセット + 額縁PAD) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
   const row3 = UI.HBox([
-    ddRatio,
-    nbArtW,
-    lblWH,
-    nbArtH,
+    lblSize,
+    ddSize,
     lblPad,
     nbPad,
     ddFormat,
@@ -3058,7 +3000,9 @@ function onBeforeClose() {
   invertMode = false;
   autoMode = false;
   autoTimer = 0;
-  currentRatioIdx = 3; // 16:9
+  currentSizeIdx = 3; // 16:9
+  gridCols = SIZE_PRESETS[3].cols;
+  gridRows = SIZE_PRESETS[3].rows;
   renderMode = "dot";
   outerMargin = 1;
   charSpacing = 1;
@@ -3071,7 +3015,10 @@ function onBeforeClose() {
   videoEncoding = false;
   exportFormatIdx = 0; // PNG
   exportScale = 8;
-  resizeArt(320, 180); // 既定 16:9 320x180
+  resizeArt(
+    gridCols * GLYPH_W + (gridCols - 1) * charSpacing,
+    gridRows * GLYPH_H + (gridRows - 1) * charSpacing,
+  ); // 既定 16:9 グリッド 53×30 → 317×179
   fieldBuf = null;
   rdU = rdV = rdNU = rdNV = null;
   vorPoints = null;
