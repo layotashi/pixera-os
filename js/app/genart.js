@@ -120,6 +120,20 @@ let charSpacing = 1;
 const SPACING_MIN = 0,
   SPACING_MAX = 6;
 
+/**
+ * グリッド・シミュレーション系 (REACT / BZ) の境界条件。
+ *   "wrap" — トーラス (上下端・左右端がループ)。既定。
+ *   "wall" — 壁 (無流束/反射境界)。端で構造が終端・反射し、別の創発になる。
+ * 境界は発展の最初から効くため、変更時はシミュを生成し直す。
+ */
+let edgeMode = "wrap";
+
+/** 現在のアルゴリズムが境界条件 (EDGE) の選択に対応するか */
+function algoSupportsEdge() {
+  const k = ALGO_KEYS[currentAlgoIdx];
+  return k === "react" || k === "bz";
+}
+
 /** この環境で選べる書き出し形式 (MP4 は WebCodecs 対応時のみ) */
 function availableFormats() {
   // ASCII レンダーは artBuf を使わず動画 (GIF/MP4) を撮れないため PNG のみ提示する。
@@ -1213,14 +1227,18 @@ function reactStep() {
   const baseCells = 128 * 96;
   const cells = rdW * rdH;
   const perFrame = Math.max(4, Math.round((35 * baseCells) / cells));
+  const wrap = edgeMode === "wrap";
   for (let s = 0; s < perFrame && rdIter < rdMaxIter; s++, rdIter++) {
     for (let y = 0; y < rdH; y++) {
       for (let x = 0; x < rdW; x++) {
         const idx = y * rdW + x;
-        const xp = x < rdW - 1 ? idx + 1 : idx - (rdW - 1);
-        const xn = x > 0 ? idx - 1 : idx + (rdW - 1);
-        const yp = y < rdH - 1 ? idx + rdW : idx - (rdH - 1) * rdW;
-        const yn = y > 0 ? idx - rdW : idx + (rdH - 1) * rdW;
+        // wrap: トーラス (端を巻き戻す)。wall: 無流束 (端は自分自身に clamp = 勾配0)
+        const xp =
+          x < rdW - 1 ? idx + 1 : wrap ? idx - (rdW - 1) : idx;
+        const xn = x > 0 ? idx - 1 : wrap ? idx + (rdW - 1) : idx;
+        const yp =
+          y < rdH - 1 ? idx + rdW : wrap ? idx - (rdH - 1) * rdW : idx;
+        const yn = y > 0 ? idx - rdW : wrap ? idx + (rdH - 1) * rdW : idx;
         const lapU = rdU[xp] + rdU[xn] + rdU[yp] + rdU[yn] - 4 * rdU[idx];
         const lapV = rdV[xp] + rdV[xn] + rdV[yp] + rdV[yn] - 4 * rdV[idx];
         const u = rdU[idx],
@@ -2394,17 +2412,19 @@ function bzStep() {
     H = bzH,
     N = bzStates;
   const stepsPerFrame = 2;
+  const wrap = edgeMode === "wrap";
   for (let sIt = 0; sIt < stepsPerFrame && bzStep_n < bzMaxSteps; sIt++, bzStep_n++) {
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const i = y * W + x;
         const s = bzS[i];
         if (s === 0) {
-          // 静止: 興奮した隣接 (状態 1) があれば興奮
-          const l = x > 0 ? bzS[i - 1] : bzS[i + W - 1];
-          const rr = x < W - 1 ? bzS[i + 1] : bzS[i - W + 1];
-          const u = y > 0 ? bzS[i - W] : bzS[i + (H - 1) * W];
-          const d = y < H - 1 ? bzS[i + W] : bzS[i - (H - 1) * W];
+          // 静止: 興奮した隣接 (状態 1) があれば興奮。
+          // wall: 端の外は静止扱い (0) → 波は壁で反射・消滅する。
+          const l = x > 0 ? bzS[i - 1] : wrap ? bzS[i + W - 1] : 0;
+          const rr = x < W - 1 ? bzS[i + 1] : wrap ? bzS[i - W + 1] : 0;
+          const u = y > 0 ? bzS[i - W] : wrap ? bzS[i + (H - 1) * W] : 0;
+          const d = y < H - 1 ? bzS[i + W] : wrap ? bzS[i - (H - 1) * W] : 0;
           bzNext[i] = l === 1 || rr === 1 || u === 1 || d === 1 ? 1 : 0;
         } else {
           bzNext[i] = (s + 1) % N; // 不応期を進めて静止に戻る
@@ -2579,7 +2599,8 @@ function autoNext() {
 /** @type {UI.WidgetGroup} */
 let toolbar;
 let toolbarRoot;
-let ddAlgo, ddPreset, ddRender, nbGap, ddDither, lblSeed, nbSeed, btnDice, btnGen;
+let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge;
+let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
 let ddRatio, nbArtW, nbArtH, nbPad, ddFormat, nbScale, btnSave, btnFile;
 let toolbarH = 0;
@@ -2646,6 +2667,17 @@ function buildToolbar() {
   });
   ddDither.tooltip =
     "Bayer dither matrix (DOT): 2x2 coarse / 4x4 / 8x8 fine, smoother gradients";
+
+  // ── 境界条件 (EDGE): REACT / BZ のときだけ。WRAP=トーラス / WALL=壁 ──
+  const EDGE_MODES = ["wrap", "wall"];
+  let edgeSel = EDGE_MODES.indexOf(edgeMode);
+  if (edgeSel < 0) edgeSel = 0;
+  ddEdge = new UI.DropDown(0, 0, ["WRAP", "WALL"], edgeSel, (i) => {
+    edgeMode = EDGE_MODES[i];
+    startGeneration(); // 境界は発展の最初から効くのでシミュを生成し直す
+  });
+  ddEdge.tooltip =
+    "Boundary (REACT/BZ): WRAP = torus (edges loop) / WALL = bounded (edges reflect)";
 
   lblSeed = new UI.Label(0, 0, "SEED:");
   nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
@@ -2763,6 +2795,7 @@ function buildToolbar() {
   const lblRender = new UI.Label(0, 0, "AS:");
   const lblGap = new UI.Label(0, 0, "GAP:");
   const lblDither = new UI.Label(0, 0, "DITHER:");
+  const lblEdge = new UI.Label(0, 0, "EDGE:");
   const lblPad = new UI.Label(0, 0, "PAD:");
   const lblWH = new UI.Label(0, 0, "X"); // W × H
   const lblMul = new UI.Label(0, 0, "X"); // × scale
@@ -2773,7 +2806,10 @@ function buildToolbar() {
   else row1Items.push(lblDither, ddDither);
   const row1 = UI.HBox(row1Items);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
-  const row2 = UI.HBox([lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert]);
+  //   + REACT/BZ なら境界条件 (EDGE) をここに置く (1 行目の幅に余裕がないため)
+  const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
+  if (algoSupportsEdge()) row2Items.push(lblEdge, ddEdge);
+  const row2 = UI.HBox(row2Items);
   // 3行目: サイズ (比率 + W×H + 額縁PAD) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
   const row3 = UI.HBox([
     ddRatio,
@@ -3006,6 +3042,7 @@ function onBeforeClose() {
   outerMargin = 1;
   charSpacing = 1;
   setDitherSize(4);
+  edgeMode = "wrap";
   animTime = 0;
   gifRecording = false;
   gifLoopFrame = 0;
