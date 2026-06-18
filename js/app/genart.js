@@ -157,6 +157,14 @@ const ALGO_KEYS = [
   "rain",
   "grid",
   "land",
+  "metaball",
+  "moire",
+  "caustic",
+  "quasic",
+  "julia",
+  "curl",
+  "bz",
+  "worley",
 ];
 const ALGO_NAMES = [
   "REACT",
@@ -167,6 +175,14 @@ const ALGO_NAMES = [
   "RAIN",
   "GRID",
   "LAND",
+  "METABALL",
+  "MOIRE",
+  "CAUSTIC",
+  "QUASIC",
+  "JULIA",
+  "CURL",
+  "BZ",
+  "WORLEY",
 ];
 
 /**
@@ -184,6 +200,14 @@ const ALGO_MODES = {
   rain: ["ascii"],
   grid: ["dot", "ascii"],
   land: ["dot", "ascii"],
+  metaball: ["dot", "ascii"],
+  moire: ["dot", "ascii"],
+  caustic: ["dot", "ascii"],
+  quasic: ["dot", "ascii"],
+  julia: ["dot", "ascii"],
+  curl: ["dot", "ascii"],
+  bz: ["dot", "ascii"],
+  worley: ["dot", "ascii"],
 };
 
 /** 場 (fieldBuf) パイプラインを使うアルゴリズム (RAIN は文字を直接書くため除外) */
@@ -195,6 +219,14 @@ const FIELD_ALGOS = new Set([
   "drift",
   "grid",
   "land",
+  "metaball",
+  "moire",
+  "caustic",
+  "quasic",
+  "julia",
+  "curl",
+  "bz",
+  "worley",
 ]);
 
 /** 現在のレンダーモード ("dot" | "ascii")。ALGO_MODES の制約下で選択される。 */
@@ -209,7 +241,20 @@ const RENDER_LABELS = { dot: "DOT", ascii: "ASCII" };
  * t が一周すると元に戻る ＝ 周期的 ＝ シームレスにループする (GIF ループの素地)。
  * VORONOI・REACT・RAIN は一回生成 (時間発展しない)。
  */
-const ANIM_ALGOS = new Set(["plasma", "drift", "grid", "land", "wave"]);
+const ANIM_ALGOS = new Set([
+  "plasma",
+  "drift",
+  "grid",
+  "land",
+  "wave",
+  "metaball",
+  "moire",
+  "caustic",
+  "quasic",
+  "julia",
+  "curl",
+  "worley",
+]);
 /** アニメ 1 周期のフレーム数 (≈3秒@60fps)。GIF ループもこの周期で撮る。 */
 const ANIM_PERIOD = 180;
 const ANIM_DT = (Math.PI * 2) / ANIM_PERIOD;
@@ -428,6 +473,59 @@ const PRESETS = {
       chars: "0123456789",
       seaLevel: 0.2,
     },
+  ],
+  metaball: [
+    { name: "LAVA", count: 5, gamma: 0.7, chars: "" },
+    { name: "DROPS", count: 9, gamma: 1.3, chars: "" },
+    { name: "MERGE", count: 3, gamma: 0.55, chars: "" },
+    { name: "SWARM", count: 14, gamma: 1.0, chars: "" },
+    { name: "ORBIT", count: 6, gamma: 0.9, chars: " .oO@" },
+  ],
+  moire: [
+    { name: "LINES", layers: 2, freq: 0.5, curve: false, gamma: 1.0, chars: "" },
+    { name: "RADIAL", layers: 2, freq: 0.4, curve: true, gamma: 1.0, chars: "" },
+    { name: "WEAVE", layers: 3, freq: 0.45, curve: false, gamma: 1.3, chars: "" },
+    { name: "VORTEX", layers: 3, freq: 0.34, curve: true, gamma: 0.9, chars: "" },
+    { name: "BEAT", layers: 2, freq: 0.6, curve: false, gamma: 0.8, chars: "" },
+  ],
+  caustic: [
+    { name: "POOL", waves: 4, freq: 0.5, sharp: 4, chars: "" },
+    { name: "DEEP", waves: 6, freq: 0.34, sharp: 5, chars: "" },
+    { name: "SHALLOW", waves: 3, freq: 0.7, sharp: 3, chars: "" },
+    { name: "NET", waves: 5, freq: 0.5, sharp: 6, chars: "" },
+    { name: "SHIMMER", waves: 7, freq: 0.42, sharp: 4, chars: "" },
+  ],
+  quasic: [
+    { name: "PENROSE", symmetry: 5, freq: 0.5, gamma: 1.0, chars: "" },
+    { name: "STAR7", symmetry: 7, freq: 0.45, gamma: 1.0, chars: "" },
+    { name: "OCTAGON", symmetry: 8, freq: 0.5, gamma: 1.0, chars: "" },
+    { name: "DECAGON", symmetry: 10, freq: 0.4, gamma: 1.1, chars: "" },
+    { name: "TRIAD", symmetry: 3, freq: 0.6, gamma: 1.0, chars: "" },
+  ],
+  julia: [
+    { name: "DENDRITE", cre: -0.7, cim: 0.27, crad: 0.05, span: 3.0, iters: 48, gamma: 1.0, invert: false, chars: "" },
+    { name: "SPIRAL", cre: -0.4, cim: 0.6, crad: 0.08, span: 3.0, iters: 48, gamma: 1.0, invert: false, chars: "" },
+    { name: "RABBIT", cre: -0.123, cim: 0.745, crad: 0.04, span: 3.0, iters: 64, gamma: 1.0, invert: false, chars: "" },
+    { name: "DUST", cre: 0.285, cim: 0.01, crad: 0.06, span: 3.0, iters: 48, gamma: 1.0, invert: true, chars: "" },
+    { name: "FROST", cre: -0.8, cim: 0.156, crad: 0.05, span: 3.0, iters: 56, gamma: 1.0, invert: false, chars: "" },
+  ],
+  curl: [
+    { name: "MARBLE", scale: 0.03, octaves: 4, warp: 2.5, warpAmt: 3, veinFreq: 0.6, flow: 4, gamma: 1.0, chars: "" },
+    { name: "INK", scale: 0.05, octaves: 3, warp: 3, warpAmt: 4, veinFreq: 0.4, flow: 6, gamma: 0.9, chars: "" },
+    { name: "WOOD", scale: 0.02, octaves: 2, warp: 1.5, warpAmt: 5, veinFreq: 0.9, flow: 3, gamma: 1.1, chars: "" },
+    { name: "SWIRL", scale: 0.04, octaves: 5, warp: 4, warpAmt: 3, veinFreq: 0.5, flow: 5, gamma: 1.0, chars: "" },
+  ],
+  bz: [
+    { name: "SPIRAL", states: 8, maxSteps: 280, seedMode: "spiral", chars: "" },
+    { name: "TARGET", states: 10, maxSteps: 240, seedMode: "center", chars: "" },
+    { name: "TURBULENT", states: 6, maxSteps: 320, seedMode: "random", chars: "" },
+    { name: "PULSE", states: 12, maxSteps: 200, seedMode: "spiral", chars: "" },
+  ],
+  worley: [
+    { name: "CELLS", points: 24, mode: "cell", scale: 1.0, gamma: 1.0, chars: "" },
+    { name: "STONE", points: 16, mode: "ridge", scale: 1.2, gamma: 1.0, chars: "" },
+    { name: "FOAM", points: 36, mode: "cell", scale: 1.1, gamma: 0.9, chars: "" },
+    { name: "CRACKLE", points: 20, mode: "ridge", scale: 1.4, gamma: 1.2, chars: "" },
   ],
 };
 
@@ -1725,6 +1823,571 @@ function landFill(t) {
   statusText = `LAND ${fieldCols}x${fieldRows}`;
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  METABALL — 移動中心の等値面ブロブ (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 複数の中心からの放射減衰 (r²/dist²) の和を等値面場にする。
+// 中心を整数角速度で円軌道させると t∈[0,2π) で一周しシームレスループ。
+// 近づいた球同士が融合する「ラバランプ」的な有機運動。
+
+let metaPreset = null;
+let metaBalls = null;
+
+function metaballInit(preset, s) {
+  metaPreset = preset;
+  seedRng(s);
+  allocField(preset.chars);
+  const cols = calcAACols(),
+    rows = calcAARows();
+  const minDim = Math.min(cols, rows);
+  metaBalls = [];
+  for (let i = 0; i < preset.count; i++) {
+    metaBalls.push({
+      bx: (0.2 + rng() * 0.6) * cols,
+      by: (0.2 + rng() * 0.6) * rows,
+      orbit: (0.05 + rng() * 0.18) * minDim,
+      ang: rng() * Math.PI * 2,
+      spin: (rng() < 0.5 ? 1 : -1) * (1 + rngInt(0, 2)), // 整数 → 周期的
+      r: (0.08 + rng() * 0.1) * minDim,
+    });
+  }
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  metaballFill(0);
+}
+
+function metaballFill(t) {
+  if (!metaBalls || !fieldBuf) return;
+  const invGamma = 1.0 / metaPreset.gamma;
+  const balls = metaBalls;
+  const n = balls.length;
+  for (let i = 0; i < n; i++) {
+    const b = balls[i];
+    b.x = b.bx + Math.cos(b.ang + b.spin * t) * b.orbit;
+    b.y = b.by + Math.sin(b.ang + b.spin * t) * b.orbit;
+    b.r2 = b.r * b.r;
+  }
+  for (let r = 0; r < fieldRows; r++) {
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      let sum = 0;
+      for (let i = 0; i < n; i++) {
+        const b = balls[i];
+        const dx = cx - b.x,
+          dy = cy - b.y;
+        sum += b.r2 / (dx * dx + dy * dy + 1e-3);
+      }
+      let v = sum / (sum + 1); // ソフトな 0..1
+      v = v ** invGamma;
+      fieldBuf[base + c] = v;
+    }
+  }
+  commitField();
+  statusText = `METABALL ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  MOIRE — 回転グレーティングの干渉 (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 複数の正弦グレーティングの積がモアレ (うなり) を生む。
+// 全グレーティングの角度を t で回すと一周でループする。
+// curve=true は放射状に曲げて渦状のモアレにする。
+
+let moirePreset = null;
+let moireGratings = null;
+
+function moireInit(preset, s) {
+  moirePreset = preset;
+  seedRng(s);
+  allocField(preset.chars);
+  moireGratings = [];
+  for (let i = 0; i < preset.layers; i++) {
+    moireGratings.push({
+      ang: rng() * Math.PI,
+      freq: preset.freq * (0.8 + rng() * 0.5),
+      phase: rng() * Math.PI * 2,
+      curve: preset.curve ? 0.3 + rng() * 0.7 : 0,
+    });
+  }
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  moireFill(0);
+}
+
+function moireFill(t) {
+  if (!moireGratings || !fieldBuf) return;
+  const invGamma = 1.0 / moirePreset.gamma;
+  const gr = moireGratings;
+  const m = gr.length;
+  const cols = calcAACols(),
+    rows = calcAARows();
+  const cxC = cols / 2,
+    cyC = rows / 2;
+  for (let r = 0; r < fieldRows; r++) {
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      let prod = 1;
+      for (let i = 0; i < m; i++) {
+        const g = gr[i];
+        const a = g.ang + t; // 時間で回転 → 周期的
+        let coord = cx * Math.cos(a) + cy * Math.sin(a);
+        if (g.curve) {
+          const dx = cx - cxC,
+            dy = cy - cyC;
+          coord += g.curve * Math.sqrt(dx * dx + dy * dy);
+        }
+        prod *= Math.sin(coord * g.freq + g.phase);
+      }
+      let v = (prod + 1) * 0.5;
+      v = v ** invGamma;
+      fieldBuf[base + c] = v;
+    }
+  }
+  commitField();
+  statusText = `MOIRE ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  CAUSTIC — 水面コースティクス (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 複数の進行波の和を尾根化 (1-|s|) して鋭く累乗すると、
+// 光が集まる細い網目 (コースティクス) になる。
+// 各波の速度を整数にして t で位相を進めるとループする。
+
+let causticPreset = null;
+let causticWaves = null;
+
+function causticInit(preset, s) {
+  causticPreset = preset;
+  seedRng(s);
+  allocField(preset.chars);
+  causticWaves = [];
+  for (let i = 0; i < preset.waves; i++) {
+    const a = rng() * Math.PI * 2;
+    causticWaves.push({
+      dx: Math.cos(a),
+      dy: Math.sin(a),
+      freq: preset.freq * (0.7 + rng() * 0.6),
+      speed: (rng() < 0.5 ? 1 : -1) * (1 + rngInt(0, 2)),
+      phase: rng() * Math.PI * 2,
+    });
+  }
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  causticFill(0);
+}
+
+function causticFill(t) {
+  if (!causticWaves || !fieldBuf) return;
+  const W = causticWaves;
+  const K = W.length;
+  const sharp = causticPreset.sharp;
+  for (let r = 0; r < fieldRows; r++) {
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      let s = 0;
+      for (let i = 0; i < K; i++) {
+        const w = W[i];
+        s += Math.sin((cx * w.dx + cy * w.dy) * w.freq + w.speed * t + w.phase);
+      }
+      s /= K; // -1..1
+      let v = 1 - Math.abs(s); // s=0 で尾根
+      v = v ** sharp; // 細い網目に
+      fieldBuf[base + c] = v;
+    }
+  }
+  commitField();
+  statusText = `CAUSTIC ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  QUASIC — 準結晶 (N 枚平面波の干渉) (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 等角度に並べた N 枚の平面波の和は準結晶 (ペンローズ的) な対称を生む。
+// N が奇数 (5,7) だと非周期タイル的、偶数だと結晶的。位相を t で進めてループ。
+
+let quasicPreset = null;
+let quasicPhase = null;
+let quasicRot = 0;
+
+function quasicInit(preset, s) {
+  quasicPreset = preset;
+  seedRng(s);
+  allocField(preset.chars);
+  quasicPhase = [];
+  for (let i = 0; i < preset.symmetry; i++)
+    quasicPhase.push(rng() * Math.PI * 2);
+  quasicRot = rng() * Math.PI * 2;
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  quasicFill(0);
+}
+
+function quasicFill(t) {
+  if (!quasicPhase || !fieldBuf) return;
+  const N = quasicPreset.symmetry;
+  const freq = quasicPreset.freq;
+  const invGamma = 1.0 / quasicPreset.gamma;
+  const cols = calcAACols(),
+    rows = calcAARows();
+  const cxC = cols / 2,
+    cyC = rows / 2;
+  const dirs = [];
+  for (let k = 0; k < N; k++) {
+    const a = quasicRot + (Math.PI * 2 * k) / N;
+    dirs.push([Math.cos(a), Math.sin(a), quasicPhase[k]]);
+  }
+  for (let r = 0; r < fieldRows; r++) {
+    const cy = fieldCellY(r) - cyC;
+    const base = r * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c) - cxC;
+      let s = 0;
+      for (let k = 0; k < N; k++) {
+        const d = dirs[k];
+        s += Math.cos((cx * d[0] + cy * d[1]) * freq + d[2] + t);
+      }
+      let v = (s / N + 1) * 0.5;
+      v = v ** invGamma;
+      fieldBuf[base + c] = v;
+    }
+  }
+  commitField();
+  statusText = `QUASIC ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  JULIA — ジュリア集合 (連続反復) (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// z ← z² + c の脱出時間を連続化 (smooth iteration) して濃淡場にする。
+// 定数 c を円軌道で動かすと集合が形態変化し、一周でループする。
+// 解像度ネイティブに描くので DOT では精緻、ASCII では塊状になる。
+
+let juliaPreset = null;
+let juliaCbase = null;
+let juliaCphase = 0;
+
+function juliaInit(preset, s) {
+  juliaPreset = preset;
+  seedRng(s);
+  allocField(preset.chars);
+  juliaCbase = { re: preset.cre, im: preset.cim };
+  juliaCphase = rng() * Math.PI * 2;
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  juliaFill(0);
+}
+
+function juliaFill(t) {
+  if (!juliaPreset || !fieldBuf) return;
+  const p = juliaPreset;
+  const maxIter = p.iters;
+  const invGamma = 1.0 / p.gamma;
+  const cre = juliaCbase.re + p.crad * Math.cos(t + juliaCphase);
+  const cim = juliaCbase.im + p.crad * Math.sin(t + juliaCphase);
+  const cols = fieldCols,
+    rows = fieldRows;
+  const aspect = cols / rows;
+  const LOG2 = Math.log(2);
+  for (let r = 0; r < rows; r++) {
+    const base = r * cols;
+    const y0 = ((r + 0.5) / rows - 0.5) * p.span;
+    for (let c = 0; c < cols; c++) {
+      const x0 = ((c + 0.5) / cols - 0.5) * p.span * aspect;
+      let zr = x0,
+        zi = y0,
+        i = 0,
+        m = 0;
+      for (; i < maxIter; i++) {
+        const zr2 = zr * zr,
+          zi2 = zi * zi;
+        m = zr2 + zi2;
+        if (m > 16) break;
+        zi = 2 * zr * zi + cim;
+        zr = zr2 - zi2 + cre;
+      }
+      let v;
+      if (i >= maxIter) {
+        v = 1; // 集合内部 = 最も密
+      } else {
+        // smooth iteration count
+        const sm = i + 1 - Math.log(0.5 * Math.log(m)) / LOG2;
+        v = sm / maxIter;
+        if (v < 0) v = 0;
+        else if (v > 1) v = 1;
+        v = v ** invGamma;
+      }
+      fieldBuf[base + c] = p.invert ? 1 - v : v;
+    }
+  }
+  commitField();
+  statusText = `JULIA ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  CURL — ドメインワープ墨流し / 大理石 (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// fbm で座標をワープ (domain warp) してから正弦の縞に通すと、
+// 大理石・墨流し・木目の脈になる。標本オフセットを円運動させ位相を
+// t で進めると流れながら一周でループする。構造系 FLOW の「場」リベンジ。
+
+let curlPreset = null;
+let curlOffX = 0,
+  curlOffY = 0;
+
+function curlInit(preset, s) {
+  curlPreset = preset;
+  seedRng(s);
+  initNoise(s);
+  allocField(preset.chars);
+  curlOffX = rng() * 1000;
+  curlOffY = rng() * 1000;
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  curlFill(0);
+}
+
+function curlFill(t) {
+  if (!curlPreset || !fieldBuf) return;
+  const p = curlPreset;
+  const sc = p.scale;
+  const invGamma = 1.0 / p.gamma;
+  const ax = curlOffX + p.flow * Math.cos(t);
+  const ay = curlOffY + p.flow * Math.sin(t);
+  for (let r = 0; r < fieldRows; r++) {
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      const nx = (cx + ax) * sc,
+        ny = (cy + ay) * sc;
+      const qx = fbm(nx, ny, p.octaves);
+      const qy = fbm(nx + 5.2, ny + 1.3, p.octaves);
+      const warp = fbm(nx + p.warp * qx, ny + p.warp * qy, p.octaves);
+      let v = 0.5 + 0.5 * Math.sin(cx * sc * p.veinFreq + warp * p.warpAmt + t);
+      v = v ** invGamma;
+      fieldBuf[base + c] = v;
+    }
+  }
+  commitField();
+  statusText = `CURL ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  WORLEY — セルラーノイズ (F1/F2 距離場) (アニメ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 各点に最も近い母点までの距離 F1 (細胞) や F2-F1 (境界の尾根) を場にする。
+// 母点を小さく円運動させて t で一周しループ。VORONOI dist の連続アニメ版。
+
+let worleyPreset = null;
+let worleyPts = null;
+let worleyCols = 0,
+  worleyRows = 0;
+
+function worleyInit(preset, s) {
+  worleyPreset = preset;
+  seedRng(s);
+  allocField(preset.chars);
+  worleyCols = calcAACols();
+  worleyRows = calcAARows();
+  const minDim = Math.min(worleyCols, worleyRows);
+  worleyPts = [];
+  for (let i = 0; i < preset.points; i++) {
+    worleyPts.push({
+      bx: rng() * worleyCols,
+      by: rng() * worleyRows,
+      orbit: (0.02 + rng() * 0.06) * minDim,
+      ang: rng() * Math.PI * 2,
+      spin: (rng() < 0.5 ? 1 : -1) * (1 + rngInt(0, 1)),
+    });
+  }
+  animTime = 0;
+  generating = false;
+  progress = 1;
+  worleyFill(0);
+}
+
+function worleyFill(t) {
+  if (!worleyPts || !fieldBuf) return;
+  const p = worleyPreset;
+  const pts = worleyPts;
+  const n = pts.length;
+  const invGamma = 1.0 / p.gamma;
+  for (let i = 0; i < n; i++) {
+    const q = pts[i];
+    q.x = q.bx + Math.cos(q.ang + q.spin * t) * q.orbit;
+    q.y = q.by + Math.sin(q.ang + q.spin * t) * q.orbit;
+  }
+  // 解像度非依存の正規化: 平均母点間隔で距離をスケールする
+  const spacing = Math.sqrt((worleyCols * worleyRows) / n);
+  const norm = p.scale / spacing;
+  const ridge = p.mode === "ridge";
+  for (let r = 0; r < fieldRows; r++) {
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      let f1 = 1e18,
+        f2 = 1e18;
+      for (let i = 0; i < n; i++) {
+        const q = pts[i];
+        const dx = cx - q.x,
+          dy = cy - q.y;
+        const d = dx * dx + dy * dy;
+        if (d < f1) {
+          f2 = f1;
+          f1 = d;
+        } else if (d < f2) {
+          f2 = d;
+        }
+      }
+      f1 = Math.sqrt(f1);
+      f2 = Math.sqrt(f2);
+      let v = ridge
+        ? Math.min(1, (f2 - f1) * norm)
+        : 1 - Math.min(1, f1 * norm);
+      v = v ** invGamma;
+      fieldBuf[base + c] = v;
+    }
+  }
+  commitField();
+  statusText = `WORLEY ${fieldCols}x${fieldRows}`;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  BZ — 興奮性媒質のらせん波 (一回生成)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// Greenberg–Hastings 励起性セルオートマトン。各セルは 0 (静止) と
+// 1..STATES-1 (興奮→不応) を巡る。静止セルは興奮 (状態 1) の隣接があれば
+// 興奮し、それ以外の状態は毎ステップ進んで静止に戻る。位相勾配で初期化
+// すると、らせん波 / ターゲット波が自己組織化する (BZ 反応の質感)。
+// 状態を持つ進行的シミュなので一回生成 (発展して凍結) 系。
+
+const BZ_MAX_SIDE = 160;
+let bzPreset = null;
+let bzS = null,
+  bzNext = null;
+let bzW = 0,
+  bzH = 0,
+  bzStates = 8;
+let bzStep_n = 0,
+  bzMaxSteps = 0;
+
+function bzInit(preset, s) {
+  bzPreset = preset;
+  seedRng(s);
+  bzStates = preset.states;
+  bzMaxSteps = preset.maxSteps;
+
+  // シミュ格子サイズ (キャンバスから縮小)
+  if (artWidth <= BZ_MAX_SIDE && artHeight <= BZ_MAX_SIDE) {
+    bzW = artWidth;
+    bzH = artHeight;
+  } else {
+    const sc = Math.ceil(Math.max(artWidth, artHeight) / BZ_MAX_SIDE);
+    bzW = Math.ceil(artWidth / sc);
+    bzH = Math.ceil(artHeight / sc);
+  }
+  const len = bzW * bzH;
+  bzS = new Uint8Array(len);
+  bzNext = new Uint8Array(len);
+
+  const midX = bzW >> 1,
+    midY = bzH >> 1;
+  const mode = preset.seedMode;
+  for (let y = 0; y < bzH; y++) {
+    for (let x = 0; x < bzW; x++) {
+      const i = y * bzW + x;
+      if (mode === "random") {
+        bzS[i] = rngInt(0, bzStates - 1);
+      } else if (mode === "center") {
+        // 半径方向の位相 → ターゲット波
+        const dx = x - midX,
+          dy = y - midY;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        bzS[i] = (((d / 6) | 0) + bzStates) % bzStates;
+      } else {
+        // spiral: 角度方向の位相勾配 → らせん波
+        const ang = Math.atan2(y - midY, x - midX);
+        let ph = (ang + Math.PI) / (Math.PI * 2); // 0..1
+        bzS[i] = (ph * bzStates) | 0;
+        if (bzS[i] >= bzStates) bzS[i] = bzStates - 1;
+      }
+    }
+  }
+  bzStep_n = 0;
+  generating = true;
+  progress = 0;
+  allocField(preset.chars);
+}
+
+function bzStep() {
+  const W = bzW,
+    H = bzH,
+    N = bzStates;
+  const stepsPerFrame = 2;
+  for (let sIt = 0; sIt < stepsPerFrame && bzStep_n < bzMaxSteps; sIt++, bzStep_n++) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const s = bzS[i];
+        if (s === 0) {
+          // 静止: 興奮した隣接 (状態 1) があれば興奮
+          const l = x > 0 ? bzS[i - 1] : bzS[i + W - 1];
+          const rr = x < W - 1 ? bzS[i + 1] : bzS[i - W + 1];
+          const u = y > 0 ? bzS[i - W] : bzS[i + (H - 1) * W];
+          const d = y < H - 1 ? bzS[i + W] : bzS[i - (H - 1) * W];
+          bzNext[i] = l === 1 || rr === 1 || u === 1 || d === 1 ? 1 : 0;
+        } else {
+          bzNext[i] = (s + 1) % N; // 不応期を進めて静止に戻る
+        }
+      }
+    }
+    const tmp = bzS;
+    bzS = bzNext;
+    bzNext = tmp;
+  }
+  // シミュ格子 → fieldBuf へ再標本化。状態を位相濃淡にマップ。
+  for (let fr = 0; fr < fieldRows; fr++) {
+    const gy = Math.min(bzH - 1, (((fr + 0.5) / fieldRows) * bzH) | 0);
+    const fbase = fr * fieldCols;
+    const gbase = gy * bzW;
+    for (let fc = 0; fc < fieldCols; fc++) {
+      const gx = Math.min(bzW - 1, (((fc + 0.5) / fieldCols) * bzW) | 0);
+      const s = bzS[gbase + gx];
+      fieldBuf[fbase + fc] = s === 0 ? 0 : 1 - (s - 1) / (bzStates - 1);
+    }
+  }
+  commitField();
+  progress = bzStep_n / bzMaxSteps;
+  statusText = `BZ: ${bzStep_n}/${bzMaxSteps}`;
+  if (bzStep_n >= bzMaxSteps) {
+    generating = false;
+    progress = 1;
+    statusText = `DONE - BZ ${bzStates} STATES`;
+  }
+}
+
 function startGeneration() {
   const algoKey = ALGO_KEYS[currentAlgoIdx];
   const preset = PRESETS[algoKey][currentPresetIdx];
@@ -1755,6 +2418,30 @@ function startGeneration() {
     case "land":
       aaLandInit(preset, seed);
       break;
+    case "metaball":
+      metaballInit(preset, seed);
+      break;
+    case "moire":
+      moireInit(preset, seed);
+      break;
+    case "caustic":
+      causticInit(preset, seed);
+      break;
+    case "quasic":
+      quasicInit(preset, seed);
+      break;
+    case "julia":
+      juliaInit(preset, seed);
+      break;
+    case "curl":
+      curlInit(preset, seed);
+      break;
+    case "bz":
+      bzInit(preset, seed);
+      break;
+    case "worley":
+      worleyInit(preset, seed);
+      break;
   }
 }
 
@@ -1771,6 +2458,9 @@ function stepGeneration() {
       break;
     case "rain":
       aaRainStep();
+      break;
+    case "bz":
+      bzStep();
       break;
   }
 }
@@ -1792,6 +2482,27 @@ function animateFill() {
       break;
     case "wave":
       waveFill(animTime);
+      break;
+    case "metaball":
+      metaballFill(animTime);
+      break;
+    case "moire":
+      moireFill(animTime);
+      break;
+    case "caustic":
+      causticFill(animTime);
+      break;
+    case "quasic":
+      quasicFill(animTime);
+      break;
+    case "julia":
+      juliaFill(animTime);
+      break;
+    case "curl":
+      curlFill(animTime);
+      break;
+    case "worley":
+      worleyFill(animTime);
       break;
   }
 }
@@ -2254,6 +2965,14 @@ function onBeforeClose() {
   aaGridPreset = null;
   aaGridParams = null;
   aaLandPreset = null;
+  metaBalls = null;
+  moireGratings = null;
+  causticWaves = null;
+  quasicPhase = null;
+  juliaPreset = null;
+  curlPreset = null;
+  worleyPts = null;
+  bzS = bzNext = null;
   return true;
 }
 
