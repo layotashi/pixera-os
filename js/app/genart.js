@@ -649,6 +649,12 @@ function fbm(x, y, octaves) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /* prettier-ignore */
+const BAYER2 = [
+  0, 2,
+  3, 1,
+];
+
+/* prettier-ignore */
 const BAYER4 = [
    0, 8, 2,10,
   12, 4,14, 6,
@@ -656,8 +662,50 @@ const BAYER4 = [
   15, 7,13, 5,
 ];
 
+/* prettier-ignore */
+const BAYER8 = [
+   0,32, 8,40, 2,34,10,42,
+  48,16,56,24,50,18,58,26,
+  12,44, 4,36,14,46, 6,38,
+  60,28,52,20,62,30,54,22,
+   3,35,11,43, 1,33, 9,41,
+  51,19,59,27,49,17,57,25,
+  15,47, 7,39,13,45, 5,37,
+  63,31,55,23,61,29,53,21,
+];
+
+/**
+ * Bayer 順序ディザの行列サイズ (2 / 4 / 8)。大きいほど階調が細かく滑らか、
+ * 小さいほど格子模様が粗く「レトロ」になる。DOT レンダー専用の表現選択。
+ * (x,y) だけで決まる順序ディザなのでフレーム間で安定 = アニメ/ループに安全。
+ */
+let ditherSize = 4;
+let ditherMat = BAYER4;
+let ditherMask = 3; // size - 1 (インデックス用ビットマスク)
+let ditherDiv = 16; // size * size (正規化用)
+
+function setDitherSize(n) {
+  ditherSize = n;
+  if (n === 2) {
+    ditherMat = BAYER2;
+    ditherMask = 1;
+    ditherDiv = 4;
+  } else if (n === 8) {
+    ditherMat = BAYER8;
+    ditherMask = 7;
+    ditherDiv = 64;
+  } else {
+    ditherSize = 4;
+    ditherMat = BAYER4;
+    ditherMask = 3;
+    ditherDiv = 16;
+  }
+}
+
 function bayerDither(x, y, value) {
-  const threshold = (BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
+  const dim = ditherMask + 1;
+  const threshold =
+    (ditherMat[(y & ditherMask) * dim + (x & ditherMask)] + 0.5) / ditherDiv;
   return value > threshold ? 1 : 0;
 }
 
@@ -2531,7 +2579,7 @@ function autoNext() {
 /** @type {UI.WidgetGroup} */
 let toolbar;
 let toolbarRoot;
-let ddAlgo, ddPreset, ddRender, nbGap, lblSeed, nbSeed, btnDice, btnGen;
+let ddAlgo, ddPreset, ddRender, nbGap, ddDither, lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
 let ddRatio, nbArtW, nbArtH, nbPad, ddFormat, nbScale, btnSave, btnFile;
 let toolbarH = 0;
@@ -2587,6 +2635,17 @@ function buildToolbar() {
     },
   );
   nbGap.tooltip = "Char spacing (ASCII): gap between glyphs, count unchanged";
+
+  // ── ディザ行列サイズ (DITHER): DOT のときだけ。2x2/4x4/8x8 ──
+  const DITHER_SIZES = [2, 4, 8];
+  let ditherSel = DITHER_SIZES.indexOf(ditherSize);
+  if (ditherSel < 0) ditherSel = 1;
+  ddDither = new UI.DropDown(0, 0, ["2x2", "4x4", "8x8"], ditherSel, (i) => {
+    setDitherSize(DITHER_SIZES[i]);
+    if (fieldBuf) commitField(); // 現在の場を新しい行列で再ディザ (即時反映)
+  });
+  ddDither.tooltip =
+    "Bayer dither matrix (DOT): 2x2 coarse / 4x4 / 8x8 fine, smoother gradients";
 
   lblSeed = new UI.Label(0, 0, "SEED:");
   nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
@@ -2703,12 +2762,15 @@ function buildToolbar() {
   const lblStyle = new UI.Label(0, 0, "STYLE:");
   const lblRender = new UI.Label(0, 0, "AS:");
   const lblGap = new UI.Label(0, 0, "GAP:");
+  const lblDither = new UI.Label(0, 0, "DITHER:");
   const lblPad = new UI.Label(0, 0, "PAD:");
   const lblWH = new UI.Label(0, 0, "X"); // W × H
   const lblMul = new UI.Label(0, 0, "X"); // × scale
-  // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS) + 字間 (ASCII のみ)
+  // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
+  //   + ASCII なら字間 (GAP)、DOT ならディザ行列 (DITHER) を対称に出す
   const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
   if (renderMode === "ascii") row1Items.push(lblGap, nbGap);
+  else row1Items.push(lblDither, ddDither);
   const row1 = UI.HBox(row1Items);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
   const row2 = UI.HBox([lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert]);
@@ -2943,6 +3005,7 @@ function onBeforeClose() {
   renderMode = "dot";
   outerMargin = 1;
   charSpacing = 1;
+  setDitherSize(4);
   animTime = 0;
   gifRecording = false;
   gifLoopFrame = 0;
