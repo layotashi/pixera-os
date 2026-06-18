@@ -972,12 +972,13 @@ const AUTO_INTERVAL = 90;
 
 /**
  * 動画の実効倍率。フレーム数 × 面積 で巨大化するため出力長辺に上限を設ける。
- *   - GIF: ~512px (パレット可逆だが容量が嵩む)
- *   - MP4: ~1920px (H.264 で圧縮が効くため高解像度を許容)
+ * GIF・MP4 とも長辺 ~1920px (FullHD 級)。これ未満だと SNS 側の拡大・再
+ * エンコードで滲むため、X 等への投稿に耐える解像度を確保する。
+ * (GIF は自前エンコーダの同期処理ゆえ、上限付近では書き出し時に一瞬固まる)
  * PNG は exportScale をそのまま使う。
  */
 function videoEffectiveScale(key) {
-  const cap = key === "mp4" ? 1920 : 512;
+  const cap = 1920;
   // 額縁マット込みのキャンバス長辺で上限判定する
   const maxDim = Math.max(artWidth, artHeight) + outerMargin * 2;
   return Math.max(1, Math.min(exportScale, Math.floor(cap / maxDim)));
