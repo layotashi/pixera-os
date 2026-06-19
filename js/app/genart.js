@@ -198,15 +198,10 @@ const ALGO_NAMES = [
 const FIELD_MODES = [
   "dot",
   "ascii",
-  "notan",
-  "contour",
-  "edge",
   "hatch",
   "screen",
-  "mosaic",
-  "stipple",
-  "blocks",
   "braille",
+  "contour",
   "scanline",
 ];
 const ALGO_MODES = {
@@ -253,15 +248,10 @@ let renderMode = "dot";
 const RENDER_LABELS = {
   dot: "DOT",
   ascii: "ASCII",
-  notan: "NOTAN",
-  contour: "CONTOUR",
-  edge: "EDGE",
   hatch: "HATCH",
   screen: "SCREEN",
-  mosaic: "MOSAIC",
-  stipple: "STIPPLE",
-  blocks: "BLOCKS",
   braille: "BRAILLE",
+  contour: "CONTOUR",
   scanline: "SCAN",
 };
 
@@ -936,12 +926,6 @@ function commitField() {
 // すべて fieldBuf (W=fieldCols × H=fieldRows = artWidth×artHeight, 0..1) を読み、
 // artBuf (同寸, 0/1) を描く。座標・合成・書き出し・サイズは DOT と共有する。
 
-/** 位置ハッシュ (seed 依存で生成ごとに変わる) → [0,1) */
-function _hash2(x, y) {
-  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) ^ seed;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
 /** fieldBuf 値 (境界クランプ) */
 function _F(x, y, W, H) {
   if (x < 0) x = 0;
@@ -965,9 +949,6 @@ function renderPixelMode(mode) {
   }
   a.fill(0);
   switch (mode) {
-    case "notan": // 2値: 大胆な白黒の塊
-      for (let i = 0; i < W * H; i++) a[i] = f[i] > 0.5 ? 1 : 0;
-      break;
     case "contour": { // 等高線: 量子化レベルの境界を線で
       const L = 7;
       for (let y = 0; y < H; y++)
@@ -979,14 +960,6 @@ function renderPixelMode(mode) {
         }
       break;
     }
-    case "edge": // 勾配の強い所だけ (輪郭スケッチ)
-      for (let y = 0; y < H; y++)
-        for (let x = 0; x < W; x++) {
-          const gx = Math.abs(_F(x + 1, y, W, H) - _F(x - 1, y, W, H));
-          const gy = Math.abs(_F(x, y + 1, W, H) - _F(x, y - 1, W, H));
-          if (gx + gy > 0.07) a[y * W + x] = 1;
-        }
-      break;
     case "hatch": // 版画: 濃さを斜線クロスハッチの密度で
       for (let y = 0; y < H; y++)
         for (let x = 0; x < W; x++) {
@@ -1011,50 +984,6 @@ function renderPixelMode(mode) {
           const R = v * cell * 0.72;
           if (dx * dx + dy * dy <= R * R) a[y * W + x] = 1;
         }
-      break;
-    }
-    case "mosaic": { // モザイク: セル単位で白黒の塊
-      const cell = 5;
-      for (let y = 0; y < H; y++)
-        for (let x = 0; x < W; x++) {
-          const cx = ((x / cell) | 0) * cell + (cell >> 1);
-          const cy = ((y / cell) | 0) * cell + (cell >> 1);
-          a[y * W + x] = _F(cx, cy, W, H) > 0.5 ? 1 : 0;
-        }
-      break;
-    }
-    case "stipple": { // 点描: 濃さに比例した密度で点を打つ
-      const cell = 3;
-      for (let cy = 0; cy * cell < H; cy++)
-        for (let cx = 0; cx * cell < W; cx++) {
-          const sx = cx * cell + (cell >> 1),
-            sy = cy * cell + (cell >> 1);
-          const v = _F(sx, sy, W, H);
-          if (_hash2(cx, cy) < v) {
-            const px = cx * cell + ((_hash2(cx + 7, cy) * cell) | 0);
-            const py = cy * cell + ((_hash2(cx, cy + 7) * cell) | 0);
-            if (px < W && py < H) a[py * W + px] = 1;
-          }
-        }
-      break;
-    }
-    case "blocks": { // テレテキスト: 2×2 象限ブロック
-      const cell = 4,
-        q = 2;
-      for (let cy = 0; cy * cell < H; cy++)
-        for (let cx = 0; cx * cell < W; cx++)
-          for (let qy = 0; qy < 2; qy++)
-            for (let qx = 0; qx < 2; qx++) {
-              const ox = cx * cell + qx * q,
-                oy = cy * cell + qy * q;
-              if (_F(ox + 1, oy + 1, W, H) > 0.5)
-                for (let dy = 0; dy < q; dy++)
-                  for (let dx = 0; dx < q; dx++) {
-                    const xx = ox + dx,
-                      yy = oy + dy;
-                    if (xx < W && yy < H) a[yy * W + xx] = 1;
-                  }
-            }
       break;
     }
     case "braille": { // 点字: 2×4 サブドットセル
