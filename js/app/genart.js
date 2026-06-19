@@ -156,17 +156,10 @@ function currentFormatKey() {
 }
 
 // ── 動画録画 (GIF / MP4 で共有。生成過程 or アニメ 1 周期をフレーム捕捉) ──
-// アニメ算法は周期 2π でループする。録画はプレビューと同じ動き・長さ (≈3秒) を
-// 再現するため、1 周期を十分なフレーム数でサンプルし、duration=3秒 になる fps で
-// 再生する (fps = frames / LOOP_SECONDS)。GIF はセンチ秒量子化・容量・同期エンコード
-// の都合で控えめ (60→20fps)、MP4 は滑らかに (90→30fps)。
-const LOOP_SECONDS = 3;
-const GIF_LOOP_FRAMES = 60; // GIF ループ: 60 フレーム → 20fps (5cs ちょうど)
-const MP4_LOOP_FRAMES = 90; // MP4 ループ: 90 フレーム → 30fps (滑らか)
+// 録画はプレビューと完全一致: アニメは LOOP_FRAMES を選択 fps (loopFps) で再生、
+// 一回生成系は生成過程を ONESHOT_FRAMES サンプル。GIF/MP4 とも同じ loopFps。
 const ONESHOT_FRAMES = 36; // 一回生成系の生成過程サンプル数
-const ONESHOT_FPS = 16;
-let gifFrameTotal = GIF_LOOP_FRAMES; // 録画ごとに設定 (フレーム総数)
-let gifLoopFps = 20; // 録画ごとに設定 (再生 fps)
+let gifFrameTotal = 60; // 録画ごとに設定 (= LOOP_FRAMES または ONESHOT_FRAMES)
 let videoFormat = "gif"; // 録画中の出力形式 ("gif" | "mp4")
 let videoEncoding = false; // MP4 の非同期エンコード中フラグ
 let gifRecording = false; // フレーム捕捉中フラグ (GIF/MP4 共通)
@@ -302,14 +295,23 @@ const ANIM_ALGOS = new Set([
   "curl",
   "worley",
 ]);
-/** アニメ 1 周期のフレーム数 (≈3秒@60fps)。GIF ループもこの周期で撮る。 */
-const ANIM_PERIOD = 180;
-const ANIM_DT = (Math.PI * 2) / ANIM_PERIOD;
+/**
+ * アニメ 1 周期のフレーム数 (ループの時間解像度)。プレビューも書き出しもこの
+ * 60 フレームを再生 fps で回す。ループ長 = LOOP_FRAMES / loopFps (秒)。
+ */
+const LOOP_FRAMES = 60;
+/**
+ * 再生 fps。GIF はフレーム遅延がセンチ秒 (1/100s) 単位なので、100 の約数の
+ * fps だけが綺麗に出せる (10→10cs, 20→5cs, 25→4cs, 50→2cs)。MP4 も同値を使う。
+ */
+let loopFps = 20;
+const FPS_OPTIONS = [10, 20, 25, 50];
 /** drift/land のノイズ標本点を円運動させる半径 (セル単位) — 場がゆっくり漂う */
 const DRIFT_ANIM_RADIUS = 6;
 const LAND_ANIM_RADIUS = 5;
-/** アニメの現在時刻 t∈[0,2π) */
+/** アニメの現在時刻 t∈[0,2π) と、プレビューで実時間再生中の表示フレーム */
 let animTime = 0;
+let animFrame = -1;
 
 function isAnimated() {
   return ANIM_ALGOS.has(ALGO_KEYS[currentAlgoIdx]);
@@ -1123,15 +1125,13 @@ function startVideoRecording(format) {
   const tag = format.toUpperCase();
   if (isAnimated()) {
     // 現在の場パラメータを保ったまま 1 周期をループ撮影 (再生成しない)。
-    // プレビューと同じ動き・長さになるよう、形式に応じたフレーム数 + fps を使う。
+    // プレビューと完全一致: LOOP_FRAMES を選択 fps (loopFps) で再生。
     gifLoopFrame = 0;
-    gifFrameTotal = format === "mp4" ? MP4_LOOP_FRAMES : GIF_LOOP_FRAMES;
-    gifLoopFps = Math.round(gifFrameTotal / LOOP_SECONDS); // 90→30 / 60→20
+    gifFrameTotal = LOOP_FRAMES;
     statusText = `RECORDING ${tag} LOOP...`;
   } else {
     gifNextSample = 0;
     gifFrameTotal = ONESHOT_FRAMES;
-    gifLoopFps = ONESHOT_FPS;
     statusText = `RECORDING ${tag}...`;
     seed = nbSeed.value;
     startGeneration();
@@ -1177,7 +1177,7 @@ function finishVideoRecording() {
       setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
     );
     Promise.race([
-      encodeMp4(frames, encW, encH, bg, fg, gifLoopFps, encScale),
+      encodeMp4(frames, encW, encH, bg, fg, loopFps, encScale),
       timeout,
     ])
       .then((blob) => {
@@ -1198,7 +1198,7 @@ function finishVideoRecording() {
   statusText = "ENCODING GIF...";
   setTimeout(() => {
     const frames = prepFrames();
-    const blob = encodeGif(frames, encW, encH, bg, fg, gifLoopFps, encScale);
+    const blob = encodeGif(frames, encW, encH, bg, fg, loopFps, encScale);
     downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
@@ -2715,7 +2715,7 @@ function autoNext() {
 /** @type {UI.WidgetGroup} */
 let toolbar;
 let toolbarRoot;
-let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge;
+let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge, ddFps;
 let nbHatch, nbScreen, nbContour, nbScan;
 let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
@@ -2852,6 +2852,22 @@ function buildToolbar() {
   ddEdge.tooltip =
     "Boundary (REACT/BZ): WRAP = torus (edges loop) / WALL = bounded (edges reflect)";
 
+  // ── 再生 FPS (FPS): アニメ算法のときだけ。プレビュー・書き出し共通 ──
+  let fpsSel = FPS_OPTIONS.indexOf(loopFps);
+  if (fpsSel < 0) fpsSel = FPS_OPTIONS.indexOf(20);
+  ddFps = new UI.DropDown(
+    0,
+    0,
+    FPS_OPTIONS.map((v) => String(v)),
+    fpsSel,
+    (i) => {
+      loopFps = FPS_OPTIONS[i];
+      animFrame = -1; // 次フレームで即反映
+    },
+  );
+  ddFps.tooltip =
+    "Playback FPS (preview & export). Loop length = 60 / fps sec. GIF-clean values.";
+
   lblSeed = new UI.Label(0, 0, "SEED:");
   nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
 
@@ -2948,15 +2964,17 @@ function buildToolbar() {
   const lblEdge = new UI.Label(0, 0, "EDGE:");
   const lblOut = new UI.Label(0, 0, "OUT:");
   const lblPad = new UI.Label(0, 0, "PAD:");
+  const lblFps = new UI.Label(0, 0, "FPS:");
   // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
   //   + 方式ごとの専用パラメータ (DITHER/GAP/PITCH/CELL/LEVELS/LINES) を出す
   const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
   const mp = modeParamItems();
   if (mp) row1Items.push(new UI.Label(0, 0, mp.label), mp.widget);
   const row1 = UI.HBox(row1Items);
-  // 2行目: 生成 (seed + トランスポート auto/GEN + 反転) + REACT/BZ なら EDGE
+  // 2行目: 生成 (seed + transport) + REACT/BZ なら EDGE、アニメ算法なら FPS
   const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
   if (algoSupportsEdge()) row2Items.push(lblEdge, ddEdge);
+  if (isAnimated()) row2Items.push(lblFps, ddFps);
   const row2 = UI.HBox(row2Items);
   // 3行目: 出力外寸 (OUT) + 額縁 PAD + 書き出し (形式 + DOWNLOAD/SAVE)
   const row3 = UI.HBox([lblOut, ddSize, lblPad, nbPad, ddFormat, btnSave, btnFile]);
@@ -3084,10 +3102,15 @@ function onDraw(contentRect) {
     statusText = `RECORDING LOOP ${gifLoopFrame}/${gifFrameTotal}`;
     if (gifLoopFrame >= gifFrameTotal) finishVideoRecording();
   } else if (isAnimated()) {
-    // ── 連続アニメ (常時)。場を毎フレーム再計算し、t をシームレスに周回 ──
-    animTime += ANIM_DT;
-    if (animTime >= Math.PI * 2) animTime -= Math.PI * 2;
-    animateFill();
+    // ── 連続アニメ: 実時間ベースで LOOP_FRAMES を loopFps で再生 (=書き出しと一致)。
+    // ディスプレイのリフレッシュレートに依存せず、選択 fps がそのまま反映される。
+    const frame =
+      Math.floor((performance.now() / 1000) * loopFps) % LOOP_FRAMES;
+    if (frame !== animFrame) {
+      animFrame = frame;
+      animTime = (frame / LOOP_FRAMES) * Math.PI * 2;
+      animateFill(); // フレームが変わったときだけ場を再計算
+    }
   } else {
     // ── 一回生成系 (漸進描画) ──
     if (generating) stepGeneration();
@@ -3203,7 +3226,9 @@ function onBeforeClose() {
   contourLevels = 7;
   scanStep = 4;
   edgeMode = "wrap";
+  loopFps = 20;
   animTime = 0;
+  animFrame = -1;
   gifRecording = false;
   gifLoopFrame = 0;
   videoFormat = "gif";
