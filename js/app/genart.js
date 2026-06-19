@@ -114,6 +114,23 @@ const SPACING_MIN = 0,
   SPACING_MAX = 6;
 
 /**
+ * 方式 (レンダーモード) 専用パラメータ。DITHER(DOT/BRAILLE)・GAP(ASCII)と同様、
+ * 各方式に固有の調整値を 1 行目に出す。変更時は現在の場を再レンダーする。
+ */
+let hatchPitch = 4; // HATCH 線間隔
+const HATCH_MIN = 2,
+  HATCH_MAX = 8;
+let screenCell = 6; // SCREEN 網点セル
+const SCREEN_MIN = 3,
+  SCREEN_MAX = 12;
+let contourLevels = 7; // CONTOUR 等高線レベル数
+const CONTOUR_MIN = 2,
+  CONTOUR_MAX = 16;
+let scanStep = 4; // SCAN 走査間隔 (線密度・振幅)
+const SCAN_MIN = 2,
+  SCAN_MAX = 10;
+
+/**
  * グリッド・シミュレーション系 (REACT / BZ) の境界条件。
  *   "wrap" — トーラス (上下端・左右端がループ)。既定。
  *   "wall" — 壁 (無流束/反射境界)。端で構造が終端・反射し、別の創発になる。
@@ -950,7 +967,7 @@ function renderPixelMode(mode) {
   a.fill(0);
   switch (mode) {
     case "contour": { // 等高線: 量子化レベルの境界を線で
-      const L = 7;
+      const L = contourLevels;
       for (let y = 0; y < H; y++)
         for (let x = 0; x < W; x++) {
           const l = (f[y * W + x] * L) | 0;
@@ -960,20 +977,22 @@ function renderPixelMode(mode) {
         }
       break;
     }
-    case "hatch": // 版画: 濃さを斜線クロスハッチの密度で
+    case "hatch": { // 版画: 濃さを斜線クロスハッチの密度で
+      const P = hatchPitch;
       for (let y = 0; y < H; y++)
         for (let x = 0; x < W; x++) {
           const v = f[y * W + x];
           let on = 0;
-          if (v > 0.12 && (x + y) % 4 === 0) on = 1; // /
-          if (v > 0.45 && (x - y + 4000) % 4 === 0) on = 1; // \
-          if (v > 0.72 && x % 4 === 0) on = 1; // |
-          if (v > 0.9 && y % 4 === 0) on = 1; // —
+          if (v > 0.12 && (x + y) % P === 0) on = 1; // /
+          if (v > 0.45 && (x - y + 4000) % P === 0) on = 1; // \
+          if (v > 0.72 && x % P === 0) on = 1; // |
+          if (v > 0.9 && y % P === 0) on = 1; // —
           a[y * W + x] = on;
         }
       break;
+    }
     case "screen": { // 網点: 濃さで成長する円ドット
-      const cell = 6;
+      const cell = screenCell;
       for (let y = 0; y < H; y++)
         for (let x = 0; x < W; x++) {
           const cx = ((x / cell) | 0) * cell + (cell >> 1);
@@ -986,7 +1005,7 @@ function renderPixelMode(mode) {
         }
       break;
     }
-    case "braille": { // 点字: 2×4 サブドットセル
+    case "braille": { // 点字: 2×4 サブドットセル (サブドットを Bayer ディザで階調表現)
       const CW = 4,
         CH = 8;
       const dots = [0, 2]; // x オフセット
@@ -997,12 +1016,17 @@ function renderPixelMode(mode) {
             for (const ddy of dotsY) {
               const px = cx * CW + ddx,
                 py = cy * CH + ddy;
-              if (px < W && py < H && _F(px, py, W, H) > 0.5) a[py * W + px] = 1;
+              if (
+                px < W &&
+                py < H &&
+                bayerDither(px >> 1, py >> 1, _F(px, py, W, H))
+              )
+                a[py * W + px] = 1;
             }
       break;
     }
     case "scanline": { // 波形 (Joy Division): 場で上下に変位した横線を積む
-      const step = 4;
+      const step = scanStep;
       const amp = step * 2.4;
       const top = new Int32Array(W).fill(H + amp); // 列ごとの最前面 (最小 y)
       // 前 (下) から後ろ (上) へ。手前の稜線が奥を隠す
@@ -2678,6 +2702,7 @@ function autoNext() {
 let toolbar;
 let toolbarRoot;
 let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge;
+let nbHatch, nbScreen, nbContour, nbScan;
 let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
 let ddSize, nbPad, ddFormat, btnSave, btnFile;
@@ -2685,6 +2710,30 @@ let toolbarH = 0;
 
 const BTN_PAD = 8,
   BTN_BORDER = 4;
+
+/**
+ * 現在の方式 (レンダーモード) 専用パラメータの { label, widget }。なければ null。
+ * buildToolbar 内で各 widget を生成した後に呼ぶ。
+ */
+function modeParamItems() {
+  switch (renderMode) {
+    case "ascii":
+      return { label: "GAP:", widget: nbGap };
+    case "dot":
+    case "braille":
+      return { label: "DITHER:", widget: ddDither };
+    case "hatch":
+      return { label: "PITCH:", widget: nbHatch };
+    case "screen":
+      return { label: "CELL:", widget: nbScreen };
+    case "contour":
+      return { label: "LEVELS:", widget: nbContour };
+    case "scanline":
+      return { label: "LINES:", widget: nbScan };
+    default:
+      return null;
+  }
+}
 
 function buildToolbar() {
   const presetNames = PRESETS[ALGO_KEYS[currentAlgoIdx]].map((p) => p.name);
@@ -2743,7 +2792,40 @@ function buildToolbar() {
     if (fieldBuf) commitField(); // 現在の場を新しい行列で再ディザ (即時反映)
   });
   ddDither.tooltip =
-    "Bayer dither matrix (DOT): 2x2 coarse / 4x4 / 8x8 fine, smoother gradients";
+    "Bayer dither matrix (DOT/BRAILLE): 2x2 coarse / 4x4 / 8x8 fine";
+
+  // ── 方式専用パラメータ (各方式のときだけ row1 に出す)。変更で即再レンダー ──
+  const reRender = () => {
+    if (fieldBuf) commitField();
+  };
+  nbHatch = new UI.NumberBox(0, 0, HATCH_MIN, HATCH_MAX, hatchPitch, 1, (v) => {
+    hatchPitch = v;
+    reRender();
+  });
+  nbHatch.tooltip = "Hatch line pitch (HATCH): smaller = denser lines";
+  nbScreen = new UI.NumberBox(0, 0, SCREEN_MIN, SCREEN_MAX, screenCell, 1, (v) => {
+    screenCell = v;
+    reRender();
+  });
+  nbScreen.tooltip = "Halftone cell size (SCREEN): dot grid pitch";
+  nbContour = new UI.NumberBox(
+    0,
+    0,
+    CONTOUR_MIN,
+    CONTOUR_MAX,
+    contourLevels,
+    1,
+    (v) => {
+      contourLevels = v;
+      reRender();
+    },
+  );
+  nbContour.tooltip = "Contour levels (CONTOUR): number of iso-line bands";
+  nbScan = new UI.NumberBox(0, 0, SCAN_MIN, SCAN_MAX, scanStep, 1, (v) => {
+    scanStep = v;
+    reRender();
+  });
+  nbScan.tooltip = "Scan line spacing (SCAN): smaller = more lines / taller";
 
   // ── 境界条件 (EDGE): REACT / BZ のときだけ。WRAP=トーラス / WALL=壁 ──
   const EDGE_MODES = ["wrap", "wall"];
@@ -2849,16 +2931,14 @@ function buildToolbar() {
   const lblAlgo = new UI.Label(0, 0, "ALGO:");
   const lblStyle = new UI.Label(0, 0, "STYLE:");
   const lblRender = new UI.Label(0, 0, "AS:");
-  const lblGap = new UI.Label(0, 0, "GAP:");
-  const lblDither = new UI.Label(0, 0, "DITHER:");
   const lblEdge = new UI.Label(0, 0, "EDGE:");
   const lblOut = new UI.Label(0, 0, "OUT:");
   const lblPad = new UI.Label(0, 0, "PAD:");
   // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
-  //   + ASCII なら字間 (GAP)、DOT ならディザ行列 (DITHER) を対称に出す
+  //   + 方式ごとの専用パラメータ (DITHER/GAP/PITCH/CELL/LEVELS/LINES) を出す
   const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
-  if (renderMode === "ascii") row1Items.push(lblGap, nbGap);
-  else row1Items.push(lblDither, ddDither);
+  const mp = modeParamItems();
+  if (mp) row1Items.push(new UI.Label(0, 0, mp.label), mp.widget);
   const row1 = UI.HBox(row1Items);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転) + REACT/BZ なら EDGE
   const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
@@ -3104,6 +3184,10 @@ function onBeforeClose() {
   outerMargin = 1;
   charSpacing = 1;
   setDitherSize(2);
+  hatchPitch = 4;
+  screenCell = 6;
+  contourLevels = 7;
+  scanStep = 4;
   edgeMode = "wrap";
   animTime = 0;
   gifRecording = false;
