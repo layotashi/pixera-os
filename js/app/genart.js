@@ -80,8 +80,9 @@ let baseW = 240, // プレビュー/基準解像度 (出力 = base × OUTPUT_SCA
 
 // アート (場/グリフ) の描画領域。PAD で base から上下左右対称に削った内側。
 // DOT はこの解像度で場を描き、PAD マットを付けて base に合成 → ×8。
-let artWidth = 240;
-let artHeight = 135;
+// 既定 PAD=8 なので 240/135 から各辺 8px 削った 224×119。
+let artWidth = 224;
+let artHeight = 119;
 
 /** ツールバーとキャンバスの間の間隔 */
 const CANVAS_GAP = 4;
@@ -102,7 +103,7 @@ let exportFormatIdx = 0; // availableFormats() のインデックス
  * 額縁 (マット): アート内容と枠線の間に置く背景余白 (px)。DOT/ASCII 共通で、
  * 表示・書き出しの両方に含まれる (作品として「額装」される)。0 で枠線に密着。
  */
-let outerMargin = 1;
+let outerMargin = 8; // 既定 PAD=8 (額縁)
 const MARGIN_MIN = 0,
   MARGIN_MAX = 16;
 /**
@@ -305,7 +306,7 @@ const LOOP_FRAMES = 60;
  * fps だけが綺麗に出せる (10→10cs, 20→5cs, 25→4cs, 50→2cs)。MP4 も同値を使う。
  */
 let loopFps = 20;
-const FPS_OPTIONS = [10, 20, 25, 50];
+const FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
 /** drift/land のノイズ標本点を円運動させる半径 (セル単位) — 場がゆっくり漂う */
 const DRIFT_ANIM_RADIUS = 6;
 const LAND_ANIM_RADIUS = 5;
@@ -2869,7 +2870,11 @@ function buildToolbar() {
     "Playback FPS (preview & export). Loop length = 60 / fps sec. GIF-clean values.";
 
   lblSeed = new UI.Label(0, 0, "SEED:");
-  nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
+  // SEED 変更で即再生成 (サイコロボタンと同じ挙動)
+  nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1, (v) => {
+    seed = v;
+    startGeneration();
+  });
 
   btnDice = new UI.PushButton(0, 0, "", () => {
     seed = (Math.random() * 10000) | 0;
@@ -3218,7 +3223,7 @@ function onBeforeClose() {
   baseW = OUTPUT_PRESETS[0].baseW;
   baseH = OUTPUT_PRESETS[0].baseH;
   renderMode = "dot";
-  outerMargin = 1;
+  outerMargin = 8;
   charSpacing = 1;
   setDitherSize(2);
   hatchPitch = 4;
