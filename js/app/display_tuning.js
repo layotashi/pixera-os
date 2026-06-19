@@ -19,12 +19,14 @@ import {
   Slider,
   NumberBox,
   ToggleButton,
+  PushButton,
   HSep,
   WidgetGroup,
   HBox,
   VBox,
   FOCUS_MARGIN,
 } from "../ui/index.js";
+import { copyDefaultsToClipboard } from "../core/defaults.js";
 
 const APP_NAME = "DISPLAY_TUNING";
 
@@ -191,6 +193,16 @@ function _initWidgets() {
   const diagThicknessRow = HBox([lblDiagThickness, nbDiagThickness, new Label(0, 0, "DOT")]);
   diagRows = [diagDarknessRow, diagSpeedRow, diagSpacingRow, diagThicknessRow];
 
+  // 現在の全設定 (SETTINGS + TUNING) を出荷時デフォルト用にクリップボードへ書き出す。
+  const lblExportStatus = new Label(0, 0, "");
+  const btnExportDefaults = new PushButton(0, 0, "EXPORT DEFAULTS", () => {
+    copyDefaultsToClipboard().then((ok) => {
+      lblExportStatus.text = ok ? "COPIED" : "SEE CONSOLE";
+    });
+  });
+  btnExportDefaults.tooltip =
+    "Copy current settings (SETTINGS+TUNING) as JSON to bake into config defaults";
+
   tuningRoot = VBox([
     HBox([lblVignette, tglVignette]),
     vigStrengthRow,
@@ -201,6 +213,8 @@ function _initWidgets() {
     diagSpeedRow,
     diagSpacingRow,
     diagThicknessRow,
+    new HSep(0, 0, 0),
+    HBox([btnExportDefaults, lblExportStatus]),
   ]);
 
   tuningWidgets = new WidgetGroup(tuningRoot);

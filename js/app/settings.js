@@ -9,6 +9,7 @@
 import * as Config from "../config.js";
 import * as Wallpaper from "../wallpaper.js";
 import { setSystemSfxEnabled } from "../core/sfx.js";
+import { copyDefaultsToClipboard } from "../core/defaults.js";
 import { basename, readDir, parentPath, joinPath } from "../core/vfs.js";
 import { wmOpen, wmRegister, wmSetContentSize } from "../wm/index.js";
 import {
@@ -418,6 +419,17 @@ function _initWidgets() {
   imageFileRow = HBox([lblImageFile, ddImageFile]);
   imageFillRow = HBox([lblImageFill, ddImageFill]);
 
+  // 現在の全設定 (SETTINGS + TUNING) を出荷時デフォルト用にクリップボードへ書き出す。
+  // runtime はソースを書けないので、コピーした JSON を config.js のデフォルトへ反映する。
+  const lblExportStatus = new Label(0, 0, "");
+  const btnExportDefaults = new PushButton(0, 0, "EXPORT DEFAULTS", () => {
+    copyDefaultsToClipboard().then((ok) => {
+      lblExportStatus.text = ok ? "COPIED" : "SEE CONSOLE";
+    });
+  });
+  btnExportDefaults.tooltip =
+    "Copy current settings (SETTINGS+TUNING) as JSON to bake into config defaults";
+
   settingsRoot = VBox([
     // ── DISPLAY ──
     HBox([labelResolution, dropDownResolution]),
@@ -443,6 +455,9 @@ function _initWidgets() {
     imagePathRow,
     imageFileRow,
     imageFillRow,
+    new HSep(0, 0, 0),
+    // ── DEFAULTS (現在の全設定を「出荷時デフォルト」用に書き出す) ──
+    HBox([btnExportDefaults, lblExportStatus]),
   ]);
 
   // ── ウィジェットグループ & セクション定義 ──
