@@ -67,10 +67,10 @@ export const MAX_VRAM_WIDTH = 960;
 export const MAX_VRAM_HEIGHT = 540;
 
 /** 仮想画面 横ピクセル数 (localStorage から復元、デフォルト 400) */
-export let VRAM_WIDTH = load("vramW", 400);
+export let VRAM_WIDTH = load("vramW", 480);
 
-/** 仮想画面 縦ピクセル数 (localStorage から復元、デフォルト 300) */
-export let VRAM_HEIGHT = load("vramH", 300);
+/** 仮想画面 縦ピクセル数 (localStorage から復元、デフォルト 360) */
+export let VRAM_HEIGHT = load("vramH", 360);
 
 /** 解像度変更時のコールバック一覧 */
 const _resizeCallbacks = [];
@@ -609,7 +609,7 @@ function rgb2hex(r, g, b) {
  * 現在のアクティブパレット名
  * "Custom" の場合はカスタムパレットが使われる。
  */
-let currentPaletteName = "pocket_lcd";
+let currentPaletteName = "plato";
 
 /** カスタムパレットの HEX 値 (localStorage から復元) */
 let customPaletteHex = loadCustomPalette({ bg: "#201600", fg: "#fdb931" });
@@ -688,13 +688,13 @@ export function getCustomPaletteRgb() {
 /** エフェクトパラメータのデフォルト値 */
 export const EFFECT_DEFAULTS = {
   vignetteEnabled: true,
-  vignetteStrength: 30,
-  vignetteRadius: 35,
+  vignetteStrength: 20,
+  vignetteRadius: 40,
   diagEnabled: true,
-  diagDarkness: 15,
+  diagDarkness: 5,
   diagSpeed: 5,
-  diagSpacing: 12,
-  diagThickness: 4,
+  diagSpacing: 4,
+  diagThickness: 2,
 };
 
 let _effectParams = { ...EFFECT_DEFAULTS };
@@ -777,7 +777,7 @@ export function setInputOverlay(v) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /** システム SFX の ON/OFF (localStorage から復元、デフォルト ON) */
-let _systemSfx = load("systemSfx", true) !== false;
+let _systemSfx = load("systemSfx", false) !== false;
 
 /** システム SFX が有効か */
 export function isSystemSfxOn() {

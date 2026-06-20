@@ -25,7 +25,7 @@ import * as Storage from "./core/storage.js";
 let wallpaperMode = "solid";
 
 /** Solid 背景の Bayer 階調レベル (4x4: 0–16, 8x8: 0–64) */
-let solidLevel = 3;
+let solidLevel = 0;
 
 /** Solid 背景の Bayer 行列モード */
 let solidBayerMode = "4x4";
@@ -34,7 +34,7 @@ let solidBayerMode = "4x4";
 let imagePath = null;
 
 /** Image 背景で画像が届かない領域を埋めるビット (0 | 1) */
-let imageFillBit = 0;
+let imageFillBit = 1;
 
 /** デコード済み 1-bit バッファ (VRAM_WIDTH × VRAM_HEIGHT に中央配置) */
 let imageBits = null;
