@@ -18,8 +18,7 @@ import { drawVramDumpOverlay } from "./vram_dump.js";
 import { updateTransport } from "../audio/transport.js";
 
 // ── 各ウィンドウモジュール (副作用: wmRegister を実行) ──
-import "./settings.js";
-import "./display_tuning.js";
+import "./settings.js"; // TUNING を統合 (DISPLAY/EFFECTS/THEME/SYSTEM タブ)
 import "./notepad.js";
 // capture.js は上で named import 済み
 import "./studio/studio.js";

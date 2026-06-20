@@ -21,6 +21,8 @@ import {
   BayerPicker,
   PushButton,
   ToggleButton,
+  Slider,
+  TabBar,
   WidgetGroup,
   HBox,
   VBox,
@@ -30,6 +32,17 @@ import {
 } from "../ui/index.js";
 
 const APP_NAME = "SETTINGS";
+
+// 設定はタブで分類: DISPLAY / EFFECTS / THEME / SYSTEM。
+const TAB_LABELS = ["DISPLAY", "EFFECTS", "THEME", "SYSTEM"];
+const SLIDER_W = 80; // EFFECTS スライダ幅
+
+function formatPercent(v) {
+  return String(v).padStart(4) + "%";
+}
+function formatPx(v) {
+  return String(v).padStart(4);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ウィジェット生成
@@ -59,13 +72,29 @@ let lblImageFile, ddImageFile;
 let lblImageFill, ddImageFill;
 let imageDir = "/Images/Wallpapers";
 
+// ── EFFECTS (旧 TUNING) ウィジェット ──
+let lblVignette, tglVignette;
+let lblVigStrength, sldVigStrength, valVigStrength;
+let lblVigRadius, sldVigRadius, valVigRadius;
+let lblDiagonal, tglDiagonal;
+let lblDiagDarkness, sldDiagDarkness, valDiagDarkness;
+let lblDiagSpeed, sldDiagSpeed, valDiagSpeed;
+let lblDiagSpacing, nbDiagSpacing;
+let lblDiagThickness, nbDiagThickness;
+let vigRows, diagRows;
+
 let maxLabelWidth = 0;
 /** @type {import("../ui/index.js").Label[]} */
 let allLabels = [];
 let customWidgets, solidWidgets, imageWidgets;
-let settingsRoot;
 let bgRow, fgRow, bayerRow, levelRow, imagePathRow, imageFileRow, imageFillRow;
 let sep1, sep2, sep3;
+
+// ── タブ ──
+let tabBar;
+let activeTab = 0;
+let pages; // [displayPage, effectsPage, themePage, systemPage] (各 VBox)
+let mainRoot, mainWidgets; // 現在タブ = VBox([tabRow, pages[activeTab]])
 
 /** 指定ディレクトリ内の .pbm ファイル名一覧を返す */
 function listPbmFiles(dir) {
@@ -372,6 +401,77 @@ function _initWidgets() {
 
   refreshImageFileList();
 
+  // ── EFFECTS (旧 TUNING): ビネット / 斜線スキャンライン ──
+  const ep = Config.getEffectParams();
+  lblVignette = new Label(0, 0, "Vignette:");
+  tglVignette = new ToggleButton(
+    0,
+    0,
+    "ON",
+    (v) => {
+      Config.setEffectParam("vignetteEnabled", v);
+      refreshEffectVisibility();
+    },
+    ep.vignetteEnabled,
+  );
+  lblVigStrength = new Label(0, 0, "Strength:");
+  valVigStrength = new Label(0, 0, formatPercent(ep.vignetteStrength));
+  sldVigStrength = new Slider(0, 0, SLIDER_W, 0, 100, ep.vignetteStrength, (v) => {
+    valVigStrength.text = formatPercent(v);
+    Config.setEffectParam("vignetteStrength", v);
+  });
+  lblVigRadius = new Label(0, 0, "Radius:");
+  valVigRadius = new Label(0, 0, formatPercent(ep.vignetteRadius));
+  sldVigRadius = new Slider(0, 0, SLIDER_W, 0, 50, ep.vignetteRadius, (v) => {
+    valVigRadius.text = formatPercent(v);
+    Config.setEffectParam("vignetteRadius", v);
+  });
+  lblDiagonal = new Label(0, 0, "Diagonal:");
+  tglDiagonal = new ToggleButton(
+    0,
+    0,
+    "ON",
+    (v) => {
+      Config.setEffectParam("diagEnabled", v);
+      refreshEffectVisibility();
+    },
+    ep.diagEnabled,
+  );
+  lblDiagDarkness = new Label(0, 0, "Darkness:");
+  valDiagDarkness = new Label(0, 0, formatPercent(ep.diagDarkness));
+  sldDiagDarkness = new Slider(0, 0, SLIDER_W, 0, 100, ep.diagDarkness, (v) => {
+    valDiagDarkness.text = formatPercent(v);
+    Config.setEffectParam("diagDarkness", v);
+  });
+  lblDiagSpeed = new Label(0, 0, "Speed:");
+  valDiagSpeed = new Label(0, 0, formatPx(ep.diagSpeed));
+  sldDiagSpeed = new Slider(0, 0, SLIDER_W, 0, 100, ep.diagSpeed, (v) => {
+    valDiagSpeed.text = formatPx(v);
+    Config.setEffectParam("diagSpeed", v);
+  });
+  lblDiagSpacing = new Label(0, 0, "Spacing:");
+  nbDiagSpacing = new NumberBox(0, 0, 2, 16, ep.diagSpacing, 1, () => {
+    const s = nbDiagSpacing.value;
+    Config.setEffectParam("diagSpacing", s);
+    if (nbDiagThickness.value >= s) {
+      nbDiagThickness.value = s - 1;
+      Config.setEffectParam("diagThickness", s - 1);
+    }
+    nbDiagThickness.max = s - 1;
+  });
+  lblDiagThickness = new Label(0, 0, "Thickness:");
+  nbDiagThickness = new NumberBox(
+    0,
+    0,
+    1,
+    ep.diagSpacing - 1,
+    ep.diagThickness,
+    1,
+    () => {
+      Config.setEffectParam("diagThickness", nbDiagThickness.value);
+    },
+  );
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   //  ラベル幅を全体で統一
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -393,6 +493,14 @@ function _initWidgets() {
     lblImagePath,
     lblImageFile,
     lblImageFill,
+    lblVignette,
+    lblVigStrength,
+    lblVigRadius,
+    lblDiagonal,
+    lblDiagDarkness,
+    lblDiagSpeed,
+    lblDiagSpacing,
+    lblDiagThickness,
   ];
   maxLabelWidth = Math.max(...allLabels.map((l) => l.w));
   for (const l of allLabels) l.w = maxLabelWidth;
@@ -430,46 +538,79 @@ function _initWidgets() {
   btnExportDefaults.tooltip =
     "Copy current settings (SETTINGS+TUNING) as JSON to bake into config defaults";
 
-  settingsRoot = VBox([
-    // ── DISPLAY ──
+  // ── タブ別ページ (各 VBox) ──
+  const vigStrengthRow = HBox([lblVigStrength, sldVigStrength, valVigStrength]);
+  const vigRadiusRow = HBox([lblVigRadius, sldVigRadius, valVigRadius]);
+  vigRows = [vigStrengthRow, vigRadiusRow];
+  const diagDarknessRow = HBox([lblDiagDarkness, sldDiagDarkness, valDiagDarkness]);
+  const diagSpeedRow = HBox([lblDiagSpeed, sldDiagSpeed, valDiagSpeed]);
+  const diagSpacingRow = HBox([lblDiagSpacing, nbDiagSpacing, new Label(0, 0, "DOT")]);
+  const diagThicknessRow = HBox([lblDiagThickness, nbDiagThickness, new Label(0, 0, "DOT")]);
+  diagRows = [diagDarknessRow, diagSpeedRow, diagSpacingRow, diagThicknessRow];
+
+  const displayPage = VBox([
     HBox([labelResolution, dropDownResolution]),
     HBox([lblFont, ddFont]),
     HBox([lblFontPreviewIndent, lblFontPreview]),
     lblFontPreviewSpacer,
     HBox([lblHeaderPad, numberBoxHeaderPad, new Label(0, 0, "DOT")]),
     HBox([lblContentPad, nbContentPad, new Label(0, 0, "DOT")]),
+  ]);
+  const effectsPage = VBox([
+    HBox([lblVignette, tglVignette]),
+    vigStrengthRow,
+    vigRadiusRow,
     sep1,
-    // ── SYSTEM ──
-    HBox([lblInputOverlay, tglInputOverlay]),
-    HBox([lblSystemSfx, tglSystemSfx]),
-    sep2,
-    // ── PALETTE ──
+    HBox([lblDiagonal, tglDiagonal]),
+    diagDarknessRow,
+    diagSpeedRow,
+    diagSpacingRow,
+    diagThicknessRow,
+  ]);
+  const themePage = VBox([
     HBox([lblPalette, lbPalette]),
     bgRow,
     fgRow,
-    sep3,
-    // ── WALLPAPER ──
+    sep2,
     HBox([lblBackground, ddBackground]),
     bayerRow,
     levelRow,
     imagePathRow,
     imageFileRow,
     imageFillRow,
-    new HSep(0, 0, 0),
-    // ── DEFAULTS (現在の全設定を「出荷時デフォルト」用に書き出す) ──
+  ]);
+  const systemPage = VBox([
+    HBox([lblInputOverlay, tglInputOverlay]),
+    HBox([lblSystemSfx, tglSystemSfx]),
+    sep3,
     HBox([btnExportDefaults, lblExportStatus]),
   ]);
+  pages = [displayPage, effectsPage, themePage, systemPage];
 
-  // ── ウィジェットグループ & セクション定義 ──
+  // ── セクション可視制御の対象 ──
   customWidgets = [bgRow, fgRow];
   solidWidgets = [bayerRow, levelRow];
   imageWidgets = [imagePathRow, imageFileRow, imageFillRow];
 
-  // WidgetGroup(root) は初期 layout + auto-layout を実行
-  appearWidgets = new WidgetGroup(settingsRoot);
+  // ── タブバー + 現在タブのルートを構築 ──
+  tabBar = new TabBar(0, 0, TAB_LABELS, (i) => {
+    activeTab = i;
+    buildMainRoot();
+  }, activeTab);
+  buildMainRoot();
 }
 
-let appearWidgets;
+/** 現在タブのレイアウトを (再)構築する。タブバー + ページを縦に並べる。 */
+function buildMainRoot() {
+  mainRoot = VBox([HBox([tabBar]), new HSep(0, 0, 0), pages[activeTab]]);
+  mainWidgets = new WidgetGroup(mainRoot);
+}
+
+/** EFFECTS: トグル OFF のパラメータ行を非表示にする */
+function refreshEffectVisibility() {
+  for (const row of vigRows) row.visible = tglVignette.value;
+  for (const row of diagRows) row.visible = tglDiagonal.value;
+}
 
 /** カスタムパレット行の表示切替 (auto-layout が次フレームで反映)。 */
 function refreshCustomPalette() {
@@ -548,23 +689,24 @@ wmRegister(
         syncBgWidgets();
         refreshCustomPalette();
         refreshBackground();
-        const size = settingsRoot.measure();
+        refreshEffectVisibility();
+        const size = mainRoot.measure();
         wmSetContentSize(id, size.h);
-        appearWidgets.draw(contentRect);
+        mainWidgets.draw(contentRect);
       },
-      (ev) => appearWidgets.update(ev),
-      () => settingsRoot.measure(),
+      (ev) => mainWidgets.update(ev),
+      () => mainRoot.measure(),
       {
         about:
-          "System settings. Change the palette, wallpaper, resolution, " +
-          "fonts, header and content padding, and more.",
+          "System settings (tabbed): display, effects, theme, system. " +
+          "Palette, wallpaper, resolution, fonts, padding, CRT effects, and more.",
         scrollable: true,
         onRelayout: () => {
-          appearWidgets.remeasureAll();
+          mainWidgets.remeasureAll();
           // ラベル幅再統一 (remeasure で自然幅に戻った後に再揃え)
           maxLabelWidth = Math.max(...allLabels.map((l) => l.w));
           for (const l of allLabels) l.w = maxLabelWidth;
-          settingsRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
+          mainRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
         },
       },
     );
