@@ -85,16 +85,16 @@ async function boot() {
     initGpu();
     initInput();
 
-    // ── 保存されたエフェクトパラメータを復元 ──
+    // ── エフェクトパラメータを display_fx へ反映 ──
     // initGpu() の後 (onEffectChange コールバック登録済み) に実行。
-    // _restoreEffectParams で内部状態を復元した後、_fireEffectCallbacks で
-    // display_fx の setter を一括発火する。
+    // 保存値があれば復元し、無ければ既定 (EFFECT_DEFAULTS) のまま、いずれにせよ
+    // _fireEffectCallbacks() を「常に」発火して display_fx を現在値に同期する。
+    // (以前は保存値がある時だけ発火していたため、新規アクセス時に UI 上の既定値が
+    //  実描画へ反映されず、一度値を変えるまで反映されないバグがあった)
     {
       const savedEffect = Storage.load("effect", null);
-      if (savedEffect) {
-        Config._restoreEffectParams(savedEffect);
-        Config._fireEffectCallbacks();
-      }
+      if (savedEffect) Config._restoreEffectParams(savedEffect);
+      Config._fireEffectCallbacks();
     }
 
     // ── ui ↔ wm コールバック接続 (循環依存回避) ──
