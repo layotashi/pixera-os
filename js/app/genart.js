@@ -59,21 +59,31 @@ const APP_NAME = "GENART";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── サイズモデル ──
-// 最終出力外寸を OUTPUT プリセットから選ぶ。プレビュー (画面・基準解像度) は
-// 出力を OUTPUT_SCALE で割った baseW×baseH。書き出しは base を整数 ×OUTPUT_SCALE
-// するだけなので「1 ドット = 物理 OUTPUT_SCALE ピクセル」が厳密に保たれ、かつ
-// 1920×1080 等の丸いサイズちょうどになる (均一ドット & 正確サイズの両立)。
-// プレビューが小さいので画面外にはみ出す問題も解消する。
-const OUTPUT_SCALE = 8;
+// 最終出力外寸を OUTPUT プリセットから選ぶ。アートは base = 出力 ÷ dotScale の
+// 解像度で描き、書き出しは base を整数 ×dotScale するだけ。よって「1 アートドット =
+// 物理 dotScale ピクセル」が厳密に保たれ、出力は常にプリセット外寸ちょうど。
+//
+// dotScale (DOT 倍率) は 8/4/2/1 から選べる。小さいほど base が高精細になりドットが
+// 細かい (より写真的)。出力サイズは不変で、1 ドットの物理サイズだけ変わる。
+//
+// プレビュー (画面・ウィンドウ) は常に 出力 ÷ PREVIEW_SCALE の一定サイズ。
+// dotScale=8 では base = プレビュー寸法なので 1:1 完全一致。より細かい倍率では
+// base をプレビュー寸法へ NN 縮小して表示する (構図は忠実・画面に収まる。書き出しは
+// 常に正確)。粗いドット (8) は SYNESTA の signature なのでそこは無損失のまま。
+const PREVIEW_SCALE = 8; // プレビュー/ウィンドウ寸法 = 出力 ÷ 8 (一定)
+const DOT_SCALES = [8, 4, 2, 1]; // 1 アートドット = N 物理ピクセル
+let dotScale = 8;
 const OUTPUT_PRESETS = [
-  { label: "1920x1080", baseW: 240, baseH: 135 }, // 16:9
-  { label: "1080x1920", baseW: 135, baseH: 240 }, // 9:16
-  { label: "1440x1080", baseW: 180, baseH: 135 }, // 4:3
-  { label: "1080x1440", baseW: 135, baseH: 180 }, // 3:4
-  { label: "1080x1080", baseW: 135, baseH: 135 }, // 1:1
+  { label: "1920x1080", outW: 1920, outH: 1080 }, // 16:9
+  { label: "1080x1920", outW: 1080, outH: 1920 }, // 9:16
+  { label: "1440x1080", outW: 1440, outH: 1080 }, // 4:3
+  { label: "1080x1440", outW: 1080, outH: 1440 }, // 3:4
+  { label: "1080x1080", outW: 1080, outH: 1080 }, // 1:1
 ];
 let currentOutIdx = 0;
-let baseW = 240, // プレビュー/基準解像度 (出力 = base × OUTPUT_SCALE)
+let outW = 1920, // 最終出力外寸 (プリセット)
+  outH = 1080;
+let baseW = 240, // アート/合成解像度 = 出力 ÷ dotScale
   baseH = 135;
 
 // アート (場/グリフ) の描画領域。PAD で base から上下左右対称に削った内側。
@@ -81,6 +91,22 @@ let baseW = 240, // プレビュー/基準解像度 (出力 = base × OUTPUT_SCA
 // 既定 PAD=8 なので 240/135 から各辺 8px 削った 224×119。
 let artWidth = 224;
 let artHeight = 119;
+
+// ── 等倍 (1:1) インスペクト ──
+// dotScale<8 では base がプレビュー窓 (出力÷8) より大きい。全体を縮小表示する FIT と、
+// 1 アートドット = 1 画面px で一部を見る 1:1 を切替できる。1:1 は本体をドラッグでパンし、
+// 隅のナビゲータ (全体サムネ + 可視範囲の矩形) で現在位置の把握/ジャンプを行う。
+// スクロールバーを使わないので端のクローム食い込みも右下コーナー処理も発生しない。
+let viewMode = "fit"; // "fit" | "1to1"
+let panX = 0, // 1:1 ビューポート左上 (base art-dot 座標)
+  panY = 0;
+const NAV_MAX = 56; // ナビゲータ サムネの長辺 px
+let panDragging = false, // 本体ドラッグパン中
+  navDragging = false; // ナビゲータ操作中
+let dragDownX = 0,
+  dragDownY = 0,
+  panStartX = 0,
+  panStartY = 0;
 
 /** ツールバーとキャンバスの間の間隔 */
 const CANVAS_GAP = 4;
@@ -101,9 +127,12 @@ let exportFormatIdx = 0; // availableFormats() のインデックス
  * 額縁 (マット): アート内容と枠線の間に置く背景余白 (px)。DOT/ASCII 共通で、
  * 表示・書き出しの両方に含まれる (作品として「額装」される)。0 で枠線に密着。
  */
-let outerMargin = 8; // 既定 PAD=8 (額縁)
+// 額縁マットの太さを「最終出力 px」で指定する (dotScale 非依存で一定の額縁)。
+// base 上のマット = outerMargin ÷ dotScale。8 の倍数なので全倍率で整数になる。
+let outerMargin = 64; // 既定 PAD=64 出力px (= dotScale8 で base 8px)
 const MARGIN_MIN = 0,
-  MARGIN_MAX = 16;
+  MARGIN_MAX = 128,
+  MARGIN_STEP = 8;
 /**
  * ASCII の字間 (px)。文字数は変えず、文字どうしの間隔だけ調整する。
  * 既定 1 で従来どおり。0 で密着、大きくすると空間的な ASCII になる。
@@ -137,10 +166,19 @@ const SCAN_MIN = 2,
  */
 let edgeMode = "wrap";
 
+/** 境界条件 (EDGE: WRAP/WALL) を持つグリッドシミュ系 (ラプラシアンに境界が効く) */
+const EDGE_ALGOS = new Set([
+  "react",
+  "bz",
+  "gierer",
+  "swift",
+  "fhn",
+  "cahn",
+]);
+
 /** 現在のアルゴリズムが境界条件 (EDGE) の選択に対応するか */
 function algoSupportsEdge() {
-  const k = ALGO_KEYS[currentAlgoIdx];
-  return k === "react" || k === "bz";
+  return EDGE_ALGOS.has(ALGO_KEYS[currentAlgoIdx]);
 }
 
 /** この環境で選べる書き出し形式 (MP4 は WebCodecs 対応時のみ) */
@@ -184,6 +222,10 @@ const ALGO_KEYS = [
   "curl",
   "bz",
   "worley",
+  "gierer",
+  "swift",
+  "fhn",
+  "cahn",
 ];
 const ALGO_NAMES = [
   "REACT",
@@ -201,6 +243,10 @@ const ALGO_NAMES = [
   "CURL",
   "BZ",
   "WORLEY",
+  "GIERER",
+  "SWIFT",
+  "FITZHUGH",
+  "CAHN",
 ];
 
 /**
@@ -236,6 +282,10 @@ const ALGO_MODES = {
   curl: FIELD_MODES,
   bz: FIELD_MODES,
   worley: FIELD_MODES,
+  gierer: FIELD_MODES,
+  swift: FIELD_MODES,
+  fhn: FIELD_MODES,
+  cahn: FIELD_MODES,
 };
 
 /** 場 (fieldBuf) パイプラインを使うアルゴリズム (= 全アルゴリズム) */
@@ -255,6 +305,10 @@ const FIELD_ALGOS = new Set([
   "curl",
   "bz",
   "worley",
+  "gierer",
+  "swift",
+  "fhn",
+  "cahn",
 ]);
 
 /** 現在のレンダーモード ("dot" | "ascii")。ALGO_MODES の制約下で選択される。 */
@@ -325,6 +379,32 @@ const PRESETS = {
     { name: "MAZE", f: 0.029, k: 0.057, iters: 5000 },
     { name: "SPOTS", f: 0.014, k: 0.054, iters: 6000 },
     { name: "HOLES", f: 0.039, k: 0.058, iters: 4000 },
+  ],
+  // Gierer–Meinhardt (活性化–抑制): 古典 Turing。ka(飽和) で斑点⇄縞⇄網目。
+  gierer: [
+    { name: "SPOTS", Da: 0.016, Dh: 0.08, rate: 0.1, ka: 0.18, iters: 2200 },
+    { name: "BLOB", Da: 0.04, Dh: 0.2, rate: 0.05, ka: 0.0, iters: 2500 },
+    { name: "NET", Da: 0.02, Dh: 0.09, rate: 0.12, ka: 0.28, iters: 2200 },
+    { name: "CAMO", Da: 0.03, Dh: 0.16, rate: 0.06, ka: 0.05, iters: 2400 },
+  ],
+  // Swift–Hohenberg: 縞/六角/ラビリンス。g(二次項) で縞⇄六角、r で構造量。
+  swift: [
+    { name: "STRIPE", r: 0.35, g: 0.0, dt: 0.02, iters: 3000 },
+    { name: "HEX", r: 0.3, g: 1.2, dt: 0.02, iters: 3000 },
+    { name: "MAZE", r: 0.7, g: 0.0, dt: 0.02, iters: 3500 },
+    { name: "FINGERPRINT", r: 0.2, g: 0.4, dt: 0.02, iters: 3500 },
+  ],
+  // FitzHugh–Nagumo: 興奮系の連続場。迷路/渦巻き。
+  fhn: [
+    { name: "LABYRINTH", Du: 0.05, Dv: 0.22, eps: 0.05, a0: 0.0, a1: 1.0, I: 0.0, dt: 0.3, iters: 3000, spiral: false },
+    { name: "SPIRAL", Du: 0.06, Dv: 0.22, eps: 0.06, a0: 0.0, a1: 1.0, I: 0.0, dt: 0.35, iters: 3000, spiral: true },
+    { name: "WORMS", Du: 0.04, Dv: 0.2, eps: 0.04, a0: 0.0, a1: 1.0, I: 0.02, dt: 0.3, iters: 3500, spiral: false },
+  ],
+  // Cahn–Hilliard (相分離): スピノーダル分解。融合する有機斑。
+  cahn: [
+    { name: "SPINODAL", M: 1.0, gamma: 0.6, dt: 0.02, iters: 3000 },
+    { name: "COARSE", M: 1.0, gamma: 1.4, dt: 0.025, iters: 4000 },
+    { name: "MARBLE", M: 1.0, gamma: 0.9, dt: 0.02, iters: 3500 },
   ],
   voronoi: [
     { name: "CELLS", numPoints: 80, mode: "edge", distortion: 0 },
@@ -729,14 +809,23 @@ function resizeArt(w, h) {
   clearArt();
 }
 
+/** base 上の PAD マット幅 (px) = 出力px PAD ÷ dotScale。8 の倍数なので整数。 */
+function basePad() {
+  return Math.round(outerMargin / dotScale);
+}
+
 /**
- * base から PAD を上下左右対称に削った内側をアート描画領域として確定し、
- * その解像度でアートバッファを取り直して再生成する。
- * DOT はこの解像度で場を描き、PAD マットを付けて base に合成 → ×OUTPUT_SCALE。
+ * base (= 出力 ÷ dotScale) を確定し、そこから PAD マットを上下左右対称に削った
+ * 内側をアート描画領域として取り直して再生成する。
+ * DOT はこの解像度で場を描き、PAD マットを付けて base に合成 → 整数 ×dotScale。
  */
 function applySize() {
-  artWidth = Math.max(8, baseW - 2 * outerMargin);
-  artHeight = Math.max(8, baseH - 2 * outerMargin);
+  baseW = Math.round(outW / dotScale);
+  baseH = Math.round(outH / dotScale);
+  const bp = basePad();
+  artWidth = Math.max(8, baseW - 2 * bp);
+  artHeight = Math.max(8, baseH - 2 * bp);
+  clampPan(); // base 寸法が変わったらビューポートを範囲内に収める
   resizeArt(artWidth, artHeight);
   startGeneration();
 }
@@ -744,9 +833,18 @@ function applySize() {
 /** OUTPUT プリセット (最終外寸) を適用する */
 function applyOutputPreset(idx) {
   currentOutIdx = idx;
-  baseW = OUTPUT_PRESETS[idx].baseW;
-  baseH = OUTPUT_PRESETS[idx].baseH;
+  outW = OUTPUT_PRESETS[idx].outW;
+  outH = OUTPUT_PRESETS[idx].outH;
   applySize();
+}
+
+/** DOT 倍率 (1 アートドット = N 物理px) を適用する。出力サイズは不変。 */
+function applyDotScale(s) {
+  dotScale = s;
+  panX = panY = 0; // 倍率変更でビューポートをリセット
+  applySize();
+  if (!canZoom()) viewMode = "fit"; // ×8 は FIT=等倍なので 1:1 を無効化
+  buildToolbar(); // VIEW トグルの表示/非表示が dotScale で変わる
 }
 
 function artPset(x, y) {
@@ -862,21 +960,51 @@ function allocField(rampChars) {
   fieldBuf = new Float32Array(fieldCols * fieldRows);
 }
 
-// セル座標ネイティブ: fieldBuf の列/行インデックス → 連続セル座標。
-// ASCII では 1 セル = 1 文字、DOT では 1 セル = CELL_W×CELL_H ピクセル。
+// ── 解像度非依存の座標系 (構図不変) ──
+// dotScale を細かくすると場の実解像度 (artWidth) は上がるが、座標は dotScale=8 相当の
+// 固定「デザイン領域」に正規化する。よって倍率を変えても構図は寸分同じで、サンプリング
+// だけが細かくなる (= エッジはシャープ、トーンは細かいディザで滑らか)。
+// refScale = 8/dotScale (dot8 で 1)。DOT 系のみ適用、ASCII は従来どおり。
+function refScale() {
+  return PREVIEW_SCALE / dotScale;
+}
+/** デザイン領域のピクセル寸法 (= dot8 相当の artWidth/Height。dotScale 不変) */
+function designArtW() {
+  return artWidth / refScale();
+}
+function designArtH() {
+  return artHeight / refScale();
+}
+// 場がまたがるピクセル/セル座標の範囲 (母点・波源・中心などの配置に使う)。
+// DOT 系はデザイン領域、ASCII はグリフ格子 (calcAACols)。
+function fieldPixW() {
+  return renderMode === "ascii" ? calcAACols() * AsciiArt.CELL_W : designArtW();
+}
+function fieldPixH() {
+  return renderMode === "ascii" ? calcAARows() * AsciiArt.CELL_H : designArtH();
+}
+function fieldCellW() {
+  return renderMode === "ascii" ? calcAACols() : designArtW() / AsciiArt.CELL_W;
+}
+function fieldCellH() {
+  return renderMode === "ascii" ? calcAARows() : designArtH() / AsciiArt.CELL_H;
+}
+
+// セル座標ネイティブ: fieldBuf の列/行インデックス → 連続セル座標 (デザイン領域)。
+// ASCII では 1 セル = 1 文字、DOT では 1 セル = CELL_W×CELL_H デザインピクセル。
 function fieldCellX(c) {
-  return renderMode === "ascii" ? c : c / AsciiArt.CELL_W;
+  return renderMode === "ascii" ? c : c / (AsciiArt.CELL_W * refScale());
 }
 function fieldCellY(r) {
-  return renderMode === "ascii" ? r : r / AsciiArt.CELL_H;
+  return renderMode === "ascii" ? r : r / (AsciiArt.CELL_H * refScale());
 }
-// ピクセル座標ネイティブ: 源・母点は常にピクセル空間 [0,artWidth]×[0,artHeight]。
+// ピクセル座標ネイティブ: 源・母点はデザイン領域のピクセル空間に配置する。
 // ASCII ではセル中心のピクセル座標で標本化する。
 function fieldPixelX(c) {
-  return renderMode === "ascii" ? (c + 0.5) * AsciiArt.CELL_W : c;
+  return renderMode === "ascii" ? (c + 0.5) * AsciiArt.CELL_W : c / refScale();
 }
 function fieldPixelY(r) {
-  return renderMode === "ascii" ? (r + 0.5) * AsciiArt.CELL_H : r;
+  return renderMode === "ascii" ? (r + 0.5) * AsciiArt.CELL_H : r / refScale();
 }
 
 /** fieldBuf → 出力 (ASCII:aaLines / その他:artBuf を方式別レンダラで描く)。 */
@@ -1041,11 +1169,11 @@ const AUTO_INTERVAL = 90;
 //  PNG 保存 / 壁紙設定
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** ダウンロードボタン: 選択中の形式 (PNG / GIF / MP4) を base ×OUTPUT_SCALE で出力 */
+/** ダウンロードボタン: 選択中の形式 (PNG / GIF / MP4) を base ×dotScale で出力 */
 function downloadArt() {
   const key = currentFormatKey();
   if (key === "png") {
-    saveArtAsPng(); // base ×OUTPUT_SCALE
+    saveArtAsPng(); // base ×dotScale
   } else {
     startVideoRecording(key); // "gif" | "mp4"
   }
@@ -1107,15 +1235,15 @@ function finishVideoRecording() {
   }
 
   // 書き出しフレームと寸法・倍率をモード別に用意する。
-  //   DOT  : base 合成バッファ → encode が整数 ×OUTPUT_SCALE 拡大 (均一)。
-  //   ASCII: 各フレームの aaLines を出力解像度でラスタライズ → ×8 で厳密対称。
+  //   DOT  : base 合成バッファ → encode が整数 ×dotScale 拡大 (均一)。
+  //   ASCII: 各フレームの aaLines を出力解像度でラスタライズ → ×dotScale で厳密対称。
   const ascii = renderMode === "ascii";
-  const encW = ascii ? baseW * OUTPUT_SCALE : baseW;
-  const encH = ascii ? baseH * OUTPUT_SCALE : baseH;
-  const encScale = ascii ? 1 : OUTPUT_SCALE;
+  const encW = ascii ? baseW * dotScale : baseW;
+  const encH = ascii ? baseH * dotScale : baseH;
+  const encScale = ascii ? 1 : dotScale;
   const prepFrames = () =>
     ascii
-      ? gifFrames.map((lines) => composeAsciiBuffer(OUTPUT_SCALE, lines).buf)
+      ? gifFrames.map((lines) => composeAsciiBuffer(dotScale, lines).buf)
       : gifFrames;
 
   if (videoFormat === "mp4") {
@@ -1174,13 +1302,13 @@ function downloadVideoBlob(blob, ext) {
 }
 
 function saveArtAsPng() {
-  // DOT: base を整数 ×OUTPUT_SCALE で拡大 (均一ドット)。
-  // ASCII: 出力解像度で直接ラスタライズ (×8 で外側マージン厳密対称)。
+  // DOT: base を整数 ×dotScale で拡大 (均一ドット)。
+  // ASCII: 出力解像度で直接ラスタライズ (×dotScale で外側マージン厳密対称)。
   const ascii = renderMode === "ascii";
   const { buf, w, h } = ascii
-    ? composeAsciiBuffer(OUTPUT_SCALE)
+    ? composeAsciiBuffer(dotScale)
     : composeDotBuffer(artBuf);
-  const capScale = ascii ? 1 : OUTPUT_SCALE;
+  const capScale = ascii ? 1 : dotScale;
   GPU.beginCapture(w, h);
   GPU.blit(buf, w, h, 0, 0, 1);
   if (invertMode) GPU.invertRect(0, 0, w, h);
@@ -1360,12 +1488,14 @@ function voronoiInit(preset, s) {
   vorPreset = preset;
   seedRng(s);
   allocField();
-  // 母点はピクセル空間に配置 (モードに依らず一定の絶対位置)
+  // 母点はデザイン領域のピクセル空間に配置 (倍率に依らず同じ構図)
   const n = preset.numPoints;
+  const pw = fieldPixW(),
+    ph = fieldPixH();
   vorPoints = new Float64Array(n * 2);
   for (let i = 0; i < n; i++) {
-    let x = rng() * artWidth,
-      y = rng() * artHeight;
+    let x = rng() * pw,
+      y = rng() * ph;
     if (preset.distortion > 0) {
       x += rngGauss() * preset.distortion * 20;
       y += rngGauss() * preset.distortion * 20;
@@ -1382,8 +1512,9 @@ function voronoiStep() {
   const p = vorPreset,
     n = p.numPoints;
   const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 120));
-  const maxR =
-    Math.sqrt((artWidth * artWidth + artHeight * artHeight) / n) * 0.9;
+  const pw = fieldPixW(),
+    ph = fieldPixH();
+  const maxR = Math.sqrt((pw * pw + ph * ph) / n) * 0.9;
   for (
     let row = 0;
     row < rowsPerFrame && vorScanY < fieldRows;
@@ -1442,12 +1573,14 @@ function waveInit(preset, s) {
   wavePreset = preset;
   seedRng(s);
   allocField();
-  // 波源はピクセル空間に配置 (モードに依らず一定の絶対位置)
+  // 波源はデザイン領域のピクセル空間に配置 (倍率に依らず同じ構図)
+  const pw = fieldPixW(),
+    ph = fieldPixH();
   waveSources = [];
   for (let i = 0; i < preset.sources; i++) {
     waveSources.push({
-      x: rng() * artWidth,
-      y: rng() * artHeight,
+      x: rng() * pw,
+      y: rng() * ph,
       phase: rng() * Math.PI * 2,
       freq: preset.freq * (0.8 + rng() * 0.4),
       angle: rng() * Math.PI * 2,
@@ -1466,7 +1599,7 @@ function waveInit(preset, s) {
 function waveFill(t) {
   if (!waveSources || !fieldBuf) return;
   const p = wavePreset;
-  const maxDim = Math.max(artWidth, artHeight);
+  const maxDim = Math.max(fieldPixW(), fieldPixH());
   for (let r = 0; r < fieldRows; r++) {
     const py = fieldPixelY(r);
     const base = r * fieldCols;
@@ -1530,10 +1663,13 @@ let plasmaGamma = 1.0;
  * 中心対称に並ぶグリフ数 (asciiLayout)。base/PAD/字間に追従する。
  */
 function calcAACols() {
-  return Math.max(4, asciiLayout(baseW, outerMargin, GLYPH_W, charSpacing).n);
+  // pad は base 上の値 (basePad)。outerMargin は出力px なので ÷dotScale して渡す。
+  // (これを誤ると DOT 時の場のセル範囲 artWidth/CELL_W と母点配置がズレ、作品が
+  //  一部に寄って残りが空白になる)
+  return Math.max(4, asciiLayout(baseW, basePad(), GLYPH_W, charSpacing).n);
 }
 function calcAARows() {
-  return Math.max(3, asciiLayout(baseH, outerMargin, GLYPH_H, charSpacing).n);
+  return Math.max(3, asciiLayout(baseH, basePad(), GLYPH_H, charSpacing).n);
 }
 
 function plasmaInit(preset, s) {
@@ -1543,9 +1679,9 @@ function plasmaInit(preset, s) {
 
   allocField(preset.chars);
 
-  // レイヤー中心はセル座標空間に置く (モードに依らず一定)
-  const cellCols = calcAACols(),
-    cellRows = calcAARows();
+  // レイヤー中心はデザイン領域のセル空間に置く (倍率に依らず同じ構図)
+  const cellCols = fieldCellW(),
+    cellRows = fieldCellH();
   const nLayers = preset.layers;
   plasmaLayers = [];
   for (let i = 0; i < nLayers; i++) {
@@ -1745,8 +1881,8 @@ function gridFill(t) {
   const p = aaGridPreset;
   const invGamma = 1.0 / p.gamma;
   const params = aaGridParams;
-  const cellCols = calcAACols(),
-    cellRows = calcAARows();
+  const cellCols = fieldCellW(),
+    cellRows = fieldCellH();
 
   for (let r = 0; r < fieldRows; r++) {
     const cy = fieldCellY(r);
@@ -1851,8 +1987,8 @@ function metaballInit(preset, s) {
   metaPreset = preset;
   seedRng(s);
   allocField(preset.chars);
-  const cols = calcAACols(),
-    rows = calcAARows();
+  const cols = fieldCellW(),
+    rows = fieldCellH();
   const minDim = Math.min(cols, rows);
   metaBalls = [];
   for (let i = 0; i < preset.count; i++) {
@@ -1938,8 +2074,8 @@ function moireFill(t) {
   const invGamma = 1.0 / moirePreset.gamma;
   const gr = moireGratings;
   const m = gr.length;
-  const cols = calcAACols(),
-    rows = calcAARows();
+  const cols = fieldCellW(),
+    rows = fieldCellH();
   const cxC = cols / 2,
     cyC = rows / 2;
   for (let r = 0; r < fieldRows; r++) {
@@ -2055,8 +2191,8 @@ function quasicFill(t) {
   const N = quasicPreset.symmetry;
   const freq = quasicPreset.freq;
   const invGamma = 1.0 / quasicPreset.gamma;
-  const cols = calcAACols(),
-    rows = calcAARows();
+  const cols = fieldCellW(),
+    rows = fieldCellH();
   const cxC = cols / 2,
     cyC = rows / 2;
   const dirs = [];
@@ -2220,8 +2356,8 @@ function worleyInit(preset, s) {
   worleyPreset = preset;
   seedRng(s);
   allocField(preset.chars);
-  worleyCols = calcAACols();
-  worleyRows = calcAARows();
+  worleyCols = fieldCellW();
+  worleyRows = fieldCellH();
   const minDim = Math.min(worleyCols, worleyRows);
   worleyPts = [];
   for (let i = 0; i < preset.points; i++) {
@@ -2403,6 +2539,229 @@ function bzStep() {
   }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  TURING 系 — 反応拡散 / パターン形成
+//  Gierer-Meinhardt / Swift-Hohenberg / FitzHugh-Nagumo / Cahn-Hilliard
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// いずれも格子上で場を時間発展させ定常パターンへ収束する一回生成系。REACT と
+// 同じく格子を最大 256px に制限し、結果を fieldBuf へ再標本化して commitField で
+// 1bit/ASCII に落とす。同時に走るのは1系のみなので格子・反復・スクラッチは共有。
+// 場の値域は系ごとに違うため、再標本化は毎回 min/max でオート正規化して対比を確保。
+
+const TURING_MAX_SIDE = 256;
+let tgw = 0,
+  tgh = 0,
+  tIter = 0,
+  tMaxIter = 0,
+  tPreset = null;
+let tF1, tF2, tL1, tL2; // 主場2つ + ラプラシアン用スクラッチ2つ
+
+/** art 寸法から格子サイズを決め、場を確保 (最大辺 256) */
+function turingAlloc(twoFields) {
+  if (artWidth <= TURING_MAX_SIDE && artHeight <= TURING_MAX_SIDE) {
+    tgw = artWidth;
+    tgh = artHeight;
+  } else {
+    const sc = Math.ceil(Math.max(artWidth, artHeight) / TURING_MAX_SIDE);
+    tgw = Math.ceil(artWidth / sc);
+    tgh = Math.ceil(artHeight / sc);
+  }
+  const len = tgw * tgh;
+  tF1 = new Float64Array(len);
+  tF2 = twoFields ? new Float64Array(len) : null;
+  tL1 = new Float64Array(len);
+  tL2 = new Float64Array(len);
+}
+
+/** 4近傍ラプラシアン (格子間隔 1)。wrap=トーラス / wall=勾配0。src→dst。 */
+function turingLap(src, dst) {
+  const W = tgw,
+    H = tgh,
+    wrap = edgeMode === "wrap";
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const xp = x < W - 1 ? i + 1 : wrap ? i - (W - 1) : i;
+      const xn = x > 0 ? i - 1 : wrap ? i + (W - 1) : i;
+      const yp = y < H - 1 ? i + W : wrap ? i - (H - 1) * W : i;
+      const yn = y > 0 ? i - W : wrap ? i + (H - 1) * W : i;
+      dst[i] = src[xp] + src[xn] + src[yp] + src[yn] - 4 * src[i];
+    }
+  }
+}
+
+/** 主場 src を min/max オート正規化して fieldBuf へ再標本化 (値域非依存で対比確保) */
+function turingResampleAuto(src) {
+  const len = tgw * tgh;
+  let mn = Infinity,
+    mx = -Infinity;
+  for (let i = 0; i < len; i++) {
+    const v = src[i];
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  }
+  const d = mx - mn > 1e-9 ? 1 / (mx - mn) : 1;
+  for (let fr = 0; fr < fieldRows; fr++) {
+    const gy = Math.min(tgh - 1, (((fr + 0.5) / fieldRows) * tgh) | 0);
+    const fbase = fr * fieldCols;
+    const gbase = gy * tgw;
+    for (let fc = 0; fc < fieldCols; fc++) {
+      const gx = Math.min(tgw - 1, (((fc + 0.5) / fieldCols) * tgw) | 0);
+      const v = (src[gbase + gx] - mn) * d;
+      fieldBuf[fbase + fc] = v < 0 ? 0 : v > 1 ? 1 : v;
+    }
+  }
+}
+
+/** 1フレームの反復数 (格子が大きいほど減らし負荷一定) */
+function turingPerFrame() {
+  return Math.max(2, Math.round((24 * 160 * 120) / (tgw * tgh)));
+}
+/** 進捗・完了処理の定型 */
+function turingEndStep(label) {
+  progress = tIter / tMaxIter;
+  statusText = `ITER: ${tIter}/${tMaxIter}`;
+  if (tIter >= tMaxIter) {
+    generating = false;
+    progress = 1;
+    statusText = `DONE - ${label}`;
+  }
+}
+/** init 共通: 格子確保・反復リセット・乱数シード・生成フラグ */
+function turingInitCommon(preset, twoFields, s) {
+  tPreset = preset;
+  tMaxIter = preset.iters;
+  tIter = 0;
+  seedRng(s);
+  turingAlloc(twoFields);
+  generating = true;
+  progress = 0;
+  allocField();
+}
+
+// ── Gierer-Meinhardt (活性化 a / 抑制 h) ──
+function giererInit(preset, s) {
+  turingInitCommon(preset, true, s);
+  for (let i = 0; i < tgw * tgh; i++) {
+    tF1[i] = 1 + (rng() - 0.5) * 0.04;
+    tF2[i] = 1 + (rng() - 0.5) * 0.04;
+  }
+}
+function giererStep() {
+  const { Da, Dh, rate, ka } = tPreset;
+  const per = turingPerFrame();
+  const len = tgw * tgh;
+  for (let s = 0; s < per && tIter < tMaxIter; s++, tIter++) {
+    turingLap(tF1, tL1);
+    turingLap(tF2, tL2);
+    for (let i = 0; i < len; i++) {
+      const a = tF1[i];
+      const h = tF2[i] < 1e-4 ? 1e-4 : tF2[i];
+      const a2 = a * a;
+      // 飽和 ka が活性ピークを抑え斑点を安定化。低 ka ほど大きな有機ブロブに育つ。
+      const na = a + Da * tL1[i] + rate * (a2 / (h * (1 + ka * a2)) - a);
+      const nh = h + Dh * tL2[i] + rate * (a2 - h);
+      tF1[i] = na < 0 ? 0 : na > 50 ? 50 : na;
+      tF2[i] = nh < 1e-4 ? 1e-4 : nh > 50 ? 50 : nh;
+    }
+  }
+  turingResampleAuto(tF1);
+  commitField();
+  turingEndStep(`GIERER ${tPreset.name}`);
+}
+
+// ── Swift-Hohenberg (単一場 u): ∂u/∂t = r u - (1+∇²)²u - u³ (+ g u²) ──
+function swiftInit(preset, s) {
+  turingInitCommon(preset, false, s);
+  for (let i = 0; i < tgw * tgh; i++) tF1[i] = (rng() - 0.5) * 0.2;
+}
+function swiftStep() {
+  const { r, g, dt } = tPreset;
+  const per = turingPerFrame();
+  const len = tgw * tgh;
+  for (let s = 0; s < per && tIter < tMaxIter; s++, tIter++) {
+    turingLap(tF1, tL1); // ∇²u
+    turingLap(tL1, tL2); // ∇⁴u = ∇²(∇²u)
+    for (let i = 0; i < len; i++) {
+      const u = tF1[i];
+      // (1+∇²)²u = u + 2∇²u + ∇⁴u
+      const du = r * u - (u + 2 * tL1[i] + tL2[i]) - u * u * u + g * u * u;
+      const nu = u + dt * du;
+      tF1[i] = nu < -10 ? -10 : nu > 10 ? 10 : nu;
+    }
+  }
+  turingResampleAuto(tF1);
+  commitField();
+  turingEndStep(`SWIFT ${tPreset.name}`);
+}
+
+// ── FitzHugh-Nagumo (興奮 u / 回復 v) ──
+function fhnInit(preset, s) {
+  turingInitCommon(preset, true, s);
+  const W = tgw,
+    H = tgh;
+  for (let i = 0; i < W * H; i++) {
+    tF1[i] = (rng() - 0.5) * 0.2;
+    tF2[i] = (rng() - 0.5) * 0.2;
+  }
+  if (preset.spiral) {
+    // 左右で u を、上下で v を二分し対称性を破る → 渦巻きの核
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        tF1[i] = x < W / 2 ? 1.0 : -1.0;
+        tF2[i] = y < H / 2 ? 0.3 : -0.3;
+      }
+  }
+}
+function fhnStep() {
+  const { Du, Dv, eps, a0, a1, I, dt } = tPreset;
+  const per = turingPerFrame();
+  const len = tgw * tgh;
+  for (let s = 0; s < per && tIter < tMaxIter; s++, tIter++) {
+    turingLap(tF1, tL1);
+    turingLap(tF2, tL2);
+    for (let i = 0; i < len; i++) {
+      const u = tF1[i],
+        v = tF2[i];
+      const nu = u + Du * tL1[i] + dt * (u - u * u * u - v + I);
+      const nv = v + Dv * tL2[i] + dt * eps * (u - a1 * v - a0);
+      tF1[i] = nu < -5 ? -5 : nu > 5 ? 5 : nu;
+      tF2[i] = nv < -5 ? -5 : nv > 5 ? 5 : nv;
+    }
+  }
+  turingResampleAuto(tF1);
+  commitField();
+  turingEndStep(`FHN ${tPreset.name}`);
+}
+
+// ── Cahn-Hilliard (保存場 c): ∂c/∂t = M∇²(c³ - c - γ∇²c) ──
+function cahnInit(preset, s) {
+  turingInitCommon(preset, false, s);
+  for (let i = 0; i < tgw * tgh; i++) tF1[i] = (rng() - 0.5) * 0.2;
+}
+function cahnStep() {
+  const { M, gamma, dt } = tPreset;
+  const per = turingPerFrame();
+  const len = tgw * tgh;
+  for (let s = 0; s < per && tIter < tMaxIter; s++, tIter++) {
+    turingLap(tF1, tL1); // ∇²c
+    for (let i = 0; i < len; i++) {
+      const c = tF1[i];
+      tL2[i] = c * c * c - c - gamma * tL1[i]; // 化学ポテンシャル μ
+    }
+    turingLap(tL2, tL1); // ∇²μ (tL1 を再利用)
+    for (let i = 0; i < len; i++) {
+      const nc = tF1[i] + dt * M * tL1[i];
+      tF1[i] = nc < -5 ? -5 : nc > 5 ? 5 : nc;
+    }
+  }
+  turingResampleAuto(tF1);
+  commitField();
+  turingEndStep(`CAHN ${tPreset.name}`);
+}
+
 function startGeneration() {
   const algoKey = ALGO_KEYS[currentAlgoIdx];
   const preset = PRESETS[algoKey][currentPresetIdx];
@@ -2448,6 +2807,18 @@ function startGeneration() {
     case "curl":
       curlInit(preset, seed);
       break;
+    case "gierer":
+      giererInit(preset, seed);
+      break;
+    case "swift":
+      swiftInit(preset, seed);
+      break;
+    case "fhn":
+      fhnInit(preset, seed);
+      break;
+    case "cahn":
+      cahnInit(preset, seed);
+      break;
     case "bz":
       bzInit(preset, seed);
       break;
@@ -2467,6 +2838,18 @@ function stepGeneration() {
       break;
     case "voronoi":
       voronoiStep();
+      break;
+    case "gierer":
+      giererStep();
+      break;
+    case "swift":
+      swiftStep();
+      break;
+    case "fhn":
+      fhnStep();
+      break;
+    case "cahn":
+      cahnStep();
       break;
     case "bz":
       bzStep();
@@ -2537,18 +2920,32 @@ function autoNext() {
 //  ツールバー (2行構成)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+// コンソール型レイアウト: 上=CREATE / 中=画面+OUTPUT パネル / 下=transport。
 /** @type {UI.WidgetGroup} */
-let toolbar;
-let toolbarRoot;
+let createGroup, // 上部 CREATE 行 (ALGO/STYLE/AS+方式パラメータ)
+  outputGroup, // 右側 OUTPUT パネル (OUT/DOT/1:1/PAD/形式/DL/SAVE)
+  transportGroup; // 下部 transport 行 (SEED/🎲/GEN/INV/EDGE/FPS)
+let createSize = { w: 0, h: 0 },
+  outputSize = { w: 0, h: 0 },
+  transportSize = { w: 0, h: 0 };
+let sepOut; // OUTPUT パネル内の区切り線 (パラメータ群 ↔ 書き出し群)
+// デッキ型レイアウトの見出し帯 (反転バンド)。CREATE/GENERATE/OUTPUT は各列の
+// 先頭に積む (列幅)。PREVIEW はキャンバス上の全幅帯で、グループに含めず draw 時に
+// 幅を contentW へ伸ばして描画する。
+let bandCreate, bandGen, bandPreview;
 let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge, ddFps;
 let nbHatch, nbScreen, nbContour, nbScan;
 let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
-let ddSize, nbPad, ddFormat, btnSave, btnFile;
-let toolbarH = 0;
+let ddSize, ddDotScale, tglView, nbPad, ddFormat, btnSave, btnFile;
 
 const BTN_PAD = 8,
   BTN_BORDER = 4;
+
+// 近接 (Proximity): 同一グループ内 (ラベル↔中身) は HBox 既定 gap で密着させ、
+// 別グループ間はこの広い gap で離す。両者を明確に差別化することで「ラベル+中身」
+// の塊が一目で識別でき、行が意味のあるクラスタに分節される。
+const GROUP_GAP = 12;
 
 /**
  * 現在の方式 (レンダーモード) 専用パラメータの { label, widget }。なければ null。
@@ -2744,14 +3141,42 @@ function buildToolbar() {
   tglAuto.h = ICON_H + BTN_PAD + BTN_BORDER;
   tglAuto.tooltip = "Auto shuffle (play/pause)";
 
-  // ── 出力外寸プリセット (OUTPUT): 最終出力サイズ。プレビューは ÷OUTPUT_SCALE ──
-  // 書き出しは整数 ×OUTPUT_SCALE なので均一ドット & 丸いサイズちょうど。
+  // ── 出力外寸プリセット (OUTPUT): 最終出力サイズ。プレビューは ÷dotScale ──
+  // 書き出しは整数 ×dotScale なので均一ドット & 丸いサイズちょうど。
   const outLabels = OUTPUT_PRESETS.map((o) => o.label);
   ddSize = new UI.DropDown(0, 0, outLabels, currentOutIdx, (i) => {
     applyOutputPreset(i);
   });
   ddSize.tooltip =
-    "Output size. Preview = output / 8; export upscales x8 (uniform crisp pixels).";
+    "Output size (fixed). Preview = output / 8 (constant window); export is exact.";
+
+  // ── DOT 倍率: 1 アートドット = N 物理px (8/4/2/1)。出力サイズは不変 ──
+  // 小さいほど base = 出力 ÷ N が高精細 → 細かいドット (写真的)。8 が SYNESTA らしい粗さ。
+  ddDotScale = new UI.DropDown(
+    0,
+    0,
+    DOT_SCALES.map((s) => `${s}`),
+    Math.max(0, DOT_SCALES.indexOf(dotScale)),
+    (i) => {
+      applyDotScale(DOT_SCALES[i]);
+    },
+  );
+  ddDotScale.tooltip =
+    "Dot magnification: physical px per art-dot. Smaller = finer art, same output size.";
+
+  // ── 1:1 (等倍) インスペクト トグル: FIT (全体縮小) ⇄ 1:1 ──
+  // dotScale<8 のときのみ意味を持つ (×8 は FIT が既に等倍)。
+  tglView = new UI.ToggleButton(
+    0,
+    0,
+    "1:1",
+    (v) => {
+      viewMode = v ? "1to1" : "fit";
+    },
+    viewMode === "1to1",
+  );
+  tglView.tooltip =
+    "1:1 inspect: drag the preview to pan; use the corner navigator to jump.";
 
   // ── 書き出し: 形式 (PNG/GIF/MP4) ──
   const formats = availableFormats();
@@ -2769,11 +3194,20 @@ function buildToolbar() {
     "Export format: PNG = still, GIF = loop (any browser), MP4 = loop (SNS)";
 
   // ── 額縁マット (PAD): base から上下左右対称に削る描画領域の余白。書き出し込み ──
-  nbPad = new UI.NumberBox(0, 0, MARGIN_MIN, MARGIN_MAX, outerMargin, 1, (v) => {
-    outerMargin = v; // 描画領域 = base - 2*PAD。各辺 PAD px の対称マット
-    applySize(); // 描画領域が変わるので取り直して再生成
-  });
-  nbPad.tooltip = "Frame matte: symmetric margin, trims the drawing area (in export too)";
+  nbPad = new UI.NumberBox(
+    0,
+    0,
+    MARGIN_MIN,
+    MARGIN_MAX,
+    outerMargin,
+    MARGIN_STEP,
+    (v) => {
+      outerMargin = v; // 出力px の額縁。base 上は ÷dotScale で対称マット
+      applySize(); // 描画領域が変わるので取り直して再生成
+    },
+  );
+  nbPad.tooltip =
+    "Frame matte in output px (constant across dot scales); trims the drawing area";
 
   // PC へ書き出す = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
   btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
@@ -2786,30 +3220,105 @@ function buildToolbar() {
   });
   btnFile.tooltip = "Save as PBM to the SYNESTA disk (VFS)";
 
-  // ── レイアウト (3 行。出力解像度はフッターに表示) ──
+  // ── コンソール型レイアウト ──
   const lblAlgo = new UI.Label(0, 0, "ALGO:");
   const lblStyle = new UI.Label(0, 0, "STYLE:");
   const lblRender = new UI.Label(0, 0, "AS:");
   const lblEdge = new UI.Label(0, 0, "EDGE:");
   const lblOut = new UI.Label(0, 0, "OUT:");
+  const lblDot = new UI.Label(0, 0, "DOT:");
   const lblPad = new UI.Label(0, 0, "PAD:");
   const lblFps = new UI.Label(0, 0, "FPS:");
-  // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
-  //   + 方式ごとの専用パラメータ (DITHER/GAP/PITCH/CELL/LEVELS/LINES) を出す
-  const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
+  // 大項目 (セクション見出し) は反転バンド、小項目 (フィールド名) は素のラベル。
+  const lblOutput = new UI.SectionLabel(0, 0, "OUTPUT");
+
+  // ── デッキ型レイアウト: 上=操作デッキ (CREATE|GENERATE|OUTPUT の3列) / 下=PREVIEW。
+  // 各列は見出し帯 + ラベル付き行の縦積み。操作対象はキャンバス寸法から独立した
+  // 固定位置に並ぶため、OUT プリセットを変えても操作中の DropBox が動かない。
+  // ── 近接 (Proximity): ラベルは中身に密着 (内側 HBox=既定 gap)。
+  const pair = (...items) => UI.HBox(items);
+  // ── 整列 (Alignment): 列内のラベル幅を最大に揃え、コントロール開始 x を一致させる。
+  const alignCol = (labels) => {
+    const w = Math.max(...labels.map((l) => l.w));
+    labels.forEach((l) => (l.w = w));
+  };
+
+  bandPreview = new UI.SectionLabel(0, 0, "PREVIEW"); // 全幅帯 (draw 時に描画)
+
+  // CREATE 列: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS) + 方式パラメータ
+  bandCreate = new UI.SectionLabel(0, 0, "CREATE");
+  const createLabels = [lblAlgo, lblStyle, lblRender];
+  const createRows = [
+    pair(lblAlgo, ddAlgo),
+    pair(lblStyle, ddPreset),
+    pair(lblRender, ddRender),
+  ];
   const mp = modeParamItems();
-  if (mp) row1Items.push(new UI.Label(0, 0, mp.label), mp.widget);
-  const row1 = UI.HBox(row1Items);
-  // 2行目: 生成 (seed + transport) + REACT/BZ なら EDGE、アニメ算法なら FPS
-  const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
-  if (algoSupportsEdge()) row2Items.push(lblEdge, ddEdge);
-  if (isAnimated()) row2Items.push(lblFps, ddFps);
-  const row2 = UI.HBox(row2Items);
-  // 3行目: 出力外寸 (OUT) + 額縁 PAD + 書き出し (形式 + DOWNLOAD/SAVE)
-  const row3 = UI.HBox([lblOut, ddSize, lblPad, nbPad, ddFormat, btnSave, btnFile]);
-  toolbarRoot = UI.VBox([row1, row2, row3]);
-  toolbar = new UI.WidgetGroup(toolbarRoot);
-  toolbarH = toolbarRoot.y + toolbarRoot.h;
+  if (mp) {
+    const lblMp = new UI.Label(0, 0, mp.label);
+    createLabels.push(lblMp);
+    createRows.push(pair(lblMp, mp.widget));
+  }
+  alignCol(createLabels);
+  createGroup = new UI.WidgetGroup(UI.VBox([bandCreate, ...createRows]));
+  createSize = createGroup.measure();
+
+  // GENERATE 列: seed 入力 (値+乱択) / 生成アクション (AUTO/GEN/INV) / EDGE / FPS
+  bandGen = new UI.SectionLabel(0, 0, "GENERATE");
+  const genLabels = [lblSeed];
+  const genRows = [
+    pair(lblSeed, nbSeed, btnDice),
+    pair(tglAuto, btnGen, tglInvert),
+  ];
+  if (algoSupportsEdge()) {
+    genLabels.push(lblEdge);
+    genRows.push(pair(lblEdge, ddEdge));
+  }
+  if (isAnimated()) {
+    genLabels.push(lblFps);
+    genRows.push(pair(lblFps, ddFps));
+  }
+  alignCol(genLabels);
+  transportGroup = new UI.WidgetGroup(UI.VBox([bandGen, ...genRows]));
+  transportSize = transportGroup.measure();
+
+  // OUTPUT 列: 書き出し設定を縦に積む。パラメータ群 ↔ 書き出し群を区切る。
+  sepOut = new UI.HSep(0, 0, 1); // 幅は measure 後に panel 幅へ伸ばす
+  const rowOut = UI.HBox([lblOut, ddSize]);
+  const rowDot = canZoom()
+    ? UI.HBox([lblDot, ddDotScale, tglView]) // 1:1 は dotScale<8 のみ
+    : UI.HBox([lblDot, ddDotScale]);
+  const rowPad = UI.HBox([lblPad, nbPad]);
+  const outputRoot = UI.VBox([
+    lblOutput, // OUTPUT 見出し帯 (SectionLabel)
+    rowOut,
+    rowDot,
+    rowPad,
+    sepOut,
+    ddFormat,
+    btnSave, // DOWNLOAD
+    btnFile, // SAVE
+  ]);
+  outputGroup = new UI.WidgetGroup(outputRoot);
+
+  // ── 値フィールドの右端をパネル幅へ揃える (#3 美しさの妥協なし) ──
+  // VBox は直下リーフ (書き出しボタン群) のみ全幅に stretch するが、ラベル+
+  // フィールドの HBox 行は主軸 stretch されないため、フィールドが固有幅のまま
+  // 右端がバラつく (OUT は広く DOT/PAD は短い)。パネル内容幅 (= 全幅ボタン群が
+  // 決める VBox 自然幅) から逆算してフィールドを伸ばし、OUT/DOT/PAD と書き出し
+  // ボタン群の右端、および各ドロップダウンの ▼ を一直線に揃える。
+  const panelW = outputRoot.w; // sepOut=1 の今は全幅ボタン群が決める自然幅
+  sepOut.w = panelW; // 区切り線もパネル内容幅ちょうど (margin を二重に足さない)
+  const fillField = (row, label, field, ...rest) => {
+    const restW = rest.reduce((s, w) => s + w.w + row.gap, 0);
+    field.w = panelW - label.w - row.gap - restW;
+  };
+  fillField(rowOut, lblOut, ddSize);
+  fillField(rowPad, lblPad, nbPad);
+  if (canZoom()) fillField(rowDot, lblDot, ddDotScale, tglView);
+  else fillField(rowDot, lblDot, ddDotScale);
+
+  outputSize = outputGroup.measure();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2821,19 +3330,137 @@ function buildToolbar() {
 // 間隔だけ調整)。表示・書き出しとも、この合成バッファ (0=背景/マット, 1=前景)
 // を経由するので、額縁は画面にも書き出しファイルにも等しく反映される。
 
-// プレビュー/合成キャンバス寸法 = base (出力 = base × OUTPUT_SCALE)。
-// DOT/ASCII とも同じ base に合成するので外寸が完全一致する。
+// プレビュー/合成キャンバス寸法 = 出力 ÷ PREVIEW_SCALE (dotScale 非依存の一定値)。
+// dotScale=8 では base と一致 → 1:1 完全一致。細かい倍率では base をここへ NN 縮小。
 function canvasDispW() {
-  return baseW;
+  return Math.round(outW / PREVIEW_SCALE);
 }
 function canvasDispH() {
-  return baseH;
+  return Math.round(outH / PREVIEW_SCALE);
+}
+
+// ── 1:1 インスペクト: ジオメトリ & ヘルパ ──
+
+/**
+ * 1:1 が意味を持つか。base (=出力÷dotScale) > プレビュー窓 (=出力÷8) ⟺ dotScale<8。
+ * baseW は applySize 後に確定する一方 buildToolbar はそれ以前にも走るため、ここでは
+ * 確定済みの dotScale で判定する (stale な baseW に依存しない)。
+ */
+function canZoom() {
+  return dotScale < PREVIEW_SCALE;
+}
+function maxPanX() {
+  return Math.max(0, baseW - canvasDispW());
+}
+function maxPanY() {
+  return Math.max(0, baseH - canvasDispH());
+}
+function clampPan() {
+  panX = Math.max(0, Math.min(maxPanX(), panX | 0));
+  panY = Math.max(0, Math.min(maxPanY(), panY | 0));
+}
+
+/** ナビゲータ サムネ寸法 (全体アートのアスペクト保持、長辺 NAV_MAX) */
+function navSize() {
+  if (baseW >= baseH)
+    return { w: NAV_MAX, h: Math.max(1, Math.round((NAV_MAX * baseH) / baseW)) };
+  return { w: Math.max(1, Math.round((NAV_MAX * baseW) / baseH)), h: NAV_MAX };
+}
+
+// ── デッキ型ゾーンの座標 (content 原点基準のローカル座標) ──
+// 上=操作デッキ (CREATE|GENERATE|OUTPUT の3列, 左アンカー上揃え) / 下=PREVIEW。
+// 操作デッキはキャンバス寸法に依存しない固定位置なので、OUT プリセット変更で
+// 操作中の DropBox が動かない。draw・input・measure で共有し一貫性を担保する。
+const ZONE_GAP = 3; // 帯⇄コントロール・ゾーン間の縦余白
+const DECK_GAP = 12; // デッキ内の列間 (近接: 列どうしを明確に離す)
+function zones() {
+  const m = UI.FOCUS_MARGIN;
+  const cw = canvasDispW() + 2, // 額縁枠込み
+    ch = canvasDispH() + 2;
+  const canvasZoneH = ch + 5; // 進捗バー (barH=3 + 余白) の余地
+  const previewBandH = bandPreview.h;
+
+  // 操作デッキ: 3列を左から並べる (左アンカー → 不動)。上揃え。
+  const colCreateX = m;
+  const colGenX = colCreateX + createSize.w + DECK_GAP;
+  const colOutX = colGenX + transportSize.w + DECK_GAP;
+  const deckW = colOutX + outputSize.w - m; // m 基準の内容幅
+  const deckTop = m;
+  const deckH = Math.max(createSize.h, transportSize.h, outputSize.h);
+
+  // ウィンドウ内幅 = デッキ幅とキャンバス幅の広い方。
+  const innerW = Math.max(deckW, cw);
+  const contentW = innerW + 2 * m;
+
+  // PREVIEW: デッキの下。帯は全幅、キャンバスは中央寄せ (動いても操作に無関係)。
+  const previewBandY = deckTop + deckH + ZONE_GAP;
+  const canvasTop = previewBandY + previewBandH + ZONE_GAP;
+  const canvasX = m + (((innerW - cw) / 2) | 0);
+  const contentH = canvasTop + canvasZoneH + m;
+  return {
+    colCreateX, colGenX, colOutX, deckTop, deckH,
+    previewBandY, canvasTop, canvasX, cw, ch, innerW, contentW, contentH,
+  };
+}
+
+/**
+ * セクション見出し帯を全幅で描く。SectionLabel の反転描画を流用し、幅だけ
+ * 与えられた w (= contentW) に伸ばす。帯は非対話なので入力ルーティングには絡めない。
+ */
+function drawBand(band, x, y, w) {
+  band.x = 0;
+  band.y = 0;
+  band.w = w; // 反転塗りを全幅へ (テキストは padX で左寄せ)
+  band.draw({ x, y });
+}
+
+/** プレビュー枠のローカル矩形 (content 原点基準。onInput の localX/Y と同座標系) */
+function previewLocalRect() {
+  const z = zones();
+  return { x: z.canvasX + 1, y: z.canvasTop + 1, w: canvasDispW(), h: canvasDispH() };
+}
+
+/** ナビゲータのローカル矩形 (プレビュー右下に inset 3 で重ねる) */
+function navLocalRect() {
+  const pr = previewLocalRect();
+  const ns = navSize();
+  const inset = 3;
+  return {
+    x: pr.x + pr.w - ns.w - inset,
+    y: pr.y + pr.h - ns.h - inset,
+    w: ns.w,
+    h: ns.h,
+  };
+}
+
+function inRect(x, y, r) {
+  return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+/** ナビゲータ上の (tx,ty) を中心にビューポートを移動する */
+function navJumpTo(tx, ty) {
+  const ns = navSize();
+  panX = Math.round((tx / ns.w) * baseW - canvasDispW() / 2);
+  panY = Math.round((ty / ns.h) * baseH - canvasDispH() / 2);
+  clampPan();
+}
+
+/** src(sw×sh) から (x0,y0) 起点の dw×dh 矩形を切り出す (1:1 クロップ) */
+function cropBuffer(src, sw, sh, x0, y0, dw, dh) {
+  const out = new Uint8Array(dw * dh);
+  for (let y = 0; y < dh; y++) {
+    const sy = y0 + y;
+    if (sy < 0 || sy >= sh) continue;
+    const s = sy * sw + x0;
+    out.set(src.subarray(s, s + dw), y * dw);
+  }
+  return out;
 }
 
 /**
  * ASCII グリフを 1 軸に均一ピッチで中央寄せ配置する位置列を返す (scale 倍)。
  * 文字数 n は base (scale 1) で確定。配置はスケール先で行うので、書き出しの
- * ×OUTPUT_SCALE では余りが必ず偶数になり、外側マージンが左右上下で厳密一致する。
+ * ×dotScale (偶数倍率) では余りが必ず偶数になり、外側マージンが左右上下で厳密一致する。
  * 均一ピッチなので中央に継ぎ目 (シーム) を作らない (4 象限分割バグの修正)。
  *
  * @returns {{ n:number, pos:number[], margin:number }}
@@ -2865,13 +3492,14 @@ function composeDotBuffer(src) {
 
 /**
  * ASCII グリフを base×scale のバッファに均一ピッチ中央寄せでラスタライズ。
- * scale=1 はプレビュー、scale=OUTPUT_SCALE は書き出し (×8 で厳密対称)。
+ * scale=1 はプレビュー、scale=dotScale は書き出し (偶数倍率で厳密対称)。
  * lines 省略時は現在の aaLines (録画では各フレームの行を渡す)。
  */
 function composeAsciiBuffer(scale = 1, lines = aaLines) {
   lines = lines || [];
-  const lx = asciiLayout(baseW, outerMargin, GLYPH_W, charSpacing, scale);
-  const ly = asciiLayout(baseH, outerMargin, GLYPH_H, charSpacing, scale);
+  const bp = basePad();
+  const lx = asciiLayout(baseW, bp, GLYPH_W, charSpacing, scale);
+  const ly = asciiLayout(baseH, bp, GLYPH_H, charSpacing, scale);
   const W = baseW * scale,
     H = baseH * scale;
   const out = new Uint8Array(W * H);
@@ -2899,15 +3527,87 @@ function composeAsciiBuffer(scale = 1, lines = aaLines) {
   return { buf: out, w: W, h: H };
 }
 
-/** プレビュー用: base サイズの 1bit バッファ (0=背景, 1=前景) */
-function composeCanvas() {
+/** 1bit バッファを NN で dw×dh へ縮小/拡大する (ナビゲータ サムネ用) */
+function resampleNN(src, sw, sh, dw, dh) {
+  const out = new Uint8Array(dw * dh);
+  for (let y = 0; y < dh; y++) {
+    const sy = ((y * sh) / dh) | 0;
+    const sRow = sy * sw;
+    const dRow = y * dw;
+    for (let x = 0; x < dw; x++) {
+      out[dRow + x] = src[sRow + (((x * sw) / dw) | 0)];
+    }
+  }
+  return out;
+}
+
+/**
+ * 1bit バッファを dw×dh へ「面積平均 → 再ディザ」で縮小する (プレビュー本体用)。
+ * ディザ済み 1bit を NN 点標本で縮小すると bayer の位相に固定されて二値化し、
+ * 細かい倍率で「ベタ塗り」に化ける。ブロック平均でトーンを復元してから縮小先の
+ * 解像度で再ディザすれば、トーン忠実で全倍率で見た目が一致する (構図不変なので
+ * プレビューも倍率に依らず同じに見えるのが正しい)。
+ */
+function resampleArea(src, sw, sh, dw, dh) {
+  const out = new Uint8Array(dw * dh);
+  for (let y = 0; y < dh; y++) {
+    const sy0 = ((y * sh) / dh) | 0;
+    const sy1 = Math.max(sy0 + 1, (((y + 1) * sh) / dh) | 0);
+    for (let x = 0; x < dw; x++) {
+      const sx0 = ((x * sw) / dw) | 0;
+      const sx1 = Math.max(sx0 + 1, (((x + 1) * sw) / dw) | 0);
+      let sum = 0,
+        cnt = 0;
+      for (let yy = sy0; yy < sy1; yy++) {
+        const row = yy * sw;
+        for (let xx = sx0; xx < sx1; xx++) {
+          sum += src[row + xx];
+          cnt++;
+        }
+      }
+      out[y * dw + x] = bayerDither(x, y, sum / cnt);
+    }
+  }
+  return out;
+}
+
+/** アルゴリズム出力を base (=合成解像度) の 1bit バッファに合成 */
+function renderBase() {
   return renderMode === "ascii"
     ? composeAsciiBuffer(1)
     : composeDotBuffer(artBuf);
 }
 
 /**
- * 録画フレーム捕捉。DOT は base 合成バッファ (encode 時に整数 ×OUTPUT_SCALE)、
+ * プレビュー用: 一定のプレビュー寸法 (canvasDispW/H) の 1bit バッファと、合成元の
+ * base バッファ (ナビゲータ描画用) を返す。
+ *   FIT  : base をプレビュー寸法へ面積平均+再ディザで縮小 (dotScale=8 は無加工)。
+ *   1:1  : base から (panX,panY) 起点でプレビュー寸法ぶんをクロップ (等倍)。
+ */
+function composeCanvas() {
+  const base = renderBase();
+  const pw = canvasDispW(),
+    ph = canvasDispH();
+  if (viewMode === "1to1" && canZoom()) {
+    clampPan();
+    return {
+      buf: cropBuffer(base.buf, base.w, base.h, panX, panY, pw, ph),
+      w: pw,
+      h: ph,
+      base,
+    };
+  }
+  if (base.w === pw && base.h === ph) return { buf: base.buf, w: pw, h: ph, base };
+  // DOT 系はトーン忠実な面積平均+再ディザ。ASCII はグリフを潰さないよう NN。
+  const down =
+    renderMode === "ascii"
+      ? resampleNN(base.buf, base.w, base.h, pw, ph)
+      : resampleArea(base.buf, base.w, base.h, pw, ph);
+  return { buf: down, w: pw, h: ph, base };
+}
+
+/**
+ * 録画フレーム捕捉。DOT は base 合成バッファ (encode 時に整数 ×dotScale)、
  * ASCII は各フレームの aaLines をコピー (encode 時に出力解像度でラスタライズ
  * → ×8 で厳密対称)。
  */
@@ -2969,20 +3669,52 @@ function onDraw(contentRect) {
     }
   }
 
-  toolbar.draw(contentRect);
+  // ── デッキ型レイアウトを描画 ──
+  const z = zones();
+  const cox = contentRect.x,
+    coy = contentRect.y;
+  // 操作デッキ: 3列を左から並べる (各列の先頭に列見出し帯。上揃え)。
+  createGroup.draw({ x: cox + z.colCreateX, y: coy + z.deckTop });
+  transportGroup.draw({ x: cox + z.colGenX, y: coy + z.deckTop });
+  outputGroup.draw({ x: cox + z.colOutX, y: coy + z.deckTop });
+  // PREVIEW: 全幅の見出し帯 + 中央寄せキャンバス
+  drawBand(bandPreview, cox, coy + z.previewBandY, z.contentW);
 
   // 額縁付きキャンバスを合成 (マット + 内容)。表示も書き出しも同じ合成を通す。
-  const { buf, w: cw, h: ch } = composeCanvas();
+  const zoom = viewMode === "1to1" && canZoom();
+  const { buf, w: cw, h: ch, base } = composeCanvas();
 
-  // キャンバスの左端をツールバー (FOCUS_MARGIN 起点) に揃える。
-  const ax = contentRect.x + UI.FOCUS_MARGIN;
-  const cy0 = contentRect.y + toolbarH + CANVAS_GAP;
+  // キャンバスは PREVIEW 帯の下、中央寄せ。
+  const ax = cox + z.canvasX;
+  const cy0 = coy + z.canvasTop;
   const cx = ax + 1,
     cy = cy0 + 1;
   GPU.drawRect(ax, cy0, cw + 2, ch + 2, 1); // 枠線 (額縁の縁)
   GPU.fillRect(cx, cy, cw, ch, 0); // 背景 + マット
   GPU.blit(buf, cw, ch, cx, cy, 1); // 前景 (内容)
   if (invertMode) GPU.invertRect(cx, cy, cw, ch);
+
+  // ── 1:1 ナビゲータ: 全体サムネ + 可視範囲の矩形 (右下に重ねる) ──
+  if (zoom && base) {
+    const ns = navSize();
+    const inset = 3;
+    const nx = cx + cw - ns.w - inset,
+      ny = cy + ch - ns.h - inset;
+    GPU.fillRect(nx - 1, ny - 1, ns.w + 2, ns.h + 2, 0); // 背景
+    GPU.drawRect(nx - 1, ny - 1, ns.w + 2, ns.h + 2, 1); // 枠
+    const thumb = resampleNN(base.buf, base.w, base.h, ns.w, ns.h);
+    GPU.blit(thumb, ns.w, ns.h, nx, ny, 1);
+    if (invertMode) GPU.invertRect(nx, ny, ns.w, ns.h);
+    // 可視範囲の矩形 (下地に依らず見えるよう invert で 1px 枠)
+    const rx = nx + Math.round((panX / baseW) * ns.w);
+    const ry = ny + Math.round((panY / baseH) * ns.h);
+    const rw = Math.max(2, Math.round((cw / baseW) * ns.w));
+    const rh = Math.max(2, Math.round((ch / baseH) * ns.h));
+    GPU.invertRect(rx, ry, rw, 1);
+    GPU.invertRect(rx, ry + rh - 1, rw, 1);
+    GPU.invertRect(rx, ry, 1, rh);
+    GPU.invertRect(rx + rw - 1, ry, 1, rh);
+  }
 
   if (generating) {
     const barW = cw + 2,
@@ -2995,7 +3727,7 @@ function onDraw(contentRect) {
     if (filled > 0) GPU.fillRect(barX + 1, barY + 1, filled, barH - 2, 1);
   }
 
-  if (autoMode && !generating) {
+  if (autoMode && !generating && !zoom) {
     const secs = ((AUTO_INTERVAL - autoTimer) / 60).toFixed(1);
     const txt = `NEXT: ${secs}s`;
     const tw = textWidth(txt);
@@ -3008,27 +3740,62 @@ function onDraw(contentRect) {
 }
 
 function onInput(ev) {
-  toolbar.update(ev);
+  // ── デッキ別ルーティング (各列は (0,0) でレイアウト済み → 描画オフセットを引く) ──
+  // デッキ領域 (PREVIEW 帯より上) では x で列を判定して該当列へ委譲する。
+  const z = zones();
+  if (ev.localY < z.previewBandY) {
+    if (ev.localX < z.colGenX) {
+      createGroup.update({ ...ev, localX: ev.localX - z.colCreateX, localY: ev.localY - z.deckTop });
+    } else if (ev.localX < z.colOutX) {
+      transportGroup.update({ ...ev, localX: ev.localX - z.colGenX, localY: ev.localY - z.deckTop });
+    } else {
+      outputGroup.update({ ...ev, localX: ev.localX - z.colOutX, localY: ev.localY - z.deckTop });
+    }
+  }
+
+  // ── 1:1 インスペクト: 画面ゾーンを本体ドラッグでパン / ナビゲータでジャンプ ──
+  if (viewMode !== "1to1" || !canZoom()) {
+    panDragging = navDragging = false;
+    return;
+  }
+  const pr = previewLocalRect();
+  const nr = navLocalRect();
+  if (ev.type === "down") {
+    if (inRect(ev.localX, ev.localY, nr)) {
+      navDragging = true; // ナビゲータが手前 (プレビュー内に重なる)
+      navJumpTo(ev.localX - nr.x, ev.localY - nr.y);
+    } else if (inRect(ev.localX, ev.localY, pr)) {
+      panDragging = true;
+      dragDownX = ev.localX;
+      dragDownY = ev.localY;
+      panStartX = panX;
+      panStartY = panY;
+    }
+  } else if (ev.type === "held") {
+    if (navDragging) {
+      navJumpTo(ev.localX - nr.x, ev.localY - nr.y);
+    } else if (panDragging) {
+      // 掴んで動かす操作: ドラッグ方向と逆にビューポートが動く
+      panX = panStartX - (ev.localX - dragDownX);
+      panY = panStartY - (ev.localY - dragDownY);
+      clampPan();
+    }
+  } else if (ev.type === "up") {
+    panDragging = navDragging = false;
+  }
 }
 
 function onMeasure() {
-  const tbSize = toolbar.measure();
-  return {
-    w: Math.max(tbSize.w, UI.FOCUS_MARGIN + canvasDispW() + 2),
-    h: toolbarH + CANVAS_GAP + canvasDispH() + 2 + 6,
-  };
+  const z = zones();
+  return { w: z.contentW, h: z.contentH };
 }
 
 function onDrawFooter(footerRect) {
   drawText(footerRect.x, footerRect.y, statusText, 1);
-  // 右側: プレビュー base 寸法 → 出力解像度 (base ×OUTPUT_SCALE)。常時表示。
+  // 右側: アート解像度 (base) × DOT 倍率 → 出力解像度。常時表示。
   const key = currentFormatKey();
-  const cw = canvasDispW(),
-    ch = canvasDispH();
-  const outW = cw * OUTPUT_SCALE,
-    outH = ch * OUTPUT_SCALE;
   const fmt = key.toUpperCase();
-  const info = `${cw}x${ch} ->${fmt} ${outW}x${outH}`;
+  const info = `${baseW}x${baseH} x${dotScale} ->${fmt} ${outW}x${outH}`;
   const rw = textWidth(info);
   drawText(footerRect.x + footerRect.w - rw, footerRect.y, info, 1);
 }
@@ -3044,10 +3811,14 @@ function onBeforeClose() {
   autoMode = false;
   autoTimer = 0;
   currentOutIdx = 0; // 1920x1080
-  baseW = OUTPUT_PRESETS[0].baseW;
-  baseH = OUTPUT_PRESETS[0].baseH;
+  outW = OUTPUT_PRESETS[0].outW;
+  outH = OUTPUT_PRESETS[0].outH;
+  dotScale = 8;
+  viewMode = "fit";
+  panX = panY = 0;
+  panDragging = navDragging = false;
   renderMode = "dot";
-  outerMargin = 8;
+  outerMargin = 64;
   charSpacing = 1;
   setDitherSize(2);
   hatchPitch = 4;
@@ -3063,7 +3834,9 @@ function onBeforeClose() {
   videoFormat = "gif";
   videoEncoding = false;
   exportFormatIdx = 0; // PNG
-  resizeArt(baseW - 2 * outerMargin, baseH - 2 * outerMargin);
+  baseW = Math.round(outW / dotScale);
+  baseH = Math.round(outH / dotScale);
+  resizeArt(baseW - 2 * basePad(), baseH - 2 * basePad());
   fieldBuf = null;
   rdU = rdV = rdNU = rdNV = null;
   vorPoints = null;
@@ -3102,13 +3875,11 @@ wmRegister(
       onDrawFooter,
       onBeforeClose,
       onRelayout: () => {
-        toolbar.remeasureAll();
-        toolbarRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
+        buildToolbar(); // フォント変更時: 3 グループを現在の寸法で組み直す
       },
     });
-    startGeneration();
+    applySize(); // base/アート寸法を outW・dotScale・PAD から確定して生成
     return id;
   },
   { category: "CREATIVE" },
 );
-
