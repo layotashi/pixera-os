@@ -14,14 +14,12 @@
  *   width()  -> number
  *   height() -> number
  *   present()                         // 1フレームを確定（フラッシュ）
- *   blitField(buf, w, h)              // Float[0..1] の場を 1-bit へディザして表示
- *   // ── Tier1 描画命令（後段） ──
+ *   blitField(buf, w, h)              // 値の場を表示へ（このサーフェスは 0..1 → 1-bit ディザ）
+ *   // ── 描画命令（Tier1。Processing 流の命名） ──
  *   clear(level=0)
- *   ink(level)                        // 以降の描画インク 0..1
- *   pset(x, y[, level])
+ *   stroke(level)                     // 以降の point/line の描画値 0..1
+ *   point(x, y[, level])
  *   line(x0, y0, x1, y1)
- *   rect(x, y, w, h, fill=false)
- *   circle(x, y, r, fill=false)
  */
 
 /**

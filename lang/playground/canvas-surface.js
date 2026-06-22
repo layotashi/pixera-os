@@ -28,7 +28,7 @@ export function makeCanvasSurface(canvas, W, H, scale, fg, bg) {
   const offCtx = off.getContext("2d");
   const img = offCtx.createImageData(W, H);
   const fb = new Uint8Array(W * H); // 1-bit フレームバッファ
-  let inkLevel = 1;
+  let strokeLevel = 1;
 
   function flush() {
     const d = img.data;
@@ -62,10 +62,10 @@ export function makeCanvasSurface(canvas, W, H, scale, fg, bg) {
     clear(level = 0) {
       fb.fill(level >= 0.5 ? 1 : 0);
     },
-    ink(level) {
-      inkLevel = level;
+    stroke(level) {
+      strokeLevel = level;
     },
-    pset(x, y, level = inkLevel) {
+    point(x, y, level = strokeLevel) {
       if (inb(x, y)) fb[idx(x, y)] = level >= 0.5 ? 1 : 0;
     },
     line(x0, y0, x1, y1) {
@@ -80,7 +80,7 @@ export function makeCanvasSurface(canvas, W, H, scale, fg, bg) {
         sy = y0 < y1 ? 1 : -1;
       let err = dx + dy;
       for (;;) {
-        if (inb(x0, y0)) fb[idx(x0, y0)] = inkLevel >= 0.5 ? 1 : 0;
+        if (inb(x0, y0)) fb[idx(x0, y0)] = strokeLevel >= 0.5 ? 1 : 0;
         if (x0 === x1 && y0 === y1) break;
         const e2 = 2 * err;
         if (e2 >= dy) {

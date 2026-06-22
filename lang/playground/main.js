@@ -135,6 +135,6 @@ editor.addEventListener("keydown", (e) => {
   }
 });
 
-editor.value = "wave(x*8 - t) * wave(y*8 + t*1.3)";
+editor.value = "sin(x*8 - t) * cos(y*8 + t*1.3) * 0.5 + 0.5";
 compile();
 requestAnimationFrame(frame);

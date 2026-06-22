@@ -65,14 +65,6 @@ function check(name, cond) {
   check("unknown function error", caught instanceof LangError);
 }
 
-// 5a2) wave は [0,1]（オフセット不要）
-{
-  check("wave(0) = 0.5", approx(compileField("wave(0)").sample(0, 0, 0), 0.5));
-  check(
-    "wave(PI/2) = 1",
-    approx(compileField("wave(PI/2)").sample(0, 0, 0), 1, 1e-9),
-  );
-}
 // 5a3) f(x,y,t) = 式 のヘッダを読み飛ばせる
 {
   check(
@@ -91,7 +83,7 @@ function check(name, cond) {
 }
 // 5a5) 取捨：削った関数は未知としてエラー
 {
-  for (const name of ["pow", "hypot", "tan", "exp", "log", "round"]) {
+  for (const name of ["pow", "hypot", "tan", "exp", "log", "round", "wave"]) {
     let caught = null;
     try {
       compileField(`${name}(1)`).sample(0, 0, 0);
@@ -158,21 +150,21 @@ function check(name, cond) {
     width: () => 100,
     height: () => 100,
     clear: (l) => cmds.push(["clear", l]),
-    ink: (v) => cmds.push(["ink", v]),
-    pset: (x, y) => cmds.push(["pset", x, y]),
+    stroke: (v) => cmds.push(["stroke", v]),
+    point: (x, y) => cmds.push(["point", x, y]),
     line: (...a) => cmds.push(["line", ...a]),
     present: () => cmds.push(["present"]),
   };
-  const prog = compile("draw {\n clear\n repeat 3 as i {\n dot(i*0.1, 0.5)\n }\n}");
+  const prog = compile("draw {\n clear\n repeat 3 as i {\n point(i*0.1, 0.5)\n }\n}");
   check("compile detects draw shape", prog.kind === "draw");
   check("bare expression is field shape", compile("sin(x)").kind === "field");
   prog.render(surf, 0, 0);
-  const psets = cmds.filter((c) => c[0] === "pset");
+  const pts = cmds.filter((c) => c[0] === "point");
   check("draw: clear issued first", cmds[0][0] === "clear");
-  check("draw: repeat ran 3 dots", psets.length === 3);
+  check("draw: repeat ran 3 points", pts.length === 3);
   check(
-    "draw: dot maps [0,1]→px",
-    psets[0][1] === 0 && psets[0][2] === 50 && psets[1][1] === 10,
+    "draw: point maps [0,1]→px",
+    pts[0][1] === 0 && pts[0][2] === 50 && pts[1][1] === 10,
   );
   check("draw: present at end", cmds[cmds.length - 1][0] === "present");
 }

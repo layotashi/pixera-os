@@ -116,12 +116,12 @@ function execCmd(s, env, surface) {
     case "clear":
       surface.clear(a.length ? a[0] : 0);
       return;
-    case "ink":
-      surface.ink(a.length ? a[0] : 1);
+    case "stroke":
+      surface.stroke(a.length ? a[0] : 1);
       return;
-    case "dot":
-      if (a.length < 2) throw new LangError(`dot(x, y) は引数2つ`, s.pos);
-      surface.pset(px(a[0]), py(a[1]));
+    case "point":
+      if (a.length < 2) throw new LangError(`point(x, y) は引数2つ`, s.pos);
+      surface.point(px(a[0]), py(a[1]));
       return;
     case "line":
       if (a.length < 4) throw new LangError(`line(x0,y0,x1,y1) は引数4つ`, s.pos);
