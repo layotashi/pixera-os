@@ -17,7 +17,7 @@
  * 共有モジュール core/art_export.js（旧 GENART の compose/encode を抽出・一般化）。
  *
  * 設定はすべてコードの設定ディレクティブで宣言する（recipe 自己完結）:
- *   size: WxH / pixel: N / pad: N / fps: N / seed: N / loop: 秒 / view: mode(args)
+ *   canvas: WxH / pixel: N / pad: N / fps: N / seed: N / loop: 秒 / view: mode(args)
  * 画面のコントロールは「書き出し形式 + DL」のみ＝最小。SEED/方式/出力/pixel/pad/fps の
  * ウィジェットは廃止した（旧 GENART/初期 TESSERA の名残）。プレビューは size のアスペクト比を反映。
  *
@@ -67,7 +67,7 @@ const PV_CELLS_CAP = 120; // cells の art 評価上限px（毎フレーム step
 const GAP = 8; // エディタ⇄プレビュー間
 
 /** 起動時 / 新規の既定スケッチ。設定ディレクティブの雛形を兼ね、書き方を示す。 */
-const DEFAULT_CODE = `size: 1080x1080
+const DEFAULT_CODE = `canvas: 1080x1080
 pixel: 8
 pad: 0
 fps: 20
@@ -142,7 +142,7 @@ view: halftone(8)
 // of 100 (5/10/20/25/50/100) so GIF
 // frame timing is exact. footer shows
 // the effective values.
-size: 1080x1080
+canvas: 1080x1080
 pixel: 8
 fps: 20
 seed: 0
@@ -215,7 +215,7 @@ field {
 // 作品(GALLERY)は全ディレクティブを冒頭に明示する（調整時に一覧を調べずその場で直せる）。
 // お決まり順 = キャンバス(size/pixel/pad) → 時間(fps/loop) → seed → view。値は既定どおり
 // なので見た目は不変＝「全ノブが見えて編集できる」状態にするだけ。draw は線画で view 非適用。
-const HEADER = `size: 1080x1080
+const HEADER = `canvas: 1080x1080
 pixel: 8
 pad: 0
 fps: 20
@@ -224,7 +224,7 @@ seed: 0
 view: dither(2)
 
 `;
-const HEADER_DRAW = `size: 1080x1080
+const HEADER_DRAW = `canvas: 1080x1080
 pixel: 8
 pad: 0
 fps: 20
@@ -437,9 +437,9 @@ const nearest = (v, arr) => arr.reduce((a, b) => (Math.abs(b - v) < Math.abs(a -
 /** program.config（生の宣言値）を既定値・範囲とともに解決した実効設定にする。 */
 function resolvedConfig() {
   const c = (program && program.config) || {};
-  const size = c.size || {};
-  const sizeW = clampI(size.w ?? DEFAULTS.sizeW, 16, 4096);
-  const sizeH = clampI(size.h ?? DEFAULTS.sizeH, 16, 4096);
+  const canvas = c.canvas || {};
+  const sizeW = clampI(canvas.w ?? DEFAULTS.sizeW, 16, 4096);
+  const sizeH = clampI(canvas.h ?? DEFAULTS.sizeH, 16, 4096);
   const pixel = nearest(c.pixel ?? DEFAULTS.pixel, PIXEL_SIZES);
   const fps = nearest(c.fps ?? DEFAULTS.fps, FPS_OPTIONS);
   const seed = clampI(c.seed ?? DEFAULTS.seed, 0, 999999);
@@ -1194,7 +1194,7 @@ WM.wmRegister(
         "the left, watch it render on the right. Bare expressions are fields " +
         "f(x,y,t); draw {} is procedural; field {} is a stateful cellular " +
         "field (init/step/show). All settings live in code as directives: " +
-        "size: WxH, pixel: N, pad: N, fps: N, seed: N, loop: sec, view: mode(args). " +
+        "canvas: WxH, pixel: N, pad: N, fps: N, seed: N, loop: sec, view: mode(args). " +
         "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
         "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +

@@ -161,7 +161,7 @@ export function format(src) {
         break;
       default: // NUM / ID / COMMENT
         sb = !(prev === "LP" || prev === "UNARYOP" || prev === "OP_TIGHT");
-        // `size: 1920x1080` は NUM(1920)+ID("x1080") に字句化される。高さ ID は
+        // `canvas: 1920x1080` は NUM(1920)+ID("x1080") に字句化される。高さ ID は
         // 直前の NUM へ密着させ `1920x1080` の見た目を保つ（式中で NUM+ID は構文上現れない）。
         if (ty === "ID" && prev === "NUM" && /^x\d/.test(tk.value)) sb = false;
     }

@@ -452,22 +452,22 @@ export function parse(src) {
 }
 
 /** トップレベル・ディレクティブ名（`name: value` 形式。本体の前後どこでも・各1個）。 */
-const DIRECTIVE_NAMES = new Set(["view", "size", "pixel", "pad", "fps", "seed", "loop"]);
+const DIRECTIVE_NAMES = new Set(["view", "canvas", "pixel", "pad", "fps", "seed", "loop"]);
 
 /**
  * トップレベル（brace 深さ 0）の設定ディレクティブを抽出する。
  * Tessera は 1-bit 表示・出力サイズ・乱数まで**コードで宣言**できる（recipe 自己完結）。
  *   - `view: <mode>(<numbers>)` … 表示方式と数値パラメータ
- *   - `size: <W>x<H>`（または `<W> <H>`） … 出力外寸
+ *   - `canvas: <W>x<H>`（または `<W> <H>`） … 出力解像度（外寸px）
  *   - `pixel: <N>` / `pad: <N>` / `fps: <N>` / `seed: <N>` / `loop: <秒>` … スカラー設定
  *     （`pixel` = 1 アートピクセルの物理px ＝ 粗さ。`view: dither(...)` の DITHER 方式とは別物。
  *      `loop` = アニメの周期秒。プレビューは t を [0,loop) で周回し GIF/MP4 もシームレスループ）
  * コアはこれらを**不透明なデータ**として持つだけ（既定値・範囲クランプ・適用はホスト責務）。
  * `field{}` の channel 構文（`u: {…}`）はブレース内（depth>0）なので衝突しない。
- * @returns {{ config: object, rest: object[] }} config={view,size,pixel,pad,fps,seed,loop}（未指定は null）
+ * @returns {{ config: object, rest: object[] }} config={view,canvas,pixel,pad,fps,seed,loop}（未指定は null）
  */
 function extractDirectives(toks) {
-  const config = { view: null, size: null, pixel: null, pad: null, fps: null, seed: null, loop: null };
+  const config = { view: null, canvas: null, pixel: null, pad: null, fps: null, seed: null, loop: null };
   const consumed = new Set();
   let depth = 0;
   for (let i = 0; i < toks.length; i++) {
@@ -505,11 +505,11 @@ function extractDirectives(toks) {
         throw new LangError(`view: ')' が必要です`, modeTk.pos);
       j++;
       config.view = { mode: modeTk.value, args };
-    } else if (name === "size") {
+    } else if (name === "canvas") {
       // `1920x1080` は NUM(1920)+ID("x1080") に字句化される。`1920 1080` も許す。
       const w = toks[j];
       if (!w || w.type !== "NUM")
-        throw new LangError(`size: は 幅 高さ（例 1920x1080）`, colonPos);
+        throw new LangError(`canvas: は 幅 高さ（例 1920x1080）`, colonPos);
       j++;
       const nx = toks[j];
       let h;
@@ -520,9 +520,9 @@ function extractDirectives(toks) {
         h = nx.value;
         j++;
       } else {
-        throw new LangError(`size: 高さが必要です（例 1920x1080 / 1920 1080）`, w.pos);
+        throw new LangError(`canvas: 高さが必要です（例 1920x1080 / 1920 1080）`, w.pos);
       }
-      config.size = { w: w.value, h };
+      config.canvas = { w: w.value, h };
     } else {
       // pixel / pad / fps / seed / loop: 定数式（数値 / pi / tau / 2*pi 等）。
       // SEP までを式とみなし、本体へ食い込まないよう EOF 付きスライスで解析→定数評価。

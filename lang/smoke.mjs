@@ -409,11 +409,11 @@ function check(name, cond) {
 {
   const cfg = (src) => compile(src).config;
 
-  // size: WxH（NUM + "xNNN" ID に字句化される）／ W H（2 数値）
-  const c1 = cfg("size: 1920x1080\nsin(x)");
-  check("size: WxH 解釈", c1.size && c1.size.w === 1920 && c1.size.h === 1080);
-  const c2 = cfg("size: 800 600\nsin(x)");
-  check("size: W H 解釈", c2.size && c2.size.w === 800 && c2.size.h === 600);
+  // canvas: WxH（NUM + "xNNN" ID に字句化される）／ W H（2 数値）
+  const c1 = cfg("canvas: 1920x1080\nsin(x)");
+  check("canvas: WxH 解釈", c1.canvas && c1.canvas.w === 1920 && c1.canvas.h === 1080);
+  const c2 = cfg("canvas: 800 600\nsin(x)");
+  check("canvas: W H 解釈", c2.canvas && c2.canvas.w === 800 && c2.canvas.h === 600);
 
   // スカラー: pixel / pad / fps / seed / loop
   const c3 = cfg("pixel: 4\npad: 32\nfps: 25\nseed: 7\nsin(x)");
@@ -433,11 +433,11 @@ function check(name, cond) {
 
   // 未指定は null
   const c4 = cfg("sin(x)");
-  check("未指定は null", c4.size === null && c4.pixel === null && c4.seed === null && c4.loop === null);
+  check("未指定は null", c4.canvas === null && c4.pixel === null && c4.seed === null && c4.loop === null);
 
   // view と併用・本体は通る／ディレクティブは本体から除去される
-  const p5 = compile("size: 1024x1024\npixel: 8\nview: contour(6)\nworley(x*5, y*5)");
-  check("size+pixel+view 併用", p5.config.size.w === 1024 && p5.config.pixel === 8 && p5.config.view.mode === "contour");
+  const p5 = compile("canvas: 1024x1024\npixel: 8\nview: contour(6)\nworley(x*5, y*5)");
+  check("canvas+pixel+view 併用", p5.config.canvas.w === 1024 && p5.config.pixel === 8 && p5.config.view.mode === "contour");
   check("ディレクティブ除去後も式は評価できる", Number.isFinite(p5.sample(0.3, 0.3, 0)));
 
   // field{} 内の channel 構文（u:）はディレクティブと衝突しない
@@ -450,7 +450,7 @@ function check(name, cond) {
 
   // エラー
   for (const [src, label] of [
-    ["size: 1920\nsin(x)", "size 高さ欠落"],
+    ["canvas: 1920\nsin(x)", "canvas 高さ欠落"],
     ["pixel: x\nsin(x)", "pixel 非数値"],
   ]) {
     let caught = null;

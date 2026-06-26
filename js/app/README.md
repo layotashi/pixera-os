@@ -338,9 +338,9 @@ SYNESTA 唯一の generative-art アプリ。1-bit 前提の小言語 **Tessera*
 **できること:**
 
 - Tier0 場 `f(x,y,t)` / 値ブロック、Tier1 `draw{}`、Tier2 状態場 `field{}`（反応拡散・CA）。
-- **設定はすべてコードの設定ディレクティブ**で宣言: `size:` `pixel:` `pad:` `fps:` `seed:` `view:`。
+- **設定はすべてコードの設定ディレクティブ**で宣言: `canvas:` `pixel:` `pad:` `fps:` `seed:` `loop:` `view:`。
   表示方式（dither/ascii/hatch/halftone/braille ＝ 1-bit で映える「面」系）は `view:` で指定。画面のコントロールは
-  「書き出し形式 + DL」のみ＝最小。プレビューは `size:` のアスペクト比を反映。
+  「書き出し形式 + DL」のみ＝最小。プレビューは `canvas:` のアスペクト比を反映。
 - 出力: コード宣言の `size` ちょうどに PNG・GIF・MP4 を書き出し（Ctrl+E / DL）。合成・符号化は共有
   `core/art_export.js`、場 → 1-bit は `core/field_render.js` / `core/ascii_art.js`。
 - ショートカット: Ctrl+E 書き出し / Ctrl+R シード振り直し（`seed:` をコード内で更新）/ Shift+Alt+F 整形 /
