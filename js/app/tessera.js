@@ -235,17 +235,28 @@ seed: 0
 
 const GALLERY_SAMPLES = [
   {
-    // WAVE: 複数点源の同心波の干渉
+    // WAVE: 複数点源の同心波の干渉。seed で点源位置と周波数が変わる
     file: "wave" + EXT,
-    src: HEADER + `(sin(dist(x, y, 0.3, 0.4)*40 - t*2)
- + sin(dist(x, y, 0.7, 0.65)*40 - t*2)) * 0.25 + 0.5`,
+    src: HEADER + `cx0 = 0.2 + rnd(1, 0)*0.6
+cy0 = 0.2 + rnd(2, 0)*0.6
+cx1 = 0.2 + rnd(3, 0)*0.6
+cy1 = 0.2 + rnd(4, 0)*0.6
+f = 30 + rnd(5, 0)*24
+(sin(dist(x, y, cx0, cy0)*f - t*2)
+ + sin(dist(x, y, cx1, cy1)*f - t*2)) * 0.25 + 0.5`,
   },
   {
-    // PLASMA: sin/cos 多重干渉プラズマ
+    // PLASMA: sin/cos 多重干渉プラズマ。seed で位相・周波数・源が変わる
     file: "plasma" + EXT,
-    src: HEADER + `(sin(x*8 + t) + sin(y*8 - t)
- + sin((x + y)*6 + t)
- + sin(dist(x, y, 0.5, 0.5)*12 - t)) * 0.125 + 0.5`,
+    src: HEADER + `p1 = rnd(1, 0)*TAU
+p2 = rnd(2, 0)*TAU
+p3 = rnd(3, 0)*TAU
+cx = 0.3 + rnd(4, 0)*0.4
+cy = 0.3 + rnd(5, 0)*0.4
+fa = 6 + rnd(6, 0)*6
+(sin(x*fa + t + p1) + sin(y*fa - t + p2)
+ + sin((x + y)*6 + t + p3)
+ + sin(dist(x, y, cx, cy)*12 - t)) * 0.125 + 0.5`,
   },
   {
     // DRIFT: fbm 密度場。標本点が円運動し雲のように漂う
@@ -253,39 +264,61 @@ const GALLERY_SAMPLES = [
     src: HEADER + `fbm(x*4 + sin(t)*0.3, y*4 + cos(t)*0.3, 4)`,
   },
   {
-    // GRID: 市松テッセレーション（ゆっくり漂う）
+    // GRID: 市松テッセレーション（ゆっくり漂う）。seed で格子数とずれが変わる
     file: "grid" + EXT,
-    src: HEADER + `step(0.5, mod(floor(x*8 + sin(t)*2) + floor(y*8 + cos(t)*2), 2))`,
+    src: HEADER + `n = 4 + floor(rnd(1, 0)*9)
+ox = rnd(2, 0)*4
+oy = rnd(3, 0)*4
+step(0.5, mod(floor(x*n + ox + sin(t)*2) + floor(y*n + oy + cos(t)*2), 2))`,
   },
   {
-    // MOIRE: わずかに角度のずれた 2 枚の同周波グレーティングの積（うなり）
+    // MOIRE: わずかに角度のずれた 2 枚の同周波グレーティングの積（うなり）。
+    // seed で周波数・基準角・ずれ角が変わる
     file: "moire" + EXT,
-    src: HEADER + `sin((x*cos(t) + y*sin(t))*18)
- * sin((x*cos(t + 0.2) + y*sin(t + 0.2))*18) * 0.5 + 0.5`,
+    src: HEADER + `f = 14 + rnd(1, 0)*14
+a0 = rnd(2, 0)*TAU
+da = 0.1 + rnd(3, 0)*0.22
+sin((x*cos(t + a0) + y*sin(t + a0))*f)
+ * sin((x*cos(t + a0 + da) + y*sin(t + a0 + da))*f) * 0.5 + 0.5`,
   },
   {
-    // CAUSTIC: 進行波の和を尾根化し鋭く累乗 → 水面の光の網目
+    // CAUSTIC: 進行波の和を尾根化し鋭く累乗 → 水面の光の網目。
+    // seed で 3 波の周波数と位相が変わる
     file: "caustic" + EXT,
-    src: HEADER + `s = (sin(x*22 + t*2) + sin(y*20 - t*2) + sin((x + y)*16 + t)) / 3
+    src: HEADER + `f1 = 16 + rnd(1, 0)*12
+f2 = 16 + rnd(2, 0)*12
+f3 = 12 + rnd(3, 0)*10
+p1 = rnd(4, 0)*TAU
+p2 = rnd(5, 0)*TAU
+p3 = rnd(6, 0)*TAU
+s = (sin(x*f1 + t*2 + p1) + sin(y*f2 - t*2 + p2) + sin((x + y)*f3 + t + p3)) / 3
 (1 - abs(s)) ^ 4`,
   },
   {
-    // QUASIC: 等角に並べた N 枚平面波の和 → 準結晶（5 回対称）
+    // QUASIC: 等角に並べた N 枚平面波の和 → 準結晶。
+    // seed で対称数 N(5..8)・回転・周波数が変わる
     file: "quasic" + EXT,
-    src: HEADER + `s = 0
-repeat 5 as k {
-  a = k * (TAU / 5)
-  s = s + cos(((x - 0.5)*cos(a) + (y - 0.5)*sin(a))*30 + t)
+    src: HEADER + `n = 5 + floor(rnd(1, 0)*4)
+r = rnd(2, 0)*TAU
+f = 22 + rnd(3, 0)*18
+s = 0
+repeat n as k {
+  a = k * (TAU / n) + r
+  s = s + cos(((x - 0.5)*cos(a) + (y - 0.5)*sin(a))*f + t)
 }
-s / 5 * 0.5 + 0.5`,
+s / n * 0.5 + 0.5`,
   },
   {
-    // JULIA: z <- z*z + c の脱出時間（値ブロックで反復）。c が円運動し形態変化
+    // JULIA: z <- z*z + c の脱出時間（値ブロックで反復）。c が円運動し形態変化。
+    // seed で c の中心と円運動半径が変わる＝別の Julia 集合（樹枝/兎/渦…）が出る
     file: "julia" + EXT,
-    src: HEADER + `zr = (x - 0.5)*3
+    src: HEADER + `ccx = -0.75 + rnd(1, 0)*0.7
+ccy = -0.3 + rnd(2, 0)*0.6
+rad = 0.12 + rnd(3, 0)*0.16
+zr = (x - 0.5)*3
 zi = (y - 0.5)*3
-cr = cos(t)*0.2 - 0.6
-ci = sin(t)*0.2
+cr = cos(t)*rad + ccx
+ci = sin(t)*rad + ccy
 m = 0
 repeat 24 {
   zt = clamp(zr*zr - zi*zi + cr, -4, 4)
@@ -362,7 +395,8 @@ draw {
 }`,
   },
   {
-    // BZ: 励起性媒質。対称性を破る初期値かららせん波 / ターゲット波
+    // BZ: 励起性媒質。対称性を破る初期値かららせん波 / ターゲット波。
+    // seed で初期フロント位置とノイズが変わる＝別の渦/波が育つ
     file: "bz" + EXT,
     src: HEADER + `field {
   Du = 0.18
@@ -370,11 +404,11 @@ draw {
   a1 = 0.6
   dt = 0.5
   u: {
-    init: step(0.5, x)*2 - 1
+    init: step(rnd(1, 0)*0.5 + 0.25, x)*2 - 1
     step: clamp(u + Du*lap() + dt*(u - u*u*u - v), -2, 2)
   }
   v: {
-    init: step(0.5, y)*0.6 - 0.3
+    init: step(rnd(2, 0)*0.5 + 0.25, y)*0.6 - 0.3 + (rnd(x*16, y*16) - 0.5)*0.2
     step: clamp(v + dt*eps*(u - a1*v), -2, 2)
   }
   show: smoothstep(-0.4, 0.6, u)
