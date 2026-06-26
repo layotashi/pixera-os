@@ -10,7 +10,7 @@
  */
 
 import { parse, parseProgram } from "./core/parser.js";
-import { evalNode, execDraw } from "./core/interp.js";
+import { compileExpr, compileDraw } from "./core/interp.js";
 import { setSeed } from "./stdlib.js";
 
 /**
@@ -25,6 +25,7 @@ export function compileField(src) {
 
 /** 既に解析済みの式 AST から場 runner を作る（compile が view 抽出後に使う）。 */
 function compileFieldAst(ast) {
+  const exprFn = compileExpr(ast); // AST を 1 度だけクロージャ化（per-pixel を高速に）
   const env = { vars: { x: 0, y: 0, t: 0, seed: 0 } };
 
   function sample(x, y, t = 0, seed = 0) {
@@ -33,7 +34,7 @@ function compileFieldAst(ast) {
     env.vars.y = y;
     env.vars.t = t;
     env.vars.seed = seed;
-    return evalNode(ast, env);
+    return exprFn(env);
   }
 
   function render(surface, t = 0, seed = 0) {
@@ -72,6 +73,12 @@ function compileCells(prog) {
   const chans = prog.channels; // [{ name, init, step }]
   const consts = prog.consts || [];
   const N = chans.length;
+  // AST を 1 度だけクロージャ化（per-cell × チャンネルの評価を高速に）。
+  const constFns = consts.map((c) => ({ name: c.name, fn: compileExpr(c.expr) }));
+  const chanNames = chans.map((c) => c.name);
+  const initFns = chans.map((c) => compileExpr(c.init));
+  const stepFns = chans.map((c) => compileExpr(c.step));
+  const showFn = compileExpr(prog.show);
 
   let W = 0,
     H = 0,
@@ -89,7 +96,8 @@ function compileCells(prog) {
 
   /** 定数をフレーム単位で評価（後の定数は前の定数を参照可）→ env.vars へマージ用 */
   function evalConsts(vars) {
-    for (const c of consts) vars[c.name] = evalNode(c.expr, { vars });
+    const env = { vars };
+    for (const c of constFns) vars[c.name] = c.fn(env);
     return vars;
   }
 
@@ -102,8 +110,7 @@ function compileCells(prog) {
         const idx = yy * W + xx;
         env.vars.x = W > 1 ? xx / (W - 1) : 0;
         env.vars.y = ny;
-        for (let ci = 0; ci < N; ci++)
-          curr[ci][idx] = evalNode(chans[ci].init, env);
+        for (let ci = 0; ci < N; ci++) curr[ci][idx] = initFns[ci](env);
       }
     }
     inited = true;
@@ -146,11 +153,11 @@ function compileCells(prog) {
         env.vars.x = W > 1 ? xx / (W - 1) : 0;
         env.vars.y = ny;
         // 全チャンネルの現在値を env へ（同期更新：step は旧 curr のみ参照）
-        for (let ci = 0; ci < N; ci++) env.vars[chans[ci].name] = curr[ci][idx];
+        for (let ci = 0; ci < N; ci++) env.vars[chanNames[ci]] = curr[ci][idx];
         for (let ci = 0; ci < N; ci++) {
           curBuf = curr[ci];
           curS = curBuf[idx];
-          next[ci][idx] = evalNode(chans[ci].step, env);
+          next[ci][idx] = stepFns[ci](env);
         }
       }
     }
@@ -179,8 +186,8 @@ function compileCells(prog) {
         const idx = yy * W + xx;
         env.vars.x = W > 1 ? xx / (W - 1) : 0;
         env.vars.y = ny;
-        for (let ci = 0; ci < N; ci++) env.vars[chans[ci].name] = curr[ci][idx];
-        out[idx] = evalNode(prog.show, env);
+        for (let ci = 0; ci < N; ci++) env.vars[chanNames[ci]] = curr[ci][idx];
+        out[idx] = showFn(env);
       }
     }
     surface.blitField(out, W, H);
@@ -207,13 +214,14 @@ export function compile(src) {
   const view = prog.view || null;
   const config = prog.config;
   if (prog.kind === "draw") {
+    const run = compileDraw(prog.body); // AST を 1 度だけクロージャ化
     return {
       kind: "draw",
       view,
       config,
       render(surface, t = 0, seed = 0) {
         setSeed(seed);
-        execDraw(prog.body, surface, t, seed);
+        run(surface, t, seed);
         surface.present();
       },
     };
