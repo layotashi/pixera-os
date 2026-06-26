@@ -1,342 +1,182 @@
 /**
  * @module lang/core/interp
- * interp.js — AST を評価する小さなインタプリタ。
+ * interp.js — AST を JS ソースへ変換し `new Function` でネイティブ化するコンパイラ。
  *
- * 変数 (x/y/t/seed 等) は env.vars で渡す。定数・関数は stdlib から解決。
- * Tier0 は副作用なしの純式。将来 Tier1/2 で文・状態を足す際もここを拡張する。
+ * 変数 (x/y/t/seed・チャンネル値・定数) は env.vars、場の近傍 (nbr/lap/sum8) は
+ * env.funcs で渡す。stdlib の純関数・定数はコンパイル時に解決する。
+ *
+ * 設計: ツリー走査インタプリタを廃し、式は JS の式へ、repeat は実 for ループへ、
+ * 変数はローカル変数（オブジェクト経由のハッシュ参照を排除）へ落とす。V8 が JIT し、
+ * 走査評価の数十倍速い（julia 等の重い値ブロックが実用域に）。評価対象は常に
+ * ユーザ自身が書いた .tess ソース＝外部入力は無く、`new Function` の利用は安全。
  */
 
 import { LangError } from "./lexer.js";
 import { CONSTS, FUNCS } from "../stdlib.js";
 
-function applyBin(op, a, b, pos) {
-  switch (op) {
-    case "+":
-      return a + b;
-    case "-":
-      return a - b;
-    case "*":
-      return a * b;
-    case "/":
-      return a / b;
-    case "%":
-      return ((a % b) + b) % b;
-    case "^":
-      return Math.pow(a, b);
-    default:
-      throw new LangError(`未知の演算子 '${op}'`, pos);
+/** repeat の暴走防止上限（1フレームの反復総数）。 */
+const REPEAT_CAP = 2_000_000;
+
+// ━━ 生成コードへ渡すランタイムヘルパ ━━
+const fmod = (a, b) => ((a % b) + b) % b; // `%` は床剰余（負も周回）
+function unknownName(name, pos) {
+  throw new LangError(`未知の名前 '${name}'`, pos);
+}
+function unknownFunc(name, pos) {
+  throw new LangError(`未知の関数 '${name}'`, pos);
+}
+
+let _uid = 0; // 生成コード内の一時名を一意化（ループカウンタ等）
+const q = (s) => JSON.stringify(s); // 文字列リテラルを安全に埋め込む
+const jsNum = (v) => (v < 0 ? `(${v})` : `${v}`); // 負数は隣接演算子との結合を避け括弧で包む
+
+/**
+ * ブロック内（同一フラットスコープ）で代入される名前を集める。
+ * repeat 本体は同スコープなので潜るが、ネストした値ブロックは別スコープなので潜らない。
+ */
+function blockAssigns(stmts, set = new Set()) {
+  for (const s of stmts) {
+    if (s.t === "assign") set.add(s.name);
+    else if (s.t === "repeat") {
+      if (s.idx) set.add(s.idx);
+      blockAssigns(s.body, set);
+    }
   }
+  return set;
 }
 
 /**
- * @param {object} node  AST
- * @param {{vars: Record<string, number>}} env
- * @returns {number}
+ * 式 AST → JS ソース文字列。
+ * @param {object} node
+ * @param {Set<string>[]} scopes  内側ほど後方の、代入済み名スコープ
+ * @param {Map<string,number>} free  自由変数（読むが代入しない）→ 初出 pos を蓄積
  */
-export function evalNode(node, env) {
+function genExpr(node, scopes, free) {
   switch (node.t) {
     case "num":
-      return node.v;
-    case "var":
-      if (node.name in env.vars) return env.vars[node.name];
-      if (node.name in CONSTS) return CONSTS[node.name];
-      throw new LangError(`未知の名前 '${node.name}'`, node.pos);
-    case "unary":
-      return -evalNode(node.a, env);
-    case "bin":
-      return applyBin(
-        node.op,
-        evalNode(node.a, env),
-        evalNode(node.b, env),
-        node.pos,
-      );
-    case "call": {
-      // env.funcs（場の近傍プリミティブ lap/nbr/sum8 等、現在セルに束縛）を
-      // stdlib より優先して解決する。stdlib は純関数のまま保つ。
-      const fn = (env.funcs && env.funcs[node.name]) || FUNCS[node.name];
-      if (!fn) throw new LangError(`未知の関数 '${node.name}'`, node.pos);
-      const args = node.args.map((a) => evalNode(a, env));
-      return fn(...args);
+      return jsNum(node.v);
+    case "var": {
+      const name = node.name;
+      for (let i = scopes.length - 1; i >= 0; i--)
+        if (scopes[i].has(name)) return `_${name}`; // ローカル（いずれかのブロックが代入）
+      if (!free.has(name)) free.set(name, node.pos); // 自由変数（env / 定数から解決）
+      return `_${name}`;
     }
-    case "fieldblock":
-      // Tier0 値ブロック: 代入/repeat の文を実行（cmd は無い＝surface 不要）してから
-      // 最終の値式を返す。セル毎の反復・総和（julia / quasic / metaball 等）に使う。
-      execStmts(node.stmts, env, null);
-      return evalNode(node.value, env);
+    case "unary":
+      return `(-${genExpr(node.a, scopes, free)})`;
+    case "bin": {
+      const a = genExpr(node.a, scopes, free),
+        b = genExpr(node.b, scopes, free);
+      if (node.op === "^") return `Math.pow(${a},${b})`;
+      if (node.op === "%") return `M(${a},${b})`;
+      return `(${a}${node.op}${b})`;
+    }
+    case "call": {
+      const args = node.args.map((x) => genExpr(x, scopes, free)).join(",");
+      // stdlib 関数はコンパイル時に F へ束縛。近傍 (nbr/lap/sum8) のみ env.funcs 経由。
+      if (FUNCS[node.name]) return `F[${q(node.name)}](${args})`;
+      return `(env.funcs&&env.funcs[${q(node.name)}]||UF(${q(node.name)},${node.pos}))(${args})`;
+    }
+    case "fieldblock": {
+      // 値ブロック: 代入/repeat を実行してから最終値を返す。IIFE で独自スコープを作る。
+      const assigned = blockAssigns(node.stmts);
+      scopes.push(assigned);
+      let decls = "";
+      for (const name of assigned) decls += `let _${name}=env.vars[${q(name)}];`;
+      let body = "";
+      for (const s of node.stmts) body += genStmt(s, scopes, free);
+      const val = genExpr(node.value, scopes, free);
+      scopes.pop();
+      return `(()=>{${decls}${body}return ${val};})()`;
+    }
     default:
       throw new LangError(`未知のノード '${node.t}'`, 0);
   }
 }
 
-// ━━ 描画モード（Tier1）: 文・コマンドの実行 ━━
-
-/** repeat の暴走防止上限（1フレームの反復総数）。 */
-const REPEAT_CAP = 2_000_000;
-
-/**
- * draw ブロックを実行し、surface に描画命令を発行する。
- * 変数は 1 つのスコープ (env.vars) を共有（repeat 本体も同じスコープ）。
- * @param {object[]} body  文の配列
- * @param {object} surface サーフェス契約
- * @param {number} t  時間（秒）
- * @param {number} seed
- */
-export function execDraw(body, surface, t = 0, seed = 0) {
-  const env = { vars: { t, seed } };
-  execStmts(body, env, surface);
-}
-
-function execStmts(stmts, env, surface) {
-  for (const s of stmts) execStmt(s, env, surface);
-}
-
-function execStmt(s, env, surface) {
+/** 文 AST → JS ソース文字列（assign / repeat / cmd）。 */
+function genStmt(s, scopes, free) {
   switch (s.t) {
     case "assign":
-      env.vars[s.name] = evalNode(s.expr, env);
-      return;
+      return `_${s.name}=${genExpr(s.expr, scopes, free)};`;
     case "repeat": {
-      let n = evalNode(s.count, env) | 0;
-      if (n < 0) n = 0;
-      if (n > REPEAT_CAP) n = REPEAT_CAP;
-      for (let k = 0; k < n; k++) {
-        if (s.idx) env.vars[s.idx] = k;
-        execStmts(s.body, env, surface);
-      }
-      return;
+      const cnt = genExpr(s.count, scopes, free);
+      const ctr = `__i${_uid++}`;
+      const setIdx = s.idx ? `_${s.idx}=${ctr};` : ""; // 走査と同じく末尾で n-1 を残す
+      let body = "";
+      for (const st of s.body) body += genStmt(st, scopes, free);
+      return (
+        `{let __n=(${cnt})|0;if(__n<0)__n=0;else if(__n>${REPEAT_CAP})__n=${REPEAT_CAP};` +
+        `for(let ${ctr}=0;${ctr}<__n;${ctr}++){${setIdx}${body}}}`
+      );
     }
     case "cmd":
-      execCmd(s, env, surface);
-      return;
+      return genCmd(s, scopes, free);
     default:
       throw new LangError(`未知の文 '${s.t}'`, s.pos ?? 0);
   }
 }
 
-function execCmd(s, env, surface) {
-  const a = s.args.map((x) => evalNode(x, env));
-  const W = surface.width();
-  const H = surface.height();
-  const px = (v) => Math.round(v * W); // [0,1] → ピクセル
-  const py = (v) => Math.round(v * H);
+/** 描画コマンド AST → JS ソース文字列（surface 呼び出し）。引数数は生成時に検査。 */
+function genCmd(s, scopes, free) {
+  const a = s.args.map((x) => genExpr(x, scopes, free));
   switch (s.name) {
     case "clear":
-      surface.clear(a.length ? a[0] : 0);
-      return;
+      return `surface.clear(${a.length ? a[0] : 0});`;
     case "stroke":
-      surface.stroke(a.length ? a[0] : 1);
-      return;
+      return `surface.stroke(${a.length ? a[0] : 1});`;
     case "point":
       if (a.length < 2) throw new LangError(`point(x, y) は引数2つ`, s.pos);
-      surface.point(px(a[0]), py(a[1]));
-      return;
+      return `surface.point(Math.round((${a[0]})*W),Math.round((${a[1]})*H));`;
     case "line":
       if (a.length < 4) throw new LangError(`line(x0,y0,x1,y1) は引数4つ`, s.pos);
-      surface.line(px(a[0]), py(a[1]), px(a[2]), py(a[3]));
-      return;
+      return `surface.line(Math.round((${a[0]})*W),Math.round((${a[1]})*H),Math.round((${a[2]})*W),Math.round((${a[3]})*H));`;
     default:
       throw new LangError(`未知のコマンド '${s.name}'`, s.pos);
   }
 }
 
-// ━━ コンパイル（AST → クロージャ）━━
-// 評価毎の switch 分岐／プロパティ参照を排し、子ノードのクロージャを 1 度だけ束ねる。
-// per-pixel / per-cell の評価が桁違いに速くなる（julia 等の重い式が実用域に）。
+/** 自由変数 1 つの宣言（env.vars 優先。定数 pi/tau は既定値、未束縛は評価時に投げる）。 */
+function freeDecl(name, pos) {
+  const k = q(name);
+  if (name in CONSTS)
+    return `const _${name}=(env.vars[${k}]!==undefined?env.vars[${k}]:${CONSTS[name]});`;
+  return `const _${name}=(env.vars[${k}]!==undefined?env.vars[${k}]:UN(${k},${pos}));`;
+}
 
-/** 式 AST を `(env) => number` にコンパイルする。 */
+/**
+ * 式 AST を `(env) => number` にコンパイルする（JS ソース → new Function）。
+ * env.vars が入力（x/y/t/seed・チャンネル・定数）、env.funcs が近傍プリミティブ。
+ */
 export function compileExpr(node) {
-  switch (node.t) {
-    case "num": {
-      const v = node.v;
-      return () => v;
-    }
-    case "var": {
-      const name = node.name,
-        pos = node.pos;
-      // 値は常に number ⇒ env.vars[name] が undefined なら「未束縛」。`in` を避けて高速化。
-      if (name in CONSTS) {
-        // pi/tau: 既定は定数。ただし同名代入があれば env.vars が優先（シャドウ可）。
-        const cv = CONSTS[name];
-        return (env) => {
-          const v = env.vars[name];
-          return v !== undefined ? v : cv;
-        };
-      }
-      return (env) => {
-        const v = env.vars[name];
-        if (v !== undefined) return v;
-        throw new LangError(`未知の名前 '${name}'`, pos);
-      };
-    }
-    case "unary": {
-      const a = compileExpr(node.a);
-      return (env) => -a(env);
-    }
-    case "bin": {
-      const a = compileExpr(node.a),
-        b = compileExpr(node.b);
-      switch (node.op) {
-        case "+":
-          return (env) => a(env) + b(env);
-        case "-":
-          return (env) => a(env) - b(env);
-        case "*":
-          return (env) => a(env) * b(env);
-        case "/":
-          return (env) => a(env) / b(env);
-        case "%":
-          return (env) => {
-            const x = a(env),
-              y = b(env);
-            return ((x % y) + y) % y;
-          };
-        case "^":
-          return (env) => Math.pow(a(env), b(env));
-        default:
-          throw new LangError(`未知の演算子 '${node.op}'`, node.pos);
-      }
-    }
-    case "call": {
-      const name = node.name,
-        pos = node.pos,
-        argFns = node.args.map(compileExpr),
-        n = argFns.length;
-      // stdlib 関数 (sin/cos/clamp/…) はコンパイル時に束縛＝毎回の解決を排す。
-      // 場の近傍 (nbr/lap/sum8) のみ env.funcs 経由（実行時にセルへ束縛）で解決する。
-      const staticFn = FUNCS[name];
-      if (staticFn) {
-        switch (n) {
-          case 0:
-            return () => staticFn();
-          case 1: {
-            const a0 = argFns[0];
-            return (env) => staticFn(a0(env));
-          }
-          case 2: {
-            const a0 = argFns[0],
-              a1 = argFns[1];
-            return (env) => staticFn(a0(env), a1(env));
-          }
-          case 3: {
-            const a0 = argFns[0],
-              a1 = argFns[1],
-              a2 = argFns[2];
-            return (env) => staticFn(a0(env), a1(env), a2(env));
-          }
-          case 4: {
-            const a0 = argFns[0],
-              a1 = argFns[1],
-              a2 = argFns[2],
-              a3 = argFns[3];
-            return (env) => staticFn(a0(env), a1(env), a2(env), a3(env));
-          }
-          default:
-            return (env) => {
-              const a = new Array(n);
-              for (let i = 0; i < n; i++) a[i] = argFns[i](env);
-              return staticFn(...a);
-            };
-        }
-      }
-      // 近傍プリミティブ等: 実行時に env.funcs から解決（未知なら評価時に投げる）。
-      return (env) => {
-        const fn = env.funcs && env.funcs[name];
-        if (!fn) throw new LangError(`未知の関数 '${name}'`, pos);
-        const a = new Array(n);
-        for (let i = 0; i < n; i++) a[i] = argFns[i](env);
-        return fn(...a);
-      };
-    }
-    case "fieldblock": {
-      const stmtsFn = compileStmts(node.stmts),
-        valFn = compileExpr(node.value);
-      return (env) => {
-        stmtsFn(env, null);
-        return valFn(env);
-      };
-    }
-    default:
-      throw new LangError(`未知のノード '${node.t}'`, 0);
-  }
+  _uid = 0;
+  const free = new Map();
+  const code = genExpr(node, [], free);
+  let pre = "";
+  for (const [name, pos] of free) pre += freeDecl(name, pos);
+  // eslint-disable-next-line no-new-func
+  const fn = new Function("env", "F", "M", "UF", "UN", `${pre}return ${code};`);
+  return (env) => fn(env, FUNCS, fmod, unknownFunc, unknownName);
 }
 
-/** 文の配列を `(env, surface) => void` にコンパイルする。 */
-function compileStmts(stmts) {
-  const fns = stmts.map(compileStmt);
-  const n = fns.length;
-  return (env, surface) => {
-    for (let i = 0; i < n; i++) fns[i](env, surface);
-  };
-}
-
-function compileStmt(s) {
-  switch (s.t) {
-    case "assign": {
-      const name = s.name,
-        exprFn = compileExpr(s.expr);
-      return (env) => {
-        env.vars[name] = exprFn(env);
-      };
-    }
-    case "repeat": {
-      const countFn = compileExpr(s.count),
-        bodyFn = compileStmts(s.body),
-        idx = s.idx;
-      return (env, surface) => {
-        let n = countFn(env) | 0;
-        if (n < 0) n = 0;
-        if (n > REPEAT_CAP) n = REPEAT_CAP;
-        for (let k = 0; k < n; k++) {
-          if (idx) env.vars[idx] = k;
-          bodyFn(env, surface);
-        }
-      };
-    }
-    case "cmd":
-      return compileCmd(s);
-    default:
-      throw new LangError(`未知の文 '${s.t}'`, s.pos ?? 0);
-  }
-}
-
-function compileCmd(s) {
-  const name = s.name,
-    pos = s.pos,
-    argFns = s.args.map(compileExpr),
-    n = argFns.length;
-  return (env, surface) => {
-    const W = surface.width(),
-      H = surface.height();
-    switch (name) {
-      case "clear":
-        surface.clear(n ? argFns[0](env) : 0);
-        return;
-      case "stroke":
-        surface.stroke(n ? argFns[0](env) : 1);
-        return;
-      case "point":
-        if (n < 2) throw new LangError(`point(x, y) は引数2つ`, pos);
-        surface.point(Math.round(argFns[0](env) * W), Math.round(argFns[1](env) * H));
-        return;
-      case "line":
-        if (n < 4) throw new LangError(`line(x0,y0,x1,y1) は引数4つ`, pos);
-        surface.line(
-          Math.round(argFns[0](env) * W),
-          Math.round(argFns[1](env) * H),
-          Math.round(argFns[2](env) * W),
-          Math.round(argFns[3](env) * H),
-        );
-        return;
-      default:
-        throw new LangError(`未知のコマンド '${name}'`, pos);
-    }
-  };
-}
-
-/** draw ブロックを `(surface, t, seed) => void` にコンパイルする。 */
+/**
+ * draw ブロックを `(surface, t, seed) => void` にコンパイルする。
+ * 変数は 1 つのフラットスコープ（repeat 本体も同じ）。t/seed は自由変数。
+ */
 export function compileDraw(body) {
-  const fn = compileStmts(body);
-  return (surface, t = 0, seed = 0) => {
-    fn({ vars: { t, seed } }, surface);
-  };
+  _uid = 0;
+  const free = new Map();
+  const assigned = blockAssigns(body);
+  const scopes = [assigned];
+  let stmts = "";
+  for (const s of body) stmts += genStmt(s, scopes, free);
+  let decls = "";
+  for (const name of assigned) decls += `let _${name};`;
+  let pre = "";
+  for (const [name, pos] of free) pre += freeDecl(name, pos);
+  const code = `const W=surface.width(),H=surface.height();${pre}${decls}${stmts}`;
+  // eslint-disable-next-line no-new-func
+  const fn = new Function("env", "surface", "F", "M", "UF", "UN", code);
+  return (surface, t = 0, seed = 0) =>
+    fn({ vars: { t, seed } }, surface, FUNCS, fmod, unknownFunc, unknownName);
 }
