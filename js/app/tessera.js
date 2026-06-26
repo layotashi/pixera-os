@@ -808,12 +808,14 @@ function renderPreview(t, seed, mode, params, ascii, isCells) {
   else renderDenom = Math.ceil(maxBase / PV_BOX);
   // ASCII はグリフを拡大すると汚いので等倍表示・枠に収まる評価解像度に。
   if (ascii && displayScale > 1) displayScale = 1;
-  // cells は毎フレーム step で重い → 評価解像度の上限を更に低く。
+  // cells は毎フレーム step で重い → 評価解像度の上限を更に低く。ただし表示サイズは
+  // 他の kind と揃える（粗くレンダーした分を整数 NN で枠に収まるよう拡大）。揃えないと
+  // 同じ canvas でも cells だけプレビューが小さく見える。ascii は拡大すると汚いので等倍。
   if (isCells) {
     const minDenom = Math.ceil(maxBase / PV_CELLS_CAP);
     if (renderDenom < minDenom) {
       renderDenom = minDenom;
-      displayScale = 1;
+      displayScale = ascii ? 1 : Math.max(1, Math.floor(PV_BOX / Math.round(maxBase / renderDenom)));
     }
   }
 
