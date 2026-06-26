@@ -68,6 +68,10 @@ const GAP = 8; // エディタ⇄プレビュー間
 
 /** 起動時 / 新規の既定スケッチ。設定ディレクティブの雛形を兼ね、書き方を示す。 */
 const DEFAULT_CODE = `size: 1080x1080
+pixel: 8
+pad: 0
+fps: 20
+loop: 6.28
 seed: 0
 view: dither(2)
 
@@ -198,51 +202,67 @@ field {
   },
 ];
 
+// 作品(GALLERY)は全ディレクティブを冒頭に明示する（調整時に一覧を調べずその場で直せる）。
+// お決まり順 = キャンバス(size/pixel/pad) → 時間(fps/loop) → seed → view。値は既定どおり
+// なので見た目は不変＝「全ノブが見えて編集できる」状態にするだけ。draw は線画で view 非適用。
+const HEADER = `size: 1080x1080
+pixel: 8
+pad: 0
+fps: 20
+loop: 6.28
+seed: 0
+view: dither(2)
+
+`;
+const HEADER_DRAW = `size: 1080x1080
+pixel: 8
+pad: 0
+fps: 20
+loop: 6.28
+seed: 0
+
+`;
+
 const GALLERY_SAMPLES = [
   {
     // WAVE: 複数点源の同心波の干渉
     file: "wave" + EXT,
-    src: `view: dither(2)
-(sin(dist(x, y, 0.3, 0.4)*40 - t*2)
+    src: HEADER + `(sin(dist(x, y, 0.3, 0.4)*40 - t*2)
  + sin(dist(x, y, 0.7, 0.65)*40 - t*2)) * 0.25 + 0.5`,
   },
   {
     // PLASMA: sin/cos 多重干渉プラズマ
     file: "plasma" + EXT,
-    src: `view: dither(2)
-(sin(x*8 + t) + sin(y*8 - t)
+    src: HEADER + `(sin(x*8 + t) + sin(y*8 - t)
  + sin((x + y)*6 + t)
  + sin(dist(x, y, 0.5, 0.5)*12 - t)) * 0.125 + 0.5`,
   },
   {
     // DRIFT: fbm 密度場。標本点が円運動し雲のように漂う
     file: "drift" + EXT,
-    src: `fbm(x*4 + sin(t)*0.3, y*4 + cos(t)*0.3, 4)`,
+    src: HEADER + `fbm(x*4 + sin(t)*0.3, y*4 + cos(t)*0.3, 4)`,
   },
   {
     // GRID: 市松テッセレーション（ゆっくり漂う）
     file: "grid" + EXT,
-    src: `view: dither(2)
-step(0.5, mod(floor(x*8 + sin(t)*2) + floor(y*8 + cos(t)*2), 2))`,
+    src: HEADER + `step(0.5, mod(floor(x*8 + sin(t)*2) + floor(y*8 + cos(t)*2), 2))`,
   },
   {
     // MOIRE: わずかに角度のずれた 2 枚の同周波グレーティングの積（うなり）
     file: "moire" + EXT,
-    src: `sin((x*cos(t) + y*sin(t))*18)
+    src: HEADER + `sin((x*cos(t) + y*sin(t))*18)
  * sin((x*cos(t + 0.2) + y*sin(t + 0.2))*18) * 0.5 + 0.5`,
   },
   {
     // CAUSTIC: 進行波の和を尾根化し鋭く累乗 → 水面の光の網目
     file: "caustic" + EXT,
-    src: `view: dither(2)
-s = (sin(x*22 + t*2) + sin(y*20 - t*2) + sin((x + y)*16 + t)) / 3
+    src: HEADER + `s = (sin(x*22 + t*2) + sin(y*20 - t*2) + sin((x + y)*16 + t)) / 3
 (1 - abs(s)) ^ 4`,
   },
   {
     // QUASIC: 等角に並べた N 枚平面波の和 → 準結晶（5 回対称）
     file: "quasic" + EXT,
-    src: `view: dither(2)
-s = 0
+    src: HEADER + `s = 0
 repeat 5 as k {
   a = k * (TAU / 5)
   s = s + cos(((x - 0.5)*cos(a) + (y - 0.5)*sin(a))*30 + t)
@@ -252,8 +272,7 @@ s / 5 * 0.5 + 0.5`,
   {
     // JULIA: z <- z*z + c の脱出時間（値ブロックで反復）。c が円運動し形態変化
     file: "julia" + EXT,
-    src: `view: dither(2)
-zr = (x - 0.5)*3
+    src: HEADER + `zr = (x - 0.5)*3
 zi = (y - 0.5)*3
 cr = cos(t)*0.2 - 0.6
 ci = sin(t)*0.2
@@ -269,8 +288,7 @@ clamp(1 - m/120, 0, 1)`,
   {
     // CURL: fbm でドメインワープした正弦の縞 → 大理石 / 墨流し
     file: "curl" + EXT,
-    src: `view: dither(2)
-qx = fbm(x*3 + t*0.1, y*3, 4)
+    src: HEADER + `qx = fbm(x*3 + t*0.1, y*3, 4)
 qy = fbm(x*3 + 4.2, y*3 + 1.7, 4)
 w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
 0.5 + 0.5 * sin(x*20 + w*8 + t)`,
@@ -278,15 +296,14 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
   {
     // WORLEY: セルラーノイズ（最近傍距離）。細胞 / 石畳模様
     file: "worley" + EXT,
-    src: `view: dither(2)
-1 - worley(x*6 + sin(t*0.5)*0.5, y*6)`,
+    src: HEADER + `1 - worley(x*6 + sin(t*0.5)*0.5, y*6)`,
   },
   {
     // ATTRACT: de Jong カオス力学系。seed でガチャ・t で呼吸する点描。
     // x,y は常に [-2,2]（sin-cos）なので /4.2 で必ず枠に収まる。params の符号と
     // 大きさ[1.2,2.0]を seed 由来で振り、ctrl+R で別の形が出る。t で緩く morph。
     file: "attractor" + EXT,
-    src: `// de Jong strange attractor.
+    src: HEADER_DRAW + `// de Jong strange attractor.
 // ctrl+R rerolls the shape; it
 // slowly breathes as t advances.
 draw {
@@ -314,7 +331,7 @@ draw {
   {
     // GIERER-MEINHARDT: 活性 a / 抑制 h。斑点状チューリングパターン
     file: "gierer" + EXT,
-    src: `field {
+    src: HEADER + `field {
   Da = 0.04
   Dh = 0.25
   rate = 0.06
@@ -333,7 +350,7 @@ draw {
   {
     // BZ: 励起性媒質。対称性を破る初期値かららせん波 / ターゲット波
     file: "bz" + EXT,
-    src: `field {
+    src: HEADER + `field {
   Du = 0.18
   eps = 0.05
   a1 = 0.6
