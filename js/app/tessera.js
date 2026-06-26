@@ -137,11 +137,14 @@ view: halftone(8)
   {
     file: "07_output" + EXT,
     src: `// all output settings live in code
-// (the file IS the recipe).
-// size=pixels, pixel=chunkiness,
-// seed=randomness.
+// (the file IS the recipe). pixel =
+// chunkiness; fps snaps to a divisor
+// of 100 (5/10/20/25/50/100) so GIF
+// frame timing is exact. footer shows
+// the effective values.
 size: 1080x1080
 pixel: 8
+fps: 20
 seed: 0
 fbm(x*3, y*3, 5)`,
   },
@@ -415,8 +418,12 @@ const VIEW_PARAM = {
 // ── 出力サイズモデル（すべてコードの設定ディレクティブから。ウィジェットは廃止）──
 // 出力 = base ×pixel。base = 出力 ÷ pixel の解像度で描き、整数 ×pixel で書き出す。
 // 「1 アートピクセル = pixel 物理px」が厳密（粗さ＝チャンキーさ）。額縁 pad は出力px。
+// pixel / fps はこの離散集合へ nearest スナップ（resolvedConfig）。スナップ結果は
+// フッターに実効値として出すので「自由入力に見えて黙って丸まる」混乱を避ける。
 const PIXEL_SIZES = [8, 4, 2, 1]; // 1 アートピクセル = N 物理px（小さいほど高精細）
-const FPS_OPTIONS = [5, 10, 20, 25, 50, 100]; // GIF は 100 の約数が綺麗
+// fps は全て 100 の約数。GIF の遅延はセンチ秒(1/100s)整数なので、約数でないと
+// round(100/fps) の丸めで再生速度がズレ・ループ長も狂う（MP4 は μ秒で約数不問だが統一）。
+const FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
 const CELLS_SIM_CAP = 128; // cells のシミュ格子 長辺上限（出力解像度だと重い）
 const CELLS_WARMUP = 320; // 書き出し前に回すステップ数（模様を発展させる）
 const TAU = Math.PI * 2; // loop 既定（t を sin/cos に通す作例の 1 周期）
@@ -1123,9 +1130,10 @@ function onDrawFooter(fr) {
   }
   const rc = resolvedConfig();
   const kind = program ? program.kind.toUpperCase() : "-";
-  // 書き出し中は進捗、平常は seed。出力外寸も左に併記（書き出しサイズの可視化）。
+  // 書き出し中は進捗、平常は seed。出力外寸・実効 pixel/fps も左に併記して、
+  // ディレクティブのスナップ（pixel→[8,4,2,1] / fps→100の約数）を可視化する。
   const right = statusText || `seed ${rc.seed}`;
-  const left = `${kind}  ${rc.sizeW}x${rc.sizeH}`;
+  const left = `${kind}  ${rc.sizeW}x${rc.sizeH}  ${rc.pixel}px  ${rc.fps}fps`;
   drawText(fr.x, fr.y, left, 1);
   drawText(fr.x + fr.w - textWidth(right), fr.y, right, 1);
 }
