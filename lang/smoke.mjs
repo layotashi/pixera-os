@@ -415,13 +415,15 @@ function check(name, cond) {
   const c2 = cfg("size: 800 600\nsin(x)");
   check("size: W H 解釈", c2.size && c2.size.w === 800 && c2.size.h === 600);
 
-  // スカラー: pixel / pad / fps / seed
+  // スカラー: pixel / pad / fps / seed / loop
   const c3 = cfg("pixel: 4\npad: 32\nfps: 25\nseed: 7\nsin(x)");
   check("pixel/pad/fps/seed 解釈", c3.pixel === 4 && c3.pad === 32 && c3.fps === 25 && c3.seed === 7);
+  const cl = cfg("loop: 5\nsin(x - t)");
+  check("loop: 秒 解釈", cl.loop === 5);
 
   // 未指定は null
   const c4 = cfg("sin(x)");
-  check("未指定は null", c4.size === null && c4.pixel === null && c4.seed === null);
+  check("未指定は null", c4.size === null && c4.pixel === null && c4.seed === null && c4.loop === null);
 
   // view と併用・本体は通る／ディレクティブは本体から除去される
   const p5 = compile("size: 1024x1024\npixel: 8\nview: contour(6)\nworley(x*5, y*5)");

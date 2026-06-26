@@ -420,21 +420,22 @@ export function parse(src) {
 }
 
 /** トップレベル・ディレクティブ名（`name: value` 形式。本体の前後どこでも・各1個）。 */
-const DIRECTIVE_NAMES = new Set(["view", "size", "pixel", "pad", "fps", "seed"]);
+const DIRECTIVE_NAMES = new Set(["view", "size", "pixel", "pad", "fps", "seed", "loop"]);
 
 /**
  * トップレベル（brace 深さ 0）の設定ディレクティブを抽出する。
  * Tessera は 1-bit 表示・出力サイズ・乱数まで**コードで宣言**できる（recipe 自己完結）。
  *   - `view: <mode>(<numbers>)` … 表示方式と数値パラメータ
  *   - `size: <W>x<H>`（または `<W> <H>`） … 出力外寸
- *   - `pixel: <N>` / `pad: <N>` / `fps: <N>` / `seed: <N>` … スカラー設定
- *     （`pixel` = 1 アートピクセルの物理px ＝ 粗さ。`view: dither(...)` の DITHER 方式とは別物）
+ *   - `pixel: <N>` / `pad: <N>` / `fps: <N>` / `seed: <N>` / `loop: <秒>` … スカラー設定
+ *     （`pixel` = 1 アートピクセルの物理px ＝ 粗さ。`view: dither(...)` の DITHER 方式とは別物。
+ *      `loop` = アニメの周期秒。プレビューは t を [0,loop) で周回し GIF/MP4 もシームレスループ）
  * コアはこれらを**不透明なデータ**として持つだけ（既定値・範囲クランプ・適用はホスト責務）。
  * `field{}` の channel 構文（`u: {…}`）はブレース内（depth>0）なので衝突しない。
- * @returns {{ config: object, rest: object[] }} config={view,size,pixel,pad,fps,seed}（未指定は null）
+ * @returns {{ config: object, rest: object[] }} config={view,size,pixel,pad,fps,seed,loop}（未指定は null）
  */
 function extractDirectives(toks) {
-  const config = { view: null, size: null, pixel: null, pad: null, fps: null, seed: null };
+  const config = { view: null, size: null, pixel: null, pad: null, fps: null, seed: null, loop: null };
   const consumed = new Set();
   let depth = 0;
   for (let i = 0; i < toks.length; i++) {
@@ -491,7 +492,7 @@ function extractDirectives(toks) {
       }
       config.size = { w: w.value, h };
     } else {
-      // dot / pad / fps / seed: スカラー数値
+      // pixel / pad / fps / seed / loop: スカラー数値
       const nt = toks[j];
       if (!nt || nt.type !== "NUM")
         throw new LangError(`${name}: は数値です`, colonPos);

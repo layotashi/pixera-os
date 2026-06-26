@@ -17,7 +17,7 @@
  * 共有モジュール core/art_export.js（旧 GENART の compose/encode を抽出・一般化）。
  *
  * 設定はすべてコードの設定ディレクティブで宣言する（recipe 自己完結）:
- *   size: WxH / pixel: N / pad: N / fps: N / seed: N / view: mode(args)
+ *   size: WxH / pixel: N / pad: N / fps: N / seed: N / loop: 秒 / view: mode(args)
  * 画面のコントロールは「書き出し形式 + DL」のみ＝最小。SEED/方式/出力/pixel/pad/fps の
  * ウィジェットは廃止した（旧 GENART/初期 TESSERA の名残）。プレビューは size のアスペクト比を反映。
  *
@@ -375,12 +375,14 @@ const VIEW_PARAM = {
 // 「1 アートピクセル = pixel 物理px」が厳密（粗さ＝チャンキーさ）。額縁 pad は出力px。
 const PIXEL_SIZES = [8, 4, 2, 1]; // 1 アートピクセル = N 物理px（小さいほど高精細）
 const FPS_OPTIONS = [5, 10, 20, 25, 50, 100]; // GIF は 100 の約数が綺麗
-const LOOP_FRAMES = 60; // 動画 1 周期のフレーム数
 const CELLS_SIM_CAP = 128; // cells のシミュ格子 長辺上限（出力解像度だと重い）
 const CELLS_WARMUP = 320; // 書き出し前に回すステップ数（模様を発展させる）
-const DEFAULTS = { sizeW: 1080, sizeH: 1080, pixel: 8, pad: 0, fps: 20, seed: 0 };
+const TAU = Math.PI * 2; // loop 既定（t を sin/cos に通す作例の 1 周期）
+const LOOP_CAP_S = 30; // 動画 1 本の上限秒（loop をこの長さでクランプ）
+const DEFAULTS = { sizeW: 1080, sizeH: 1080, pixel: 8, pad: 0, fps: 20, seed: 0, loop: TAU };
 
 const clampI = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
+const clampF = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const nearest = (v, arr) => arr.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
 
 /** program.config（生の宣言値）を既定値・範囲とともに解決した実効設定にする。 */
@@ -395,7 +397,9 @@ function resolvedConfig() {
   // pad（出力px）は base 上で各辺がアート(≥4px)を潰さない範囲にクランプ。
   const padMax = Math.max(0, Math.floor((Math.min(sizeW, sizeH) / pixel - 4) / 2) * pixel);
   const pad = clampI(c.pad ?? DEFAULTS.pad, 0, padMax);
-  return { sizeW, sizeH, pixel, pad, fps, seed };
+  // loop（秒）= プレビュー周期かつ動画長。既定 tau、上限 LOOP_CAP_S。
+  const loop = clampF(c.loop ?? DEFAULTS.loop, 0.1, LOOP_CAP_S);
+  return { sizeW, sizeH, pixel, pad, fps, seed, loop };
 }
 
 /** 出力寸法を実効設定から導出（base / art / pad[base上] / pixel / fps）。 */
@@ -819,7 +823,7 @@ function exportArt() {
     params = eff.params;
   const asciiOn = mode === "ascii" && prog.kind !== "draw";
   const isCells = prog.kind === "cells";
-  const seed = resolvedConfig().seed;
+  const { seed, loop } = resolvedConfig();
 
   // cells は出力解像度だと重い → キャップ格子で warmup（模様を発展させる）。
   let sim = null,
@@ -845,17 +849,19 @@ function exportArt() {
     if (isCells) for (let i = 0; i <= CELLS_WARMUP; i++) prog.render(sim, i / fps, seed);
 
     if (key === "png") {
-      const t = isCells ? CELLS_WARMUP / fps : (performance.now() - t0) / 1000;
+      const t = isCells ? CELLS_WARMUP / fps : (performance.now() - t0) / 1000 % loop;
       const base = ArtExport.composeMatte(artAt(t, false), artW, artH, baseW, baseH);
       ArtExport.downloadPng(base, baseW, baseH, pixel, false, exportName("png"));
     } else {
-      // GIF/MP4: 1 周期 LOOP_FRAMES を集める。field は t∈[0,2π) でシームレスループ、
-      // cells は warmup 後の連続ステップ。合成 1-bit フレームを符号化器へ。
+      // GIF/MP4: loop 秒ぶん（= loop×fps フレーム、上限 LOOP_CAP_S 秒）を集める。
+      // field/draw は t∈[0,loop) を等間隔サンプル＝シームレスループ（末尾の次が t=0）。
+      // cells は周期がないので warmup 後の連続ステップ（loop 秒の発展クリップ）。
+      const loopFrames = clampI(loop * fps, 2, LOOP_CAP_S * fps);
       const frames = [];
-      for (let i = 0; i < LOOP_FRAMES; i++) {
+      for (let i = 0; i < loopFrames; i++) {
         const t = isCells
           ? (CELLS_WARMUP + 1 + i) / fps
-          : (i / LOOP_FRAMES) * Math.PI * 2;
+          : (i / loopFrames) * loop;
         frames.push(ArtExport.composeMatte(artAt(t, true), artW, artH, baseW, baseH));
       }
       statusText = `ENCODING ${key.toUpperCase()}...`;
@@ -913,8 +919,11 @@ function onDraw(cr) {
     activeParams = eff.params;
     // ASCII は場(field/cells)専用。draw では無効化（線画なので不適）。
     asciiActive = activeMode === "ascii" && program.kind !== "draw";
-    const t = (performance.now() - t0) / 1000;
-    const seed = resolvedConfig().seed;
+    const { seed, loop } = resolvedConfig();
+    // field/draw は t を [0,loop) で周回＝プレビューが実際にループ（見た目＝書き出し）。
+    // cells は状態を持ち周期がないので周回させない（loop 対象外）。
+    let t = (performance.now() - t0) / 1000;
+    if (program.kind !== "cells") t %= loop;
     try {
       pv = renderPreview(t, seed, activeMode, activeParams, asciiActive, program.kind === "cells");
     } catch (e) {
@@ -990,7 +999,7 @@ WM.wmRegister(
         "the left, watch it render on the right. Bare expressions are fields " +
         "f(x,y,t); draw {} is procedural; field {} is a stateful cellular " +
         "field (init/step/show). All settings live in code as directives: " +
-        "size: WxH, pixel: N, pad: N, fps: N, seed: N, view: mode(args). " +
+        "size: WxH, pixel: N, pad: N, fps: N, seed: N, loop: sec, view: mode(args). " +
         "Learn from /TESSERA/LEARN (numbered tutorial), browse /TESSERA/GALLERY. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
         "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +
