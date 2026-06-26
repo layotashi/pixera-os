@@ -30,6 +30,7 @@ export function tokenize(src, opts = {}) {
   const keepComments = !!opts.comments;
   const toks = [];
   let i = 0;
+  let parenDepth = 0; // `()` の入れ子。括弧内では改行を区切りにしない（式の継続）。
   const n = src.length;
   const isDigit = (c) => c >= "0" && c <= "9";
   const isIdStart = (c) => /[a-zA-Z_]/.test(c);
@@ -42,9 +43,14 @@ export function tokenize(src, opts = {}) {
       continue;
     }
     // 文の区切り（改行 / セミコロン）。連続は 1 つに畳む。先頭は無視。
-    // format モード（keepComments）では「行区切り済みのさらなる改行」= 空行を
-    // BLANK として 1 個だけ保持する（連続空行は畳む。整形が空行を消さないため）。
+    // 括弧 `()` の中では区切りにしない＝改行で式を跨いでもよい（演算子・カンマ・開き
+    // 括弧の後／閉じ括弧の前での改行が通る）。format モード（keepComments）では
+    // 「行区切り済みのさらなる改行」= 空行を BLANK として 1 個だけ保持する。
     if (c === "\n" || c === ";") {
+      if (parenDepth > 0) {
+        i++;
+        continue;
+      }
       const last = toks.length ? toks[toks.length - 1].type : null;
       if (toks.length && last !== "SEP" && last !== "BLANK") {
         toks.push({ type: "SEP", pos: i });
@@ -96,11 +102,13 @@ export function tokenize(src, opts = {}) {
       continue;
     }
     if (c === "(") {
+      parenDepth++;
       toks.push({ type: "LP", pos: start });
       i++;
       continue;
     }
     if (c === ")") {
+      if (parenDepth > 0) parenDepth--;
       toks.push({ type: "RP", pos: start });
       i++;
       continue;

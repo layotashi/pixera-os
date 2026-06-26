@@ -60,18 +60,11 @@ const GALLERY_DIR = "/TESSERA/GALLERY";
 const COLS = 40; // エディタ幅 (文字数)。40桁 = レトロ家庭機の画面幅
 const ROWS = 16; // エディタ表示行数
 const MAX_LINES = 9999;
-const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をここに縮めて表示）
-// プレビューは出力合成（art→額縁→base）を縮小して見せる＝pixel の粗さ・pad が WYSIWYG。
-// 場の評価解像度は性能のため上限を設ける（cells は重いので低め）。面積平均＋再ディザで縮小。
-const PV_RENDER_CAP = 280; // field/draw の art 評価上限px
+const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
+// プレビューは出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で見せる
+// ＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。cells は重いので評価解像度を抑える。
 const PV_CELLS_CAP = 120; // cells の art 評価上限px（毎フレーム step で重いため）
 const GAP = 8; // エディタ⇄プレビュー間
-
-/** w×h を長辺 max に収める寸法（縮小も拡大もする）。 */
-function fitInto(w, h, max) {
-  const s = max / Math.max(w, h);
-  return { w: Math.max(1, Math.round(w * s)), h: Math.max(1, Math.round(h * s)) };
-}
 
 /** 起動時 / 新規の既定スケッチ。設定ディレクティブの雛形を兼ね、書き方を示す。 */
 const DEFAULT_CODE = `size: 1080x1080
@@ -717,32 +710,61 @@ function rerollSeed() {
 }
 
 /**
- * プレビュー 1-bit バッファを作る（出力合成を縮小＝pixel/pad を WYSIWYG 反映）。
- * art を評価解像度（上限あり）で描き、額縁付きで base に合成、面積平均＋再ディザで枠へ縮小。
- * ASCII はグリフが潰れるので枠解像度で直接描く（縮小しない）。
+ * プレビュー 1-bit バッファを作る。**クリーンな倍率のみ**で表示する（半端比率の縮小は
+ * 汚いモアレを生むため不可）。base(=出力÷pixel) を枠 PV_BOX に対し:
+ *   - base ≤ 枠 … 整数倍 NN 拡大（1 アートドット = 整数px。チャンキー）。
+ *   - base > 枠 … 1/整数 に評価解像度を落として描く（場を粗く標本化＝再ディザ不要・モアレ無し）。
+ * 場を評価解像度で直接描く（合成後の再標本化はしない）ので常に綺麗。cells は重いので更に抑える。
  * @returns {{ buf:Uint8Array, w:number, h:number }} 画面に出す 1-bit バッファと寸法
  */
 function renderPreview(t, seed, mode, params, ascii, isCells) {
   const { baseW, baseH, artW, artH } = outputDims();
   const padBase = (baseW - artW) / 2; // 額縁（base 上、上下左右一定）
-  const cap = ascii ? PV_BOX : isCells ? PV_CELLS_CAP : PV_RENDER_CAP;
-  const rscale = Math.min(1, cap / Math.max(baseW, baseH));
-  const raW = Math.max(1, Math.round(artW * rscale));
-  const raH = Math.max(1, Math.round(artH * rscale));
-  const rpad = Math.round(padBase * rscale);
-  const rbW = raW + 2 * rpad,
-    rbH = raH + 2 * rpad;
+  const maxBase = Math.max(baseW, baseH);
+
+  // 評価解像度の分母 renderDenom（1/N）と画面表示の整数倍 displayScale を決める。
+  let renderDenom = 1,
+    displayScale = 1;
+  if (maxBase <= PV_BOX) displayScale = Math.max(1, Math.floor(PV_BOX / maxBase));
+  else renderDenom = Math.ceil(maxBase / PV_BOX);
+  // ASCII はグリフを拡大すると汚いので等倍表示・枠に収まる評価解像度に。
+  if (ascii && displayScale > 1) displayScale = 1;
+  // cells は毎フレーム step で重い → 評価解像度の上限を更に低く。
+  if (isCells) {
+    const minDenom = Math.ceil(maxBase / PV_CELLS_CAP);
+    if (renderDenom < minDenom) {
+      renderDenom = minDenom;
+      displayScale = 1;
+    }
+  }
+
+  const rbW = Math.max(1, Math.round(baseW / renderDenom));
+  const rbH = Math.max(1, Math.round(baseH / renderDenom));
+  const rpad = Math.round(padBase / renderDenom);
+  const raW = Math.max(1, rbW - 2 * rpad);
+  const raH = Math.max(1, rbH - 2 * rpad);
 
   ensureSurface(raW, raH);
-  program.render(surface, t, seed); // surface.buf = raW×raH の art
-  const baseBuf = ArtExport.composeMatte(surface.buf, raW, raH, rbW, rbH);
+  program.render(surface, t, seed); // surface.buf = raW×raH の art（評価解像度で直接）
+  const base = ArtExport.composeMatte(surface.buf, raW, raH, rbW, rbH);
 
-  if (ascii) return { buf: baseBuf, w: rbW, h: rbH }; // 縮小せず（グリフ保護）
-  const box = fitInto(rbW, rbH, PV_BOX);
-  const buf = ArtExport.resampleArea(
-    baseBuf, rbW, rbH, box.w, box.h, params.ditherSize || 2,
-  );
-  return { buf, w: box.w, h: box.h };
+  if (displayScale === 1) return { buf: base, w: rbW, h: rbH };
+  // 整数 NN 拡大（チャンキー・モアレ無し）。
+  const dw = rbW * displayScale,
+    dh = rbH * displayScale;
+  const out = new Uint8Array(dw * dh);
+  for (let y = 0; y < rbH; y++) {
+    for (let x = 0; x < rbW; x++) {
+      if (!base[y * rbW + x]) continue;
+      const ox = x * displayScale,
+        oy = y * displayScale;
+      for (let j = 0; j < displayScale; j++) {
+        const r = (oy + j) * dw + ox;
+        for (let i = 0; i < displayScale; i++) out[r + i] = 1;
+      }
+    }
+  }
+  return { buf: out, w: dw, h: dh };
 }
 
 // ── 書き出し（PNG / GIF / MP4）──

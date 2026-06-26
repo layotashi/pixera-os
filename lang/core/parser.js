@@ -62,6 +62,7 @@ function makeParser(toks, start = 0) {
       const prec = PREC[tk.value];
       if (prec < minPrec) break;
       p = q + 1; // SEP 群と演算子を消費
+      while (toks[p] && toks[p].type === "SEP") p++; // 演算子直後の改行も飛ばす（`a +\n b`）
       const rightAssoc = tk.value === "^";
       const rhs = parseExpr(rightAssoc ? prec : prec + 1);
       lhs = { t: "bin", op: tk.value, a: lhs, b: rhs };

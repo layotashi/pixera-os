@@ -447,6 +447,23 @@ function check(name, cond) {
   }
 }
 
+// 8f) 改行を跨いだ式（括弧内は改行自由・演算子の前後で改行可）
+{
+  const ev = (src) => compile(src).sample(0.3, 0.3, 0.5, 1);
+  check("nl: op at line start", Number.isFinite(ev("sin(x)\n+ 0.5")));
+  check("nl: op at line end", Number.isFinite(ev("sin(x) +\n0.5")));
+  check("nl: after comma", Number.isFinite(ev("dist(x, y,\n0.5, 0.5)")));
+  check("nl: after open paren", Number.isFinite(ev("sin(\nx*8)")));
+  check("nl: before close paren", Number.isFinite(ev("sin(x*8\n)")));
+  check("nl: mult at line end (in parens)", Number.isFinite(ev("(sin(x) *\ncos(y))")));
+  // ブロック構文の SEP（文区切り）は維持される
+  check("nl: value block 維持", Number.isFinite(ev("s = 0\nrepeat 3 as k {\n s = s + k\n}\ns")));
+  const surf = { width: () => 4, height: () => 4, blitField: () => {}, present: () => {} };
+  let ok = true;
+  try { compile("field {\n init: 1\n step: s + lap()\n show: s\n}").render(surf, 0, 0); } catch { ok = false; }
+  check("nl: field block 維持", ok);
+}
+
 // 8e) 大小文字を区別しない（SYNESTA は大文字表示前提。PIXEL と pixel が同じ見た目）
 {
   // 関数 / 定数 / 変数を大文字で書いても通る

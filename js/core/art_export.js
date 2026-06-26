@@ -18,39 +18,8 @@
 import { palette } from "../config.js";
 import { encodeGif } from "./gif.js";
 import { encodeMp4, isMp4Supported } from "./mp4.js";
-import { bayerBit } from "./field_render.js";
 
 export { isMp4Supported };
-
-/**
- * 1-bit バッファを dw×dh へ「面積平均 → 再ディザ」で再標本化する（プレビュー用）。
- * ディザ済み 1-bit を NN 点標本で縮小するとベタ塗りに化けるため、ブロック平均でトーンを
- * 復元してから縮小先解像度で再ディザする（縮小はトーン忠実、拡大はブロック保持）。
- * @param {number} [ditherSize=2]  Bayer 行列サイズ
- */
-export function resampleArea(src, sw, sh, dw, dh, ditherSize = 2) {
-  if (sw === dw && sh === dh) return src;
-  const out = new Uint8Array(dw * dh);
-  for (let y = 0; y < dh; y++) {
-    const sy0 = ((y * sh) / dh) | 0;
-    const sy1 = Math.max(sy0 + 1, (((y + 1) * sh) / dh) | 0);
-    for (let x = 0; x < dw; x++) {
-      const sx0 = ((x * sw) / dw) | 0;
-      const sx1 = Math.max(sx0 + 1, (((x + 1) * sw) / dw) | 0);
-      let sum = 0,
-        cnt = 0;
-      for (let yy = sy0; yy < sy1; yy++) {
-        const row = yy * sw;
-        for (let xx = sx0; xx < sx1; xx++) {
-          sum += src[row + xx];
-          cnt++;
-        }
-      }
-      out[y * dw + x] = bayerBit(ditherSize, x, y, sum / cnt);
-    }
-  }
-  return out;
-}
 
 /**
  * art 解像度の 1-bit バッファを base 解像度に中央合成する（周囲は 0＝額縁マット）。
