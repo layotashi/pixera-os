@@ -299,23 +299,24 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
     src: HEADER + `1 - worley(x*6 + sin(t*0.5)*0.5, y*6)`,
   },
   {
-    // ATTRACT: de Jong カオス力学系。seed でガチャ・t で呼吸する点描。
-    // x,y は常に [-2,2]（sin-cos）なので /4.2 で必ず枠に収まる。params の符号と
-    // 大きさ[1.2,2.0]を seed 由来で振り、ctrl+R で別の形が出る。t で緩く morph。
+    // ATTRACT: de Jong カオス力学系。seed でガチャ・t で回転する点描。
+    // params は seed で固定し、アニメは「点群の回転」で付ける。params を t で morph
+    // させると非カオス（不動点）領域を通過して構造が一瞬潰れ全体が点滅するため。
+    // 回転は等長変換なので潰れず、回転後の対角 2.83 を /5.7 で必ず枠内に収める。
     file: "attractor" + EXT,
     src: HEADER_DRAW + `// de Jong strange attractor.
 // ctrl+R rerolls the shape; it
-// slowly breathes as t advances.
+// slowly rotates as t advances.
 draw {
   clear
   sa = step(0.5, rnd(5, 0))*2 - 1
   sb = step(0.5, rnd(6, 0))*2 - 1
   sc = step(0.5, rnd(7, 0))*2 - 1
   sd = step(0.5, rnd(8, 0))*2 - 1
-  a = sa*(1.2 + rnd(1, 0)*0.8) + sin(t)*0.3
-  b = sb*(1.2 + rnd(2, 0)*0.8) + cos(t)*0.3
-  c = sc*(1.2 + rnd(3, 0)*0.8) + sin(t + 2)*0.3
-  d = sd*(1.2 + rnd(4, 0)*0.8) + cos(t + 2)*0.3
+  a = sa*(1.2 + rnd(1, 0)*0.8)
+  b = sb*(1.2 + rnd(2, 0)*0.8)
+  c = sc*(1.2 + rnd(3, 0)*0.8)
+  d = sd*(1.2 + rnd(4, 0)*0.8)
   x = 0
   y = 0
   repeat 35000 {
@@ -323,7 +324,7 @@ draw {
     ny = sin(c*x) - cos(d*y)
     x = nx
     y = ny
-    point(x/4.2 + 0.5, y/4.2 + 0.5)
+    point((x*cos(t) - y*sin(t))/5.7 + 0.5, (x*sin(t) + y*cos(t))/5.7 + 0.5)
   }
 }`,
   },
