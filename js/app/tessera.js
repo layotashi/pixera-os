@@ -282,21 +282,35 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
 1 - worley(x*6 + sin(t*0.5)*0.5, y*6)`,
   },
   {
-    // ATTRACT: カオス力学系（de Jong）を点描。draw の高 ceiling 例
+    // ATTRACT: de Jong カオス力学系。seed でガチャ・t で呼吸する点描。
+    // x,y は常に [-2,2]（sin-cos）なので /4.2 で必ず枠に収まる。params の符号と
+    // 大きさ[1.2,2.0]を seed 由来で振り、ctrl+R で別の形が出る。t で緩く morph。
     file: "attractor" + EXT,
-    src: `draw {
+    src: `// de Jong strange attractor.
+// ctrl+R rerolls the shape; it
+// slowly breathes as t advances.
+draw {
   clear
+  sa = step(0.5, rnd(5, 0))*2 - 1
+  sb = step(0.5, rnd(6, 0))*2 - 1
+  sc = step(0.5, rnd(7, 0))*2 - 1
+  sd = step(0.5, rnd(8, 0))*2 - 1
+  a = sa*(1.2 + rnd(1, 0)*0.8) + sin(t)*0.3
+  b = sb*(1.2 + rnd(2, 0)*0.8) + cos(t)*0.3
+  c = sc*(1.2 + rnd(3, 0)*0.8) + sin(t + 2)*0.3
+  d = sd*(1.2 + rnd(4, 0)*0.8) + cos(t + 2)*0.3
   x = 0
   y = 0
-  repeat 30000 {
-    nx = sin(-1.4 * y) + 1.6 * cos(-1.4 * x)
-    ny = sin(1.6 * x) + 0.7 * cos(1.6 * y)
+  repeat 35000 {
+    nx = sin(a*y) - cos(b*x)
+    ny = sin(c*x) - cos(d*y)
     x = nx
     y = ny
-    point(x*0.25 + 0.5, y*0.25 + 0.5)
+    point(x/4.2 + 0.5, y/4.2 + 0.5)
   }
 }`,
   },
+
   {
     // GIERER-MEINHARDT: 活性 a / 抑制 h。斑点状チューリングパターン
     file: "gierer" + EXT,
