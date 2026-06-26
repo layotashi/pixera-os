@@ -9,13 +9,18 @@
  *
  * 規則:
  *   - `{` で字下げ +1、`}` で −1（`}` は単独行）。`;`/改行は「1 文 1 行」へ畳む。
- *   - 二項演算子・`,` の後・`name = `・`init:` の後 に 1 スペース。
+ *   - 二項 `+ -` は前後 1 スペース、`* / % ^` は詰める（優先順位ベース）。
+ *   - `,` の後・`name = `・`init:` の後 に 1 スペース。
  *   - `f(` / `( )` / 単項 `-` は詰める。空行は畳む。
  *   - インデントは 2 スペース（低解像度に合わせて緊密に）。
  */
 import { tokenize } from "./core/lexer.js";
 
 const INDENT = "  ";
+
+// 優先順位ベースの空白: 高優先の `* / % ^` は詰め（a*b）、低優先の二項 `+ -` は空ける
+// （a + b）。低解像度（〜40桁）で項のまとまりが見え、式が一息で読める書きぶりになる。
+const TIGHT = new Set(["*", "/", "%", "^"]);
 
 /** その位置で演算子が単項になりうるか（直前トークン種がオペランド待ちか） */
 function operandExpected(prev) {
@@ -101,8 +106,13 @@ export function format(src) {
     if (ty === "OP") {
       const unary =
         (tk.value === "-" || tk.value === "+") && operandExpected(prev);
-      const sb = unary ? !(prev === "LP" || prev === "UNARYOP") : true;
-      append(tk.value, sb, unary ? "UNARYOP" : "OP");
+      if (unary) {
+        append(tk.value, !(prev === "LP" || prev === "UNARYOP"), "UNARYOP");
+      } else {
+        // 高優先は前後とも詰める（OP_TIGHT）。低優先は前後に 1 スペース（OP）。
+        const tight = TIGHT.has(tk.value);
+        append(tk.value, !tight, tight ? "OP_TIGHT" : "OP");
+      }
       continue;
     }
 
@@ -142,14 +152,15 @@ export function format(src) {
           prev === "ID" ||
           prev === "RP" ||
           prev === "LP" ||
-          prev === "UNARYOP"
+          prev === "UNARYOP" ||
+          prev === "OP_TIGHT"
         );
         break;
       case "EQ":
         sb = true;
         break;
       default: // NUM / ID / COMMENT
-        sb = !(prev === "LP" || prev === "UNARYOP");
+        sb = !(prev === "LP" || prev === "UNARYOP" || prev === "OP_TIGHT");
         // `size: 1920x1080` は NUM(1920)+ID("x1080") に字句化される。高さ ID は
         // 直前の NUM へ密着させ `1920x1080` の見た目を保つ（式中で NUM+ID は構文上現れない）。
         if (ty === "ID" && prev === "NUM" && /^x\d/.test(tk.value)) sb = false;

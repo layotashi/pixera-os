@@ -520,10 +520,13 @@ function check(name, cond) {
 // 10) format: トークン再出力フォーマッタ（意味不変・コメント保持・折り返しなし）
 {
   const f = format;
-  check("fmt: spacing", f("1+2*3") === "1 + 2 * 3");
+  // 優先順位ベース: `+ -` は空け、`* / % ^` は詰める。
+  check("fmt: spacing (precedence)", f("1+2*3") === "1 + 2*3");
+  check("fmt: tight ops", f("a/b%c^d") === "a/b%c^d");
+  check("fmt: mixed precedence", f("a*b+c*d") === "a*b + c*d");
   check("fmt: call & comma", f("mix( a,b )") === "mix(a, b)");
-  check("fmt: unary tight", f("sin(-1.4*y)") === "sin(-1.4 * y)");
-  check("fmt: parens preserved", f("(a+b)*c") === "(a + b) * c");
+  check("fmt: unary tight", f("sin(-1.4*y)") === "sin(-1.4*y)");
+  check("fmt: parens & tight", f("(a+b)*c") === "(a + b)*c");
   check("fmt: number字面 preserved", f("1.0 + .5") === "1.0 + .5");
   check(
     "fmt: draw block indents + 1文1行",
@@ -546,7 +549,7 @@ function check(name, cond) {
   );
   check(
     "fmt: view directive",
-    f("view:dither(2)\nsin(x*8)") === "view: dither(2)\nsin(x * 8)",
+    f("view:dither(2)\nsin(x*8)") === "view: dither(2)\nsin(x*8)",
   );
   check("fmt: line comment kept", f("1 + 2 // hi") === "1 + 2 // hi");
   check("fmt: own-line comment kept", f("// head\n1") === "// head\n1");
