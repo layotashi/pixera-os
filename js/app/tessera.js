@@ -299,14 +299,14 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
     src: HEADER + `1 - worley(x*6 + sin(t*0.5)*0.5, y*6)`,
   },
   {
-    // ATTRACT: de Jong カオス力学系。seed でガチャ・t で回転する点描。
-    // params は seed で固定し、アニメは「点群の回転」で付ける。params を t で morph
-    // させると非カオス（不動点）領域を通過して構造が一瞬潰れ全体が点滅するため。
-    // 回転は等長変換なので潰れず、回転後の対角 2.83 を /5.7 で必ず枠内に収める。
+    // ATTRACT: de Jong カオス力学系。seed でガチャ・ノイズ場で蠢く点描。
+    // params は seed で固定（t で morph させると非カオス領域を通過して構造が一瞬潰れ
+    // 全体が点滅するため）。形は不変のまま、出力点をノイズ場でドメインワープして
+    // 有機的に蠢かせる（崩壊しない）。下地 x,y∈[-2,2]＋ワープ ±0.7 を /6 で枠内に収める。
     file: "attractor" + EXT,
     src: HEADER_DRAW + `// de Jong strange attractor.
-// ctrl+R rerolls the shape; it
-// slowly rotates as t advances.
+// ctrl+R rerolls the shape; a flowing
+// noise field makes it writhe.
 draw {
   clear
   sa = step(0.5, rnd(5, 0))*2 - 1
@@ -324,7 +324,9 @@ draw {
     ny = sin(c*x) - cos(d*y)
     x = nx
     y = ny
-    point((x*cos(t) - y*sin(t))/5.7 + 0.5, (x*sin(t) + y*cos(t))/5.7 + 0.5)
+    wx = x + (noise(x*0.7 + t*0.3, y*0.7) - 0.5)*1.4
+    wy = y + (noise(x*0.7, y*0.7 + t*0.3) - 0.5)*1.4
+    point(wx/6 + 0.5, wy/6 + 0.5)
   }
 }`,
   },
