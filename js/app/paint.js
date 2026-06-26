@@ -237,7 +237,7 @@ function confirmDiscard(callback) {
 function saveFileAs() {
   const dir = currentFilePath
     ? VFS.parentPath(currentFilePath)
-    : "/Documents";
+    : "/Pictures";
   const name = currentFilePath
     ? VFS.basename(currentFilePath)
     : "untitled.pbm";

@@ -70,7 +70,7 @@ let lblLevel, bayerPickerSolid;
 let lblImagePath, lblImagePathValue, btnBrowse;
 let lblImageFile, ddImageFile;
 let lblImageFill, ddImageFill;
-let imageDir = "/Images/Wallpapers";
+let imageDir = "/Pictures/Wallpapers";
 
 // ── EFFECTS (旧 TUNING) ウィジェット ──
 let lblVignette, tglVignette;

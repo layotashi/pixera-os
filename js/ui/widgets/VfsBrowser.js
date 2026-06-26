@@ -41,6 +41,7 @@ export class VfsBrowser extends FocusableWidget {
    * @param {string[]} [opts.filter]         拡張子フィルタ (例: [".pbm", ".txt"])。null で全表示
    * @param {boolean}  [opts.dirsOnly]       true ならファイルを非表示 (ディレクトリのみ)
    * @param {boolean}  [opts.enableDragDrop] true なら D&D によるファイル移動を有効化
+   * @param {boolean}  [opts.collapseByDefault] true なら初期はルート "/" だけ展開（開いたフォルダのみ展開）
    * @param {string}   [opts.initialPath]    初期選択パス (デフォルト: "/")
    * @param {(path: string, item: object) => void} [opts.onSelect]   選択変更コールバック
    * @param {(path: string, item: object) => void} [opts.onActivate] ダブルクリック/Enter コールバック
@@ -57,6 +58,9 @@ export class VfsBrowser extends FocusableWidget {
 
     /** @type {boolean} D&D 有効 */
     this._enableDragDrop = opts.enableDragDrop || false;
+
+    /** @type {boolean} 既定で畳む（true なら開いたフォルダだけ展開＝ルートだけ開く初期表示） */
+    this._defaultExpanded = !opts.collapseByDefault;
 
     /** @type {(path: string, item: object) => void|null} */
     this._onSelect = opts.onSelect || null;
@@ -103,7 +107,7 @@ export class VfsBrowser extends FocusableWidget {
       );
       if (initIdx >= 0) {
         this._treeView.selectedIndex = initIdx;
-        // 初期フォルダはツリー最上部に置く（見栄え。例: OPEN 時の /TESSERA）。
+        // 初期フォルダはツリー最上部に置く（見栄え。例: OPEN 時の /Sketches）。
         this._treeView.scrollToIndex(initIdx);
       }
     }
@@ -270,7 +274,7 @@ export class VfsBrowser extends FocusableWidget {
    * @returns {Array}
    */
   _rebuildItems() {
-    const flat = VFS.flattenTree(this._expandedMap);
+    const flat = VFS.flattenTree(this._expandedMap, this._defaultExpanded);
     return flat
       .filter((entry) => {
         // ディレクトリは常に表示

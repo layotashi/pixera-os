@@ -95,16 +95,16 @@ describe("デフォルトツリー", () => {
     expect(exists("/")).toBe(true);
   });
 
-  it("Desktop, Documents, Images, Music が存在する", () => {
+  it("Desktop, Documents, Pictures, Music が存在する", () => {
     expect(exists("/Desktop")).toBe(true);
     expect(exists("/Documents")).toBe(true);
-    expect(exists("/Images")).toBe(true);
+    expect(exists("/Pictures")).toBe(true);
     expect(exists("/Music")).toBe(true);
   });
 
-  it("Images/Wallpapers が存在する", () => {
-    expect(exists("/Images/Wallpapers")).toBe(true);
-    const s = stat("/Images/Wallpapers");
+  it("Pictures/Wallpapers が存在する", () => {
+    expect(exists("/Pictures/Wallpapers")).toBe(true);
+    const s = stat("/Pictures/Wallpapers");
     expect(s.type).toBe("dir");
   });
 
@@ -157,8 +157,8 @@ describe("readDir", () => {
     expect(entries.map((e) => e.name)).toEqual([
       "Desktop",
       "Documents",
-      "Images",
       "Music",
+      "Pictures",
     ]);
     expect(entries.every((e) => e.type === "dir")).toBe(true);
   });

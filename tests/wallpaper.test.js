@@ -67,7 +67,7 @@ describe("image wallpaper fill bit", () => {
 
   it("Image 背景で画像が覆わない領域を fill bit で埋める", async () => {
     _loadedBgMode = "image";
-    _loadedBgImagePath = "/Images/Wallpapers/test.pbm";
+    _loadedBgImagePath = "/Pictures/Wallpapers/test.pbm";
     _loadedBgImageFillBit = 1;
     _files.set(_loadedBgImagePath, "P1\n2 2\n1 0\n0 1\n");
 
@@ -82,7 +82,7 @@ describe("image wallpaper fill bit", () => {
 
   it("fill bit を切り替えると保存し、既存画像の未カバー領域も更新する", async () => {
     _loadedBgMode = "image";
-    _loadedBgImagePath = "/Images/Wallpapers/test.pbm";
+    _loadedBgImagePath = "/Pictures/Wallpapers/test.pbm";
     _loadedBgImageFillBit = 1;
     _files.set(_loadedBgImagePath, "P1\n2 2\n1 0\n0 1\n");
 

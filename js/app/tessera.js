@@ -31,8 +31,8 @@
  * VFS / 操作:
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
  *   - Ctrl+E / DL で size ちょうどに PNG/GIF/MP4 書き出し。Ctrl+R で seed: を振り直す。
- *   - Shift+Alt+F で整形。未保存変更は破棄確認。サンプルは /TESSERA/LEARN（番号順
- *     チュートリアル）と /TESSERA/GALLERY（作例）に種まき。
+ *   - Shift+Alt+F で整形。未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順
+ *     チュートリアル）と /Sketches/Gallery（作例）に種まき。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
  */
 
@@ -51,10 +51,10 @@ import { format } from "../../lang/format.js";
 
 const APP_NAME = "TESSERA";
 const EXT = ".tess";
-const HOME_DIR = "/TESSERA"; // .tess 作品の保存先（アプリ名と一致）
+const HOME_DIR = "/Sketches"; // .tess 作品の保存先（内容カテゴリ「スケッチ」）
 // 学習用（番号順・1概念ずつ・解説コメント付き）と作例集（ショーケース）の 2 層。
-const LEARN_DIR = "/TESSERA/LEARN";
-const GALLERY_DIR = "/TESSERA/GALLERY";
+const LEARN_DIR = "/Sketches/Learn";
+const GALLERY_DIR = "/Sketches/Gallery";
 
 // ── レイアウト/プレビュー ──
 const COLS = 40; // エディタ幅 (文字数)。40桁 = レトロ家庭機の画面幅
@@ -1127,7 +1127,7 @@ WM.wmRegister(
         "f(x,y,t); draw {} is procedural; field {} is a stateful cellular " +
         "field (init/step/show). All settings live in code as directives: " +
         "size: WxH, pixel: N, pad: N, fps: N, seed: N, loop: sec, view: mode(args). " +
-        "Learn from /TESSERA/LEARN (numbered tutorial), browse /TESSERA/GALLERY. " +
+        "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
         "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +
         "(PNG/GIF/MP4 at the declared size), Ctrl+R reseed, Shift+Alt+F format.",

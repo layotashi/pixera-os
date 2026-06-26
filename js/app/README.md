@@ -332,7 +332,7 @@ Catch & Aim・スマッシュ・パワーアップ・コンボチェイン・ブ
 
 SYNESTA 唯一の generative-art アプリ。1-bit 前提の小言語 **Tessera**（`lang/`、拡張子 `.tess`）で
 コードを書き、右でライブプレビューしながら作品を作る。旧 GENART（プリセット＋ノブのノーコード）は
-廃止し、その算法を `.tess` サンプル（学習用 `/TESSERA/LEARN` ＋ 作例 `/TESSERA/GALLERY`）へ、
+廃止し、その算法を `.tess` サンプル（学習用 `/Sketches/Learn` ＋ 作例 `/Sketches/Gallery`）へ、
 出力パイプラインを本アプリへ移設・一本化した。
 
 **できること:**

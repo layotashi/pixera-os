@@ -271,7 +271,7 @@
 ### GenArt (生成的アート)
 
 > **2026-06 統合完了**: `genart.js`（ノーコードのプリセット＋ノブ）は廃止し、**TESSERA**（`tessera.js`
-> ＋ Tessera 言語 `lang/`）へ一本化した。全 19 算法は `/TESSERA/LEARN･GALLERY/*.tess` サンプルへ、出力
+> ＋ Tessera 言語 `lang/`）へ一本化した。全 19 算法は `/Sketches/Learn･Gallery/*.tess` サンプルへ、出力
 > パイプライン（OUTPUT/dotScale/PAD/PNG·GIF·MP4）は `tessera.js` ＋ 共有 `core/art_export.js` へ移設。
 > 以下は GENART 時代の歴史的メモ（場レンダラ等は `core/field_render.js` として現存）。
 

@@ -171,6 +171,7 @@ function _initWidgets() {
   // ── VfsBrowser ──
   browser = new UI.VfsBrowser(TREE_W, TREE_ROWS, {
     enableDragDrop: true,
+    collapseByDefault: true, // 初期はルート / だけ開く（全展開だと目的を探しにくい）
     onActivate: (path, item) => {
       if (!item || item.type !== "file") return;
       const ext = getExtension(item.label);

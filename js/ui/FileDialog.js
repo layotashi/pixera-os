@@ -11,7 +11,7 @@
  *   // Save
  *   openFileDialog("save", {
  *     title:       "SAVE AS",
- *     defaultPath: "/Images/Wallpapers",
+ *     defaultPath: "/Pictures/Wallpapers",
  *     defaultName: "art.pbm",
  *     filter:      [".pbm"],
  *     onResult:    (path) => { if (path) writeFile(path, data); },

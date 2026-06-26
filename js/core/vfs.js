@@ -93,7 +93,7 @@ function createDefaultTree() {
       },
       {
         type: "dir",
-        name: "Images",
+        name: "Pictures",
         createdAt: now,
         modifiedAt: now,
         children: [
@@ -132,9 +132,19 @@ export function initVfs() {
   root = stored || createDefaultTree();
   if (!stored) persist();
 
-  // マイグレーション: 既存ユーザーに /Images/Wallpapers を補完
-  ensureDir("/Images");
-  ensureDir("/Images/Wallpapers");
+  // マイグレーション: 内容カテゴリ統一への改名（旧フォルダがあり新が無ければ rename）。
+  // SAMPLE の二重化を避けるため、追加ではなく移動でゴーストを残さない。
+  const rename = (from, to) => {
+    if (exists(from) && !exists(to)) move(from, to);
+  };
+  rename("/Images", "/Pictures"); // 画像カテゴリを Pictures へ
+  rename("/TESSERA", "/Sketches"); // .tess は Sketches へ
+  rename("/Sketches/LEARN", "/Sketches/Learn"); // 付属コンテンツを Title-case に
+  rename("/Sketches/GALLERY", "/Sketches/Gallery");
+
+  // /Pictures/Wallpapers を補完（fresh / 移行後とも）
+  ensureDir("/Pictures");
+  ensureDir("/Pictures/Wallpapers");
 }
 
 /**
@@ -615,9 +625,11 @@ export function move(srcPath, destPath) {
  * ツリー全体をフラット化した一覧を返す (TreeView 向け)。
  * 各エントリ: { path, name, type, depth, expanded, hasChildren }
  * @param {Object.<string, boolean>} expandedMap  パス → 展開状態のマップ
+ * @param {boolean} [defaultExpanded=true]  マップに無いフォルダの既定展開状態。
+ *   false にすると「明示的に開いたフォルダだけ展開」（EXPLORER は / だけ開いた初期表示）。
  * @returns {Array}
  */
-export function flattenTree(expandedMap) {
+export function flattenTree(expandedMap, defaultExpanded = true) {
   const result = [];
 
   function walk(node, depth, parentPath) {
@@ -629,7 +641,8 @@ export function flattenTree(expandedMap) {
     const displayName = node === root ? "/" : node.name;
 
     if (node.type === "dir") {
-      const expanded = expandedMap[actualPath] !== false; // デフォルト展開
+      const e = expandedMap[actualPath]; // 明示指定があれば優先、無ければ既定
+      const expanded = e === undefined ? defaultExpanded : e;
       const sorted = [...node.children].sort((a, b) => {
         if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
         return a.name.localeCompare(b.name);
