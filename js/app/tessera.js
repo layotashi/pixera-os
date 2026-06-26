@@ -71,7 +71,7 @@ const DEFAULT_CODE = `size: 1080x1080
 pixel: 8
 pad: 0
 fps: 20
-loop: 6.28
+loop: tau
 seed: 0
 view: dither(2)
 
@@ -209,7 +209,7 @@ const HEADER = `size: 1080x1080
 pixel: 8
 pad: 0
 fps: 20
-loop: 6.28
+loop: tau
 seed: 0
 view: dither(2)
 
@@ -218,7 +218,7 @@ const HEADER_DRAW = `size: 1080x1080
 pixel: 8
 pad: 0
 fps: 20
-loop: 6.28
+loop: tau
 seed: 0
 
 `;
@@ -302,11 +302,12 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
     // ATTRACT: de Jong カオス力学系。seed でガチャ・ノイズ場で蠢く点描。
     // params は seed で固定（t で morph させると非カオス領域を通過して構造が一瞬潰れ
     // 全体が点滅するため）。形は不変のまま、出力点をノイズ場でドメインワープして
-    // 有機的に蠢かせる（崩壊しない）。下地 x,y∈[-2,2]＋ワープ ±0.7 を /6 で枠内に収める。
+    // 有機的に蠢かせる（崩壊しない）。ノイズ標本点は cos/sin(t) で円を描いて公転する
+    // ので周期 tau でシームレスにループ。下地 [-2,2]＋ワープ ±0.7 を /6 で枠内に収める。
     file: "attractor" + EXT,
     src: HEADER_DRAW + `// de Jong strange attractor.
 // ctrl+R rerolls the shape; a flowing
-// noise field makes it writhe.
+// noise field makes it writhe (loops).
 draw {
   clear
   sa = step(0.5, rnd(5, 0))*2 - 1
@@ -324,8 +325,8 @@ draw {
     ny = sin(c*x) - cos(d*y)
     x = nx
     y = ny
-    wx = x + (noise(x*0.7 + t*0.3, y*0.7) - 0.5)*1.4
-    wy = y + (noise(x*0.7, y*0.7 + t*0.3) - 0.5)*1.4
+    wx = x + (noise(x*0.7 + cos(t)*0.6, y*0.7 + sin(t)*0.6) - 0.5)*1.4
+    wy = y + (noise(x*0.7 + cos(t)*0.6 + 19, y*0.7 + sin(t)*0.6 + 7) - 0.5)*1.4
     point(wx/6 + 0.5, wy/6 + 0.5)
   }
 }`,
