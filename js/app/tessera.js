@@ -75,13 +75,20 @@ loop: tau
 seed: 0
 view: dither(2)
 
-sin(x*8 - t) * cos(y*8 + t*1.3) * 0.5 + 0.5`;
+sin(x*8 - t) * cos(y*8 + t*2) * 0.5 + 0.5`;
 
 /**
  * サンプルは 2 層: LEARN（番号順・1 概念ずつ・解説コメント付き＝見て文法を学ぶ）と
  * GALLERY（ショーケース＝高 ceiling の作例）。種まき先は LEARN_DIR / GALLERY_DIR。
  * コメント・空行は整形で保持されるので、コメントが学習ガイドとして機能する。
  * 座標は x,y ∈ [0,1]、t は経過秒。
+ *
+ * 【ループ規約】作品は loop（既定 tau）で**きっちりループ**させる（GIF/MP4 の継ぎ目なし）。
+ * t は必ず周期 tau の整数分の 1 で使う:
+ *   - OK: sin(k*t) / cos(k*t)（k は整数）、ノイズ/fbm 領域を cos(t)/sin(t) で公転、
+ *         draw の角度を +t（1 周/loop）
+ *   - NG: t の線形ドリフト（t*0.1 等）、非整数倍（t*1.3 等）, sin(t*0.5)（半周期）
+ * 状態場(cells/field{})は連続発展で周期を持たないためループ対象外（warmup クリップ）。
  */
 const LEARN_SAMPLES = [
   {
@@ -148,7 +155,7 @@ view: dither(2)
 s = 0
 repeat 4 as k {
   cx = 0.5 + 0.28 * cos(t + k*1.7)
-  cy = 0.5 + 0.28 * sin(t*1.3 + k*1.7)
+  cy = 0.5 + 0.28 * sin(t + k*1.7)
   s = s + 0.012 / ((x - cx)*(x - cx) + (y - cy)*(y - cy) + 0.001)
 }
 s / (s + 1)`,
@@ -161,7 +168,7 @@ s / (s + 1)`,
 draw {
   clear
   repeat 24 as k {
-    a = k * (TAU / 24) + t*0.2
+    a = k * (TAU / 24) + t
     line(0.5, 0.5, 0.5 + cos(a)*0.45, 0.5 + sin(a)*0.45)
   }
 }`,
@@ -288,7 +295,7 @@ clamp(1 - m/120, 0, 1)`,
   {
     // CURL: fbm でドメインワープした正弦の縞 → 大理石 / 墨流し
     file: "curl" + EXT,
-    src: HEADER + `qx = fbm(x*3 + t*0.1, y*3, 4)
+    src: HEADER + `qx = fbm(x*3 + cos(t)*0.3, y*3 + sin(t)*0.3, 4)
 qy = fbm(x*3 + 4.2, y*3 + 1.7, 4)
 w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
 0.5 + 0.5 * sin(x*20 + w*8 + t)`,
@@ -296,7 +303,7 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
   {
     // WORLEY: セルラーノイズ（最近傍距離）。細胞 / 石畳模様
     file: "worley" + EXT,
-    src: HEADER + `1 - worley(x*6 + sin(t*0.5)*0.5, y*6)`,
+    src: HEADER + `1 - worley(x*6 + cos(t)*0.4, y*6 + sin(t)*0.4)`,
   },
   {
     // ATTRACT: de Jong カオス力学系。seed でガチャ・ノイズ場で蠢く点描。
