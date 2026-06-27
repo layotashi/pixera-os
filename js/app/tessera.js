@@ -583,6 +583,13 @@ let winId = null;
 // 再レンダーせず直近バッファを再ブリット＝低 fps はカクつき・cells も fps で step。
 let _pvCache = null; // 直近に描いた pv（{buf,w,h}）
 let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描画）
+// cells は初期状態が黒く、模様が育つまで warmup（多数 step）が要る。起動直後にこれを
+// 数フレームへ時間分散して一気に発展させ（黒画面なし・フリーズなし）、以降は fps で再生。
+let _cellsWarm = 0; // cells プレビューが進めた warmup step 数（recompile/reseed で 0）
+// 直近の cells base 1-bit（ルーペが再 warmup せず再利用するためのスナップショット）。
+let _cellsBase = null,
+  _cellsBaseW = 0,
+  _cellsBaseH = 0;
 
 // ── 等倍（1:1）ルーペ・インスペクト ──
 // プレビューをドラッグすると、その瞬間を凍結して出力を等倍（1 アートドット = pixel 画面px
@@ -614,6 +621,8 @@ let _seeded = false;
 
 function recompile(src) {
   _pvFrame = -1; // コード変更（fps 含む）は即プレビューへ反映
+  _cellsWarm = 0; // 別プログラム＝cells は warmup からやり直し
+  _cellsBase = null;
   try {
     program = compile(src);
     errMsg = "";
@@ -862,6 +871,12 @@ function renderPreview(t, seed, mode, params, ascii, isCells) {
   ensureSurface(raW, raH);
   program.render(surface, t, seed); // surface.buf = raW×raH の art（評価解像度で直接）
   const base = ArtExport.composeMatte(surface.buf, raW, raH, rbW, rbH);
+  // cells はルーペが再 warmup せず再利用できるよう、育った base をスナップショット。
+  if (isCells) {
+    _cellsBase = base;
+    _cellsBaseW = rbW;
+    _cellsBaseH = rbH;
+  }
 
   if (displayScale === 1) return { buf: base, w: rbW, h: rbH };
   // 整数 NN 拡大（チャンキー・モアレ無し）。
@@ -896,32 +911,30 @@ const clampDot = (v, total, crop) => Math.max(0, Math.min(v, Math.max(0, total -
  * @returns {Uint8Array|null} baseW×baseH の 1-bit（コンパイル不能なら null）
  */
 function renderInspectBase(t) {
+  const { baseW, baseH, artW, artH } = outputDims();
+  inspectBW = baseW;
+  inspectBH = baseH;
+  inspectPixel = resolvedConfig().pixel;
+  // cells: 320 step の再 warmup は ~1秒フリーズするので絶対にやらない。プレビューが
+  // 既に育てた base スナップショット（_cellsBase）を base 解像度へ NN 拡大して即返す。
+  // 「画面に出ているものを 1:1 で見る」というルーペの趣旨にも合致（再 warmup は別模様）。
+  if (program && program.kind === "cells") {
+    if (!_cellsBase) return null; // プレビュー未実行（基本起こらない）
+    return ArtExport.resampleNN(_cellsBase, _cellsBaseW, _cellsBaseH, baseW, baseH);
+  }
+  // field/draw: 別 compile して art 解像度で凍結（プレビューより高精細）。
   let prog;
   try {
     prog = compile(editor.getText());
   } catch {
     return null;
   }
-  const { baseW, baseH, artW, artH, fps } = outputDims();
   const eff = effectiveRender();
   const ascii = eff.mode === "ascii" && prog.kind !== "draw";
   const seed = resolvedConfig().seed;
-  let artBuf;
-  if (prog.kind === "cells") {
-    const cw = Math.min(artW, CELLS_SIM_CAP);
-    const ch = Math.max(1, Math.round((cw * artH) / artW));
-    const sim = makeExportSurface(cw, ch, ascii, eff.mode, eff.params);
-    for (let i = 0; i <= CELLS_WARMUP; i++) prog.render(sim, i / fps, seed);
-    artBuf = ArtExport.resampleNN(sim.buf, cw, ch, artW, artH);
-  } else {
-    const surf = makeExportSurface(artW, artH, ascii, eff.mode, eff.params);
-    prog.render(surf, t, seed);
-    artBuf = surf.buf;
-  }
-  inspectBW = baseW;
-  inspectBH = baseH;
-  inspectPixel = resolvedConfig().pixel;
-  return ArtExport.composeMatte(artBuf, artW, artH, baseW, baseH);
+  const surf = makeExportSurface(artW, artH, ascii, eff.mode, eff.params);
+  prog.render(surf, t, seed);
+  return ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
 }
 
 /** ルーペ開始: いまの瞬間を凍結し、クリック点を中心にクロップを置く。 */
@@ -1128,22 +1141,32 @@ function onDraw(cr) {
     // ASCII は場(field/cells)専用。draw では無効化（線画なので不適）。
     asciiActive = activeMode === "ascii" && program.kind !== "draw";
     const { seed, period, fps } = resolvedConfig();
+    const isCells = program.kind === "cells";
     // WYSIWYG: プレビューを宣言 fps のフレームグリッドへ量子化（書き出しと同じ間引き・速度）。
     // フレーム番号が変わったときだけ再レンダー（cells はこのとき 1 step 進む）。
     const frameIdx = Math.floor(((performance.now() - t0) / 1000) * fps);
     let t = frameIdx / fps;
     // field/draw は t を [0,period) で周回＝プレビューが実際にループ（見た目＝書き出し）。
     // cells は状態を持ち周期がないので周回させない（period 対象外）。
-    if (program.kind !== "cells") t %= period;
-    if (frameIdx !== _pvFrame || _pvCache === null) {
-      try {
-        _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive, program.kind === "cells");
+    if (!isCells) t %= period;
+    try {
+      if (isCells && _cellsWarm < CELLS_WARMUP) {
+        // 起動直後の warmup を時間予算(~8ms/フレーム)で分散実行。黒画面/フリーズ無しで
+        // ~1 秒で発展し、export の warmup 済み状態と一致する（以降は fps で再生）。
+        const deadline = performance.now() + 8;
+        do {
+          _pvCache = renderPreview(_cellsWarm / fps, seed, activeMode, activeParams, asciiActive, true);
+          _cellsWarm++;
+        } while (_cellsWarm < CELLS_WARMUP && performance.now() < deadline);
+        _pvFrame = frameIdx; // 以降の fps 再生の基準を合わせる
+      } else if (frameIdx !== _pvFrame || _pvCache === null) {
+        _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive, isCells);
         _pvFrame = frameIdx;
-      } catch (e) {
-        program = null;
-        errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
-        _pvCache = null;
       }
+    } catch (e) {
+      program = null;
+      errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
+      _pvCache = null;
     }
     const pv = _pvCache;
     if (pv) {
