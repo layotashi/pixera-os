@@ -680,28 +680,34 @@ function rerollSeed() {
 }
 
 /**
- * プレビュー 1-bit バッファを作る。**クリーンな倍率のみ**で表示する（半端比率の縮小は
- * 汚いモアレを生むため不可）。base(=出力÷pixel) を枠 PV_BOX に対し:
- *   - base ≤ 枠 … 整数倍 NN 拡大（1 アートドット = 整数px。チャンキー）。
- *   - base > 枠 … 1/整数 に評価解像度を落として描く（場を粗く標本化＝再ディザ不要・モアレ無し）。
- * 場を評価解像度で直接描く（合成後の再標本化はしない）ので常に綺麗。
- * @returns {{ buf:Uint8Array, w:number, h:number }} 画面に出す 1-bit バッファと寸法
+ * プレビューの評価解像度(renderDenom)・表示倍率(displayScale)・最終寸法(w,h)を求める
+ * （描画はしない）。**クリーンな倍率のみ**: base ≤ 枠 PV_BOX なら整数倍 NN 拡大、超える
+ * なら 1/整数 に評価解像度を落とす（半端比率のモアレを避ける）。onMeasure とも共有し、
+ * ウィンドウは実プレビュー寸法ちょうどに収める（PV_BOX 予約による右下の余白を作らない）。
  */
-function renderPreview(t, seed, mode, params, ascii) {
-  const { baseW, baseH, artW, artH } = outputDims();
-  const padBase = (baseW - artW) / 2; // 額縁（base 上、上下左右一定）
+function previewScale(ascii) {
+  const { baseW, baseH } = outputDims();
   const maxBase = Math.max(baseW, baseH);
-
-  // 評価解像度の分母 renderDenom（1/N）と画面表示の整数倍 displayScale を決める。
   let renderDenom = 1,
     displayScale = 1;
   if (maxBase <= PV_BOX) displayScale = Math.max(1, Math.floor(PV_BOX / maxBase));
   else renderDenom = Math.ceil(maxBase / PV_BOX);
-  // ASCII はグリフを拡大すると汚いので等倍表示・枠に収まる評価解像度に。
+  // ASCII はグリフを拡大すると汚いので等倍表示。
   if (ascii && displayScale > 1) displayScale = 1;
-
   const rbW = Math.max(1, Math.round(baseW / renderDenom));
   const rbH = Math.max(1, Math.round(baseH / renderDenom));
+  return { renderDenom, displayScale, rbW, rbH, w: rbW * displayScale, h: rbH * displayScale };
+}
+
+/**
+ * プレビュー 1-bit バッファを作る。previewScale の倍率で場を評価解像度で直接描く
+ * （合成後の再標本化はしない）ので常に綺麗。
+ * @returns {{ buf:Uint8Array, w:number, h:number }} 画面に出す 1-bit バッファと寸法
+ */
+function renderPreview(t, seed, mode, params, ascii) {
+  const { baseW, artW } = outputDims();
+  const padBase = (baseW - artW) / 2; // 額縁（base 上、上下左右一定）
+  const { renderDenom, displayScale, rbW, rbH } = previewScale(ascii);
   const rpad = Math.round(padBase / renderDenom);
   const raW = Math.max(1, rbW - 2 * rpad);
   const raH = Math.max(1, rbH - 2 * rpad);
@@ -909,11 +915,13 @@ function onInput(ev) {
 }
 
 function onMeasure() {
-  // トップツールバーが全幅に渡り、その下に [エディタ | プレビュー]。ウィンドウ幅は
-  // 「ツールバー幅」と「エディタ + プレビュー幅」の広い方。
-  const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + PV_BOX);
+  // トップツールバーが全幅に渡り、その下に [エディタ | プレビュー]。ウィンドウは
+  // 「ツールバー幅」と「エディタ + 実プレビュー幅」の広い方ちょうど（PV_BOX 予約で
+  // 余白を作らない＝プレビューが右下端に揃う）。
+  const pv = previewScale(asciiActive);
+  const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + pv.w);
   const w = editor.x + contentW + UI.FOCUS_MARGIN;
-  const bodyH = editor.y + Math.max(editor.h, PV_BOX); // プレビューはエディタと同じ上端
+  const bodyH = editor.y + Math.max(editor.h, pv.h); // プレビューはエディタと同じ上端
   const h = bodyH + UI.FOCUS_MARGIN;
   return { w, h };
 }
