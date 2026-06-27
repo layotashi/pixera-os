@@ -862,8 +862,11 @@ function onDraw(cr) {
   group.draw(cr);
 
   // ── 右: ライブプレビュー（エディタの右・ツールバーの下。size アスペクト比を反映）──
+  // プレビュー枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）。エディタ枠は
+  // drawRoundRect(editor.x,editor.y,…) で枠が widget 上端そのもの。枠ボーダー同士を
+  // 揃えるため pvY を +1（→ 枠上端 pvY-1 = editor.y）。
   const pvX = cr.x + editor.x + editor.w + GAP;
-  const pvY = cr.y + editor.y;
+  const pvY = cr.y + editor.y + 1;
 
   if (program) {
     // 実効方式（view: があればコードが決める。無ければ既定 dither）。
