@@ -63,8 +63,7 @@ const ROWS = 16; // エディタ表示行数
 const MAX_LINES = 9999;
 const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
 // プレビューは出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で見せる
-// ＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。cells は重いので評価解像度を抑える。
-const PV_CELLS_CAP = 120; // cells の art 評価上限px（毎フレーム step で重いため）
+// ＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。
 const GAP = 8; // エディタ⇄プレビュー間
 
 /** 起動時 / 新規の既定スケッチ。設定ディレクティブの雛形を兼ね、書き方を示す。 */
@@ -86,10 +85,8 @@ sin(x*8 - t) * cos(y*8 + t*2) * 0.5 + 0.5`;
  *
  * 【ループ規約】作品は period（既定 tau）で**きっちりループ**させる（GIF/MP4 の継ぎ目なし）。
  * t は必ず周期 tau の整数分の 1 で使う:
- *   - OK: sin(k*t) / cos(k*t)（k は整数）、ノイズ/fbm 領域を cos(t)/sin(t) で公転、
- *         draw の角度を +t（1 周/period）
+ *   - OK: sin(k*t) / cos(k*t)（k は整数）、ノイズ/fbm 領域を cos(t)/sin(t) で公転
  *   - NG: t の線形ドリフト（t*0.1 等）、非整数倍（t*1.3 等）, sin(t*0.5)（半周期）
- * 状態場(cells/field{})は連続発展で周期を持たないためループ対象外（warmup クリップ）。
  */
 const LEARN_SAMPLES = [
   {
@@ -163,58 +160,11 @@ repeat 4 as k {
 }
 s / (s + 1)`,
   },
-  {
-    file: "09_draw" + EXT,
-    src: `// draw {} is procedural: point / line
-// commands in 0..1. no auto-clear, so
-// you can build up. a spinning fan:
-draw {
-  clear
-  repeat 24 as k {
-    a = k * (TAU / 24) + t
-    line(0.5, 0.5, 0.5 + cos(a)*0.45, 0.5 + sin(a)*0.45)
-  }
-}`,
-  },
-  {
-    file: "10_cells" + EXT,
-    src: `// field {} keeps per-cell state,
-// updated each frame (init/step/show).
-// lap()/nbr()/sum8() read neighbours.
-// this majority-vote CA grows blobs.
-field {
-  init: rnd(x*24, y*24)
-  step: clamp(s + (sum8()/8 - 0.5) * 0.6, 0, 1)
-  show: step(0.5, s)
-}`,
-  },
-  {
-    file: "11_reaction" + EXT,
-    src: `// channels can react to each other:
-// real reaction-diffusion.
-// gray-scott: u feeds v, v eats u.
-// spots, stripes, self-replication.
-field {
-  Du = 0.16
-  Dv = 0.08
-  f = 0.06
-  k = 0.062
-  u: {
-    init: 1
-    step: u + Du*lap() - u*v*v + f*(1 - u)
-  }
-  v: {
-    init: 1 - step(0.07, dist(x, y, 0.5, 0.5)) + rnd(x*99, y*99)*0.02
-    step: v + Dv*lap() + u*v*v - (f + k)*v
-  }
-  show: v
-}`,
-  },
 ];
 
 // 作品(GALLERY)は全ディレクティブを冒頭に明示する（調整時に一覧を調べずその場で直せる）。
 // お決まり順 = キャンバス(canvas/pad) → 時間(fps/period) → seed → view。値は既定どおり
-// なので見た目は不変＝「全ノブが見えて編集できる」状態にするだけ。draw は線画で view 非適用。
+// なので見た目は不変＝「全ノブが見えて編集できる」状態にするだけ。
 const HEADER = `canvas: 1080x1080
 pad: 80
 fps: 20
@@ -223,19 +173,8 @@ seed: 0
 view: dither(2)
 
 `;
-const HEADER_DRAW = `canvas: 1080x1080
-pad: 80
-fps: 20
-period: tau
-seed: 0
 
-`;
-
-// GALLERY はパラダイム別にサブフォルダへ種まきする＝どのアルゴリズムがどの形になるかを
-// EXPLORER で一覧できる。将来 pure-field へ一本化するなら DRAW/CELLS 配列ごと消すだけ。
-
-// field: 純粋関数 f(x,y,t)→level（状態なし・任意の x,y,t を直接サンプル可）
-const GALLERY_FIELD = [
+const GALLERY_SAMPLES = [
   {
     // WAVE: 複数点源の同心波の干渉。seed で点源位置と周波数が変わる
     file: "wave" + EXT,
@@ -345,100 +284,18 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
   },
 ];
 
-// draw: point/line を発行する命令型（全ピクセルではなく疎な点/線＝アトラクタ系）
-const GALLERY_DRAW = [
-  {
-    // ATTRACT: de Jong カオス力学系。seed でガチャ・ノイズ場でごく僅かに揺らぐ点描。
-    // params は seed で固定（t で morph させると非カオス領域を通過して構造が一瞬潰れ
-    // 全体が点滅するため）。アトラクタ本来の形を保つのが主役なので、ワープは弱く
-    // （低周波 0.4・振幅 0.25 ＝ ±0.125）「少しだけ蠢く」程度に留める。ノイズ標本点は
-    // cos/sin(t) で公転＝周期 tau でシームレスにループ。下地 [-2,2]＋ワープを /4.4 で枠内。
-    file: "attractor" + EXT,
-    src: HEADER_DRAW + `// de Jong strange attractor.
-// ctrl+R rerolls the shape; a slow
-// noise field makes it shimmer (loops).
-draw {
-  clear
-  sa = step(0.5, rnd(5, 0))*2 - 1
-  sb = step(0.5, rnd(6, 0))*2 - 1
-  sc = step(0.5, rnd(7, 0))*2 - 1
-  sd = step(0.5, rnd(8, 0))*2 - 1
-  a = sa*(1.2 + rnd(1, 0)*0.8)
-  b = sb*(1.2 + rnd(2, 0)*0.8)
-  c = sc*(1.2 + rnd(3, 0)*0.8)
-  d = sd*(1.2 + rnd(4, 0)*0.8)
-  x = 0
-  y = 0
-  repeat 35000 {
-    nx = sin(a*y) - cos(b*x)
-    ny = sin(c*x) - cos(d*y)
-    x = nx
-    y = ny
-    wx = x + (noise(x*0.4 + cos(t)*0.5, y*0.4 + sin(t)*0.5) - 0.5)*0.25
-    wy = y + (noise(x*0.4 + cos(t)*0.5 + 19, y*0.4 + sin(t)*0.5 + 7) - 0.5)*0.25
-    point(wx/4.4 + 0.5, wy/4.4 + 0.5)
-  }
-}`,
-  },
-];
-
-// cells: field{init/step/show} 状態を持つ漸化（前フレーム＋近傍＝反応拡散/CA）
-const GALLERY_CELLS = [
-  {
-    // GIERER-MEINHARDT: 活性 a / 抑制 h。斑点状チューリングパターン
-    file: "gierer" + EXT,
-    src: HEADER + `field {
-  Da = 0.04
-  Dh = 0.25
-  rate = 0.06
-  ka = 0.1
-  a: {
-    init: 1 + (rnd(x*40, y*40) - 0.5)*0.1
-    step: clamp(a + Da*lap() + rate*(a*a/((h + 0.001)*(1 + ka*a*a)) - a), 0, 50)
-  }
-  h: {
-    init: 1 + (rnd(x*40 + 9, y*40 + 9) - 0.5)*0.1
-    step: clamp(h + Dh*lap() + rate*(a*a - h), 0.001, 50)
-  }
-  show: smoothstep(0.8, 3, a)
-}`,
-  },
-  {
-    // BZ: 励起性媒質。対称性を破る初期値かららせん波 / ターゲット波。
-    // seed で初期フロント位置とノイズが変わる＝別の渦/波が育つ
-    file: "bz" + EXT,
-    src: HEADER + `field {
-  Du = 0.18
-  eps = 0.05
-  a1 = 0.6
-  dt = 0.5
-  u: {
-    init: step(rnd(1, 0)*0.5 + 0.25, x)*2 - 1
-    step: clamp(u + Du*lap() + dt*(u - u*u*u - v), -2, 2)
-  }
-  v: {
-    init: step(rnd(2, 0)*0.5 + 0.25, y)*0.6 - 0.3 + (rnd(x*16, y*16) - 0.5)*0.2
-    step: clamp(v + dt*eps*(u - a1*v), -2, 2)
-  }
-  show: smoothstep(-0.4, 0.6, u)
-}`,
-  },
-];
-
 // ── レンダーモード（場 → 1-bit。共有 core/field_render.js を使う） ──
-// 場プログラム(field/cells)の blitField を共有レンダラへ通す。draw プログラムは
-// point/line を直接バッファへ描くので無関係。方式は view: でコードから宣言する。
+// 場の blitField を共有レンダラへ通す。方式は view: でコードから宣言する。
 const RENDER_MODES = ["dither", "ascii", "hatch", "halftone", "braille"];
 
 // ── ASCII（場 → 文字グリッド → グリフ）。共有コア core/ascii_art.js を使う ──
-// ASCII は場(field/cells)専用。draw は線画なので不適 → asciiActive で場のみゲート。
 const ASCII_RAMP_CHARS = " .-:;+=*&%@$#";
 let _asciiRamp = null;
 function asciiRamp() {
   if (!_asciiRamp) _asciiRamp = AsciiArt.buildToneRamp(ASCII_RAMP_CHARS);
   return _asciiRamp;
 }
-let asciiActive = false; // onDraw で確定（ascii モード かつ 場プログラム）
+let asciiActive = false; // onDraw で確定（ascii モードか）
 // 方式パラメータの既定（view: で個別指定が無いとき）。
 const MODE_PARAMS = {
   ditherSize: 2,
@@ -467,8 +324,6 @@ const PIXEL = 8; // 固定。1 アートドット = 8 出力px（チャンキー
 // fps は全て 100 の約数。GIF の遅延はセンチ秒(1/100s)整数なので、約数でないと
 // round(100/fps) の丸めで再生速度がズレ・ループ長も狂う（MP4 は μ秒で約数不問だが統一）。
 const FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
-const CELLS_SIM_CAP = 128; // cells のシミュ格子 長辺上限（出力解像度だと重い）
-const CELLS_WARMUP = 320; // 書き出し前に回すステップ数（模様を発展させる）
 const TAU = Math.PI * 2; // period 既定（t を sin/cos に通す作例の 1 周期）
 const PERIOD_CAP_S = 30; // 動画 1 本の上限秒（period をこの長さでクランプ）
 const DEFAULTS = { sizeW: 1080, sizeH: 1080, pad: 80, fps: 20, seed: 0, period: TAU };
@@ -589,16 +444,9 @@ let t0 = performance.now();
 let winId = null;
 
 // プレビューを宣言 fps のフレームグリッドに同期（WYSIWYG）。フレームが変わるまで
-// 再レンダーせず直近バッファを再ブリット＝低 fps はカクつき・cells も fps で step。
+// 再レンダーせず直近バッファを再ブリット＝低 fps はカクつき。
 let _pvCache = null; // 直近に描いた pv（{buf,w,h}）
 let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描画）
-// cells は初期状態が黒く、模様が育つまで warmup（多数 step）が要る。起動直後にこれを
-// 数フレームへ時間分散して一気に発展させ（黒画面なし・フリーズなし）、以降は fps で再生。
-let _cellsWarm = 0; // cells プレビューが進めた warmup step 数（recompile/reseed で 0）
-// 直近の cells base 1-bit（ルーペが再 warmup せず再利用するためのスナップショット）。
-let _cellsBase = null,
-  _cellsBaseW = 0,
-  _cellsBaseH = 0;
 
 // ── 等倍（1:1）ルーペ・インスペクト ──
 // プレビューをドラッグすると、その瞬間を凍結して出力を等倍（1 アートドット = pixel 画面px
@@ -630,8 +478,6 @@ let _seeded = false;
 
 function recompile(src) {
   _pvFrame = -1; // コード変更（fps 含む）は即プレビューへ反映
-  _cellsWarm = 0; // 別プログラム＝cells は warmup からやり直し
-  _cellsBase = null;
   try {
     program = compile(src);
     errMsg = "";
@@ -708,12 +554,7 @@ function seedSamples() {
     }
   };
   seedInto(LEARN_DIR, LEARN_SAMPLES); // 番号順チュートリアル
-  // GALLERY は形(field/draw/cells)別にサブフォルダへ＝どの算法がどの形かを一覧できる
-  // （mkdir は非再帰なので親 GALLERY_DIR を先に作る）
-  VFS.mkdir(GALLERY_DIR);
-  seedInto(GALLERY_DIR + "/Field", GALLERY_FIELD);
-  seedInto(GALLERY_DIR + "/Draw", GALLERY_DRAW);
-  seedInto(GALLERY_DIR + "/Cells", GALLERY_CELLS);
+  seedInto(GALLERY_DIR, GALLERY_SAMPLES); // 作例ショーケース
 }
 
 // ── タイトル ──
@@ -850,10 +691,10 @@ function rerollSeed() {
  * 汚いモアレを生むため不可）。base(=出力÷pixel) を枠 PV_BOX に対し:
  *   - base ≤ 枠 … 整数倍 NN 拡大（1 アートドット = 整数px。チャンキー）。
  *   - base > 枠 … 1/整数 に評価解像度を落として描く（場を粗く標本化＝再ディザ不要・モアレ無し）。
- * 場を評価解像度で直接描く（合成後の再標本化はしない）ので常に綺麗。cells は重いので更に抑える。
+ * 場を評価解像度で直接描く（合成後の再標本化はしない）ので常に綺麗。
  * @returns {{ buf:Uint8Array, w:number, h:number }} 画面に出す 1-bit バッファと寸法
  */
-function renderPreview(t, seed, mode, params, ascii, isCells) {
+function renderPreview(t, seed, mode, params, ascii) {
   const { baseW, baseH, artW, artH } = outputDims();
   const padBase = (baseW - artW) / 2; // 額縁（base 上、上下左右一定）
   const maxBase = Math.max(baseW, baseH);
@@ -865,16 +706,6 @@ function renderPreview(t, seed, mode, params, ascii, isCells) {
   else renderDenom = Math.ceil(maxBase / PV_BOX);
   // ASCII はグリフを拡大すると汚いので等倍表示・枠に収まる評価解像度に。
   if (ascii && displayScale > 1) displayScale = 1;
-  // cells は毎フレーム step で重い → 評価解像度の上限を更に低く。ただし表示サイズは
-  // 他の kind と揃える（粗くレンダーした分を整数 NN で枠に収まるよう拡大）。揃えないと
-  // 同じ canvas でも cells だけプレビューが小さく見える。ascii は拡大すると汚いので等倍。
-  if (isCells) {
-    const minDenom = Math.ceil(maxBase / PV_CELLS_CAP);
-    if (renderDenom < minDenom) {
-      renderDenom = minDenom;
-      displayScale = ascii ? 1 : Math.max(1, Math.floor(PV_BOX / Math.round(maxBase / renderDenom)));
-    }
-  }
 
   const rbW = Math.max(1, Math.round(baseW / renderDenom));
   const rbH = Math.max(1, Math.round(baseH / renderDenom));
@@ -885,12 +716,6 @@ function renderPreview(t, seed, mode, params, ascii, isCells) {
   ensureSurface(raW, raH);
   program.render(surface, t, seed); // surface.buf = raW×raH の art（評価解像度で直接）
   const base = ArtExport.composeMatte(surface.buf, raW, raH, rbW, rbH);
-  // cells はルーペが再 warmup せず再利用できるよう、育った base をスナップショット。
-  if (isCells) {
-    _cellsBase = base;
-    _cellsBaseW = rbW;
-    _cellsBaseH = rbH;
-  }
 
   if (displayScale === 1) return { buf: base, w: rbW, h: rbH };
   // 整数 NN 拡大（チャンキー・モアレ無し）。
@@ -921,7 +746,7 @@ const clampDot = (v, total, crop) => Math.max(0, Math.min(v, Math.max(0, total -
 
 /**
  * 現在のソースを別実体でコンパイルし、出力 base 解像度の 1-bit を凍結生成する。
- * プレビューの状態場を壊さないよう書き出しと同じく別 compile（cells は warmup）。
+ * art 解像度で凍結する（プレビューより高精細）。
  * @returns {Uint8Array|null} baseW×baseH の 1-bit（コンパイル不能なら null）
  */
 function renderInspectBase(t) {
@@ -929,14 +754,6 @@ function renderInspectBase(t) {
   inspectBW = baseW;
   inspectBH = baseH;
   inspectPixel = resolvedConfig().pixel;
-  // cells: 320 step の再 warmup は ~1秒フリーズするので絶対にやらない。プレビューが
-  // 既に育てた base スナップショット（_cellsBase）を base 解像度へ NN 拡大して即返す。
-  // 「画面に出ているものを 1:1 で見る」というルーペの趣旨にも合致（再 warmup は別模様）。
-  if (program && program.kind === "cells") {
-    if (!_cellsBase) return null; // プレビュー未実行（基本起こらない）
-    return ArtExport.resampleNN(_cellsBase, _cellsBaseW, _cellsBaseH, baseW, baseH);
-  }
-  // field/draw: 別 compile して art 解像度で凍結（プレビューより高精細）。
   let prog;
   try {
     prog = compile(editor.getText());
@@ -944,7 +761,7 @@ function renderInspectBase(t) {
     return null;
   }
   const eff = effectiveRender();
-  const ascii = eff.mode === "ascii" && prog.kind !== "draw";
+  const ascii = eff.mode === "ascii";
   const seed = resolvedConfig().seed;
   const surf = makeExportSurface(artW, artH, ascii, eff.mode, eff.params);
   prog.render(surf, t, seed);
@@ -955,7 +772,7 @@ function renderInspectBase(t) {
 function enterInspect(px, py) {
   // 画面に出ている量子化フレームを凍結（WYSIWYG）。
   const { period, fps } = resolvedConfig();
-  const frozenT = program.kind === "cells" ? 0 : (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
+  const frozenT = (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
   const base = renderInspectBase(frozenT);
   if (!base) return;
   inspectBase = base;
@@ -1002,11 +819,10 @@ function blitInspect(pvX, pvY) {
 }
 
 // ── 書き出し（PNG / GIF / MP4）──
-// プレビューと独立した surface・プログラム実体でオフスクリーン描画する（プレビューの
-// 状態場を壊さないため、書き出し時はソースを別途 compile する）。field/draw は art 解像度で
-// 直接描き、cells はキャップ格子で warmup→NN 拡大。合成・符号化は core/art_export.js。
+// プレビューと独立した surface・プログラム実体でオフスクリーン描画する（書き出し時は
+// ソースを別途 compile する）。場を art 解像度で直接描く。合成・符号化は core/art_export.js。
 
-/** 任意サイズの 1-bit バッファへ「場 → 1-bit / draw 線画」を描くオフスクリーン surface。 */
+/** 任意サイズの 1-bit バッファへ「場 → 1-bit」を描くオフスクリーン surface。 */
 function makeExportSurface(w, h, asciiOn, mode, params) {
   const surf = makeBufferSurface(w, h);
   if (asciiOn) {
@@ -1051,51 +867,30 @@ function exportArt() {
   const eff = effectiveRender();
   const mode = eff.mode,
     params = eff.params;
-  const asciiOn = mode === "ascii" && prog.kind !== "draw";
-  const isCells = prog.kind === "cells";
+  const asciiOn = mode === "ascii";
   const { seed, period } = resolvedConfig();
 
-  // cells は出力解像度だと重い → キャップ格子で warmup（模様を発展させる）。
-  let sim = null,
-    cw = 0,
-    ch = 0;
-  if (isCells) {
-    cw = Math.min(artW, CELLS_SIM_CAP);
-    ch = Math.max(1, Math.round((cw * artH) / artW));
-    sim = makeExportSurface(cw, ch, asciiOn, mode, params);
-  }
-  // t→art 解像度バッファ。cells は sim を 1 step 進めて NN 拡大、それ以外は art で直接描画。
-  const artAt = (t, stepCells) => {
-    if (isCells) {
-      if (stepCells) prog.render(sim, t, seed);
-      return ArtExport.resampleNN(sim.buf, cw, ch, artW, artH);
-    }
+  // t→art 解像度バッファを描く（場を art で直接描画）。
+  const artAt = (t) => {
     const surf = makeExportSurface(artW, artH, asciiOn, mode, params);
     prog.render(surf, t, seed);
     return surf.buf;
   };
 
   try {
-    if (isCells) for (let i = 0; i <= CELLS_WARMUP; i++) prog.render(sim, i / fps, seed);
-
     if (key === "png") {
       // 画面に出ている量子化フレームと同じ t を捕らえる（WYSIWYG）。
-      const t = isCells
-        ? CELLS_WARMUP / fps
-        : (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
-      const base = ArtExport.composeMatte(artAt(t, false), artW, artH, baseW, baseH);
+      const t = (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
+      const base = ArtExport.composeMatte(artAt(t), artW, artH, baseW, baseH);
       ArtExport.downloadPng(base, baseW, baseH, pixel, false, exportName("png"));
     } else {
       // GIF/MP4: period 秒ぶん（= period×fps フレーム、上限 PERIOD_CAP_S 秒）を集める。
-      // field/draw は t∈[0,period) を等間隔サンプル＝シームレスループ（末尾の次が t=0）。
-      // cells は周期がないので warmup 後の連続ステップ（period 秒の発展クリップ）。
+      // t∈[0,period) を等間隔サンプル＝シームレスループ（末尾の次が t=0）。
       const loopFrames = clampI(period * fps, 2, PERIOD_CAP_S * fps);
       const frames = [];
       for (let i = 0; i < loopFrames; i++) {
-        const t = isCells
-          ? (CELLS_WARMUP + 1 + i) / fps
-          : (i / loopFrames) * period;
-        frames.push(ArtExport.composeMatte(artAt(t, true), artW, artH, baseW, baseH));
+        const t = (i / loopFrames) * period;
+        frames.push(ArtExport.composeMatte(artAt(t), artW, artH, baseW, baseH));
       }
       statusText = `ENCODING ${key.toUpperCase()}...`;
       ArtExport.exportVideo(
@@ -1152,29 +947,16 @@ function onDraw(cr) {
     const eff = effectiveRender();
     activeMode = eff.mode;
     activeParams = eff.params;
-    // ASCII は場(field/cells)専用。draw では無効化（線画なので不適）。
-    asciiActive = activeMode === "ascii" && program.kind !== "draw";
+    asciiActive = activeMode === "ascii";
     const { seed, period, fps } = resolvedConfig();
-    const isCells = program.kind === "cells";
     // WYSIWYG: プレビューを宣言 fps のフレームグリッドへ量子化（書き出しと同じ間引き・速度）。
-    // フレーム番号が変わったときだけ再レンダー（cells はこのとき 1 step 進む）。
+    // フレーム番号が変わったときだけ再レンダー。
     const frameIdx = Math.floor(((performance.now() - t0) / 1000) * fps);
-    let t = frameIdx / fps;
-    // field/draw は t を [0,period) で周回＝プレビューが実際にループ（見た目＝書き出し）。
-    // cells は状態を持ち周期がないので周回させない（period 対象外）。
-    if (!isCells) t %= period;
+    // t を [0,period) で周回＝プレビューが実際にループ（見た目＝書き出し）。
+    const t = (frameIdx / fps) % period;
     try {
-      if (isCells && _cellsWarm < CELLS_WARMUP) {
-        // 起動直後の warmup を時間予算(~8ms/フレーム)で分散実行。黒画面/フリーズ無しで
-        // ~1 秒で発展し、export の warmup 済み状態と一致する（以降は fps で再生）。
-        const deadline = performance.now() + 8;
-        do {
-          _pvCache = renderPreview(_cellsWarm / fps, seed, activeMode, activeParams, asciiActive, true);
-          _cellsWarm++;
-        } while (_cellsWarm < CELLS_WARMUP && performance.now() < deadline);
-        _pvFrame = frameIdx; // 以降の fps 再生の基準を合わせる
-      } else if (frameIdx !== _pvFrame || _pvCache === null) {
-        _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive, isCells);
+      if (frameIdx !== _pvFrame || _pvCache === null) {
+        _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive);
         _pvFrame = frameIdx;
       }
     } catch (e) {
@@ -1202,11 +984,10 @@ function onDrawFooter(fr) {
     return;
   }
   const rc = resolvedConfig();
-  const kind = program ? program.kind.toUpperCase() : "-";
   // 書き出し中は進捗、平常は seed。出力外寸・実効 fps を左に併記（fps→100の約数への
   // スナップを可視化）。pixel は 8 固定なので表示しない。
   const right = statusText || `seed ${rc.seed}`;
-  const left = `${kind}  ${rc.sizeW}x${rc.sizeH}  ${rc.fps}fps`;
+  const left = `${rc.sizeW}x${rc.sizeH}  ${rc.fps}fps`;
   drawText(fr.x, fr.y, left, 1);
   drawText(fr.x + fr.w - textWidth(right), fr.y, right, 1);
 }
@@ -1264,12 +1045,12 @@ WM.wmRegister(
       onBeforeClose,
       about:
         "Tessera: a tiny language for 1-bit generative art. Write code on " +
-        "the left, watch it render on the right. Bare expressions are fields " +
-        "f(x,y,t); draw {} is procedural; field {} is a stateful cellular " +
-        "field (init/step/show). All settings live in code as directives: " +
+        "the left, watch it render on the right. A sketch is a field " +
+        "f(x,y,t) -> 0..1 (one expression; value blocks with let/repeat too). " +
+        "All settings live in code as directives: " +
         "canvas: WxH, pad: N, fps: N, seed: N, period: sec, view: mode(args) " +
         "(pixel is fixed at 8 = chunky 1-bit). " +
-        "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery/{Field,Draw,Cells}. " +
+        "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
         "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +
         "(PNG/GIF/MP4 at the declared size), Ctrl+R reseed, Shift+Alt+F format.",

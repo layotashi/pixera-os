@@ -2,8 +2,8 @@
  * @module lang/core/interp
  * interp.js — AST を JS ソースへ変換し `new Function` でネイティブ化するコンパイラ。
  *
- * 変数 (x/y/t/seed・チャンネル値・定数) は env.vars、場の近傍 (nbr/lap/sum8) は
- * env.funcs で渡す。stdlib の純関数・定数はコンパイル時に解決する。
+ * 変数 (x/y/t/seed・定数) は env.vars で渡す。stdlib の純関数・定数は
+ * コンパイル時に解決する。
  *
  * 設計: ツリー走査インタプリタを廃し、式は JS の式へ、repeat は実 for ループへ、
  * 変数はローカル変数（オブジェクト経由のハッシュ参照を排除）へ落とす。V8 が JIT し、
@@ -72,10 +72,10 @@ function genExpr(node, scopes, free) {
       return `(${a}${node.op}${b})`;
     }
     case "call": {
+      // stdlib 関数はコンパイル時に F へ束縛。未知の関数名は評価時に投げる。
+      if (!FUNCS[node.name]) return `UF(${q(node.name)},${node.pos})`;
       const args = node.args.map((x) => genExpr(x, scopes, free)).join(",");
-      // stdlib 関数はコンパイル時に F へ束縛。近傍 (nbr/lap/sum8) のみ env.funcs 経由。
-      if (FUNCS[node.name]) return `F[${q(node.name)}](${args})`;
-      return `(env.funcs&&env.funcs[${q(node.name)}]||UF(${q(node.name)},${node.pos}))(${args})`;
+      return `F[${q(node.name)}](${args})`;
     }
     case "fieldblock": {
       // 値ブロック: 代入/repeat を実行してから最終値を返す。IIFE で独自スコープを作る。
@@ -94,7 +94,7 @@ function genExpr(node, scopes, free) {
   }
 }
 
-/** 文 AST → JS ソース文字列（assign / repeat / cmd）。 */
+/** 文 AST → JS ソース文字列（assign / repeat）。 */
 function genStmt(s, scopes, free) {
   switch (s.t) {
     case "assign":
@@ -110,29 +110,8 @@ function genStmt(s, scopes, free) {
         `for(let ${ctr}=0;${ctr}<__n;${ctr}++){${setIdx}${body}}}`
       );
     }
-    case "cmd":
-      return genCmd(s, scopes, free);
     default:
       throw new LangError(`未知の文 '${s.t}'`, s.pos ?? 0);
-  }
-}
-
-/** 描画コマンド AST → JS ソース文字列（surface 呼び出し）。引数数は生成時に検査。 */
-function genCmd(s, scopes, free) {
-  const a = s.args.map((x) => genExpr(x, scopes, free));
-  switch (s.name) {
-    case "clear":
-      return `surface.clear(${a.length ? a[0] : 0});`;
-    case "stroke":
-      return `surface.stroke(${a.length ? a[0] : 1});`;
-    case "point":
-      if (a.length < 2) throw new LangError(`point(x, y) は引数2つ`, s.pos);
-      return `surface.point(Math.round((${a[0]})*W),Math.round((${a[1]})*H));`;
-    case "line":
-      if (a.length < 4) throw new LangError(`line(x0,y0,x1,y1) は引数4つ`, s.pos);
-      return `surface.line(Math.round((${a[0]})*W),Math.round((${a[1]})*H),Math.round((${a[2]})*W),Math.round((${a[3]})*H));`;
-    default:
-      throw new LangError(`未知のコマンド '${s.name}'`, s.pos);
   }
 }
 
@@ -157,26 +136,4 @@ export function compileExpr(node) {
   // eslint-disable-next-line no-new-func
   const fn = new Function("env", "F", "M", "UF", "UN", `${pre}return ${code};`);
   return (env) => fn(env, FUNCS, fmod, unknownFunc, unknownName);
-}
-
-/**
- * draw ブロックを `(surface, t, seed) => void` にコンパイルする。
- * 変数は 1 つのフラットスコープ（repeat 本体も同じ）。t/seed は自由変数。
- */
-export function compileDraw(body) {
-  _uid = 0;
-  const free = new Map();
-  const assigned = blockAssigns(body);
-  const scopes = [assigned];
-  let stmts = "";
-  for (const s of body) stmts += genStmt(s, scopes, free);
-  let decls = "";
-  for (const name of assigned) decls += `let _${name};`;
-  let pre = "";
-  for (const [name, pos] of free) pre += freeDecl(name, pos);
-  const code = `const W=surface.width(),H=surface.height();${pre}${decls}${stmts}`;
-  // eslint-disable-next-line no-new-func
-  const fn = new Function("env", "surface", "F", "M", "UF", "UN", code);
-  return (surface, t = 0, seed = 0) =>
-    fn({ vars: { t, seed } }, surface, FUNCS, fmod, unknownFunc, unknownName);
 }

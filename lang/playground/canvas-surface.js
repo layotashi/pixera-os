@@ -28,7 +28,6 @@ export function makeCanvasSurface(canvas, W, H, scale, fg, bg) {
   const offCtx = off.getContext("2d");
   const img = offCtx.createImageData(W, H);
   const fb = new Uint8Array(W * H); // 1-bit フレームバッファ
-  let strokeLevel = 1;
 
   function flush() {
     const d = img.data;
@@ -47,9 +46,6 @@ export function makeCanvasSurface(canvas, W, H, scale, fg, bg) {
     ctx.drawImage(off, 0, 0, W, H, 0, 0, canvas.width, canvas.height);
   }
 
-  const idx = (x, y) => (y | 0) * W + (x | 0);
-  const inb = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
-
   return {
     width: () => W,
     height: () => H,
@@ -57,41 +53,6 @@ export function makeCanvasSurface(canvas, W, H, scale, fg, bg) {
     blitField(buf, w, h) {
       const bits = ditherField(buf, w, h);
       fb.set(bits.subarray(0, W * H));
-    },
-    // ── Tier1 用の素朴な 1-bit 描画（present で反映） ──
-    clear(level = 0) {
-      fb.fill(level >= 0.5 ? 1 : 0);
-    },
-    stroke(level) {
-      strokeLevel = level;
-    },
-    point(x, y, level = strokeLevel) {
-      if (inb(x, y)) fb[idx(x, y)] = level >= 0.5 ? 1 : 0;
-    },
-    line(x0, y0, x1, y1) {
-      // Bresenham
-      x0 |= 0;
-      y0 |= 0;
-      x1 |= 0;
-      y1 |= 0;
-      const dx = Math.abs(x1 - x0),
-        dy = -Math.abs(y1 - y0);
-      const sx = x0 < x1 ? 1 : -1,
-        sy = y0 < y1 ? 1 : -1;
-      let err = dx + dy;
-      for (;;) {
-        if (inb(x0, y0)) fb[idx(x0, y0)] = strokeLevel >= 0.5 ? 1 : 0;
-        if (x0 === x1 && y0 === y1) break;
-        const e2 = 2 * err;
-        if (e2 >= dy) {
-          err += dy;
-          x0 += sx;
-        }
-        if (e2 <= dx) {
-          err += dx;
-          y0 += sy;
-        }
-      }
     },
   };
 }

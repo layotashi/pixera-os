@@ -337,7 +337,7 @@ SYNESTA 唯一の generative-art アプリ。1-bit 前提の小言語 **Tessera*
 
 **できること:**
 
-- Tier0 場 `f(x,y,t)` / 値ブロック、Tier1 `draw{}`、Tier2 状態場 `field{}`（反応拡散・CA）。
+- 場 `f(x,y,t)` を表す式 1 本（値ブロック＝代入 / `repeat` ＋ 最後に値の式 も可）。単一パラダイム。
 - **設定はすべてコードの設定ディレクティブ**で宣言: `canvas:` `pad:` `fps:` `seed:` `period:` `view:`（pixel は 8 固定＝廃止）。
   表示方式（dither/ascii/hatch/halftone/braille ＝ 1-bit で映える「面」系）は `view:` で指定。画面のコントロールは
   「書き出し形式 + DL」のみ＝最小。プレビューは `canvas:` のアスペクト比を反映。

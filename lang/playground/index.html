@@ -83,11 +83,9 @@
         <button data-ex="step(0.5, fract(x*8 + sin(y*6 + t)))">stripes</button>
         <button data-ex="smoothstep(0.2, 0.25, dist(x, y, 0.5, 0.5) + noise(x*6, y*6 + t)*0.1)">ring + noise</button>
         <button data-ex="abs(sin(x*10 + t)) * abs(cos(y*10 - t))">grid pulse</button>
-        <button data-ex="draw {&#10;  clear&#10;  x = 0; y = 0&#10;  repeat 30000 {&#10;    nx = sin(-1.4*y) + 1.6*cos(-1.4*x)&#10;    ny = sin( 1.6*x) + 0.7*cos( 1.6*y)&#10;    x = nx; y = ny&#10;    point(x*0.25 + 0.5, y*0.25 + 0.5)&#10;  }&#10;}">★ attractor (draw)</button>
-        <button data-ex="draw {&#10;  clear&#10;  a = -1.4 + sin(t*0.23)*0.06&#10;  b =  1.6 + cos(t*0.31)*0.06&#10;  c =  1.0 + sin(t*0.40)*0.22&#10;  d =  0.7 + cos(t*0.29)*0.22&#10;  x = 0; y = 0&#10;  repeat 30000 {&#10;    nx = sin(a*y) + c*cos(a*x)&#10;    ny = sin(b*x) + d*cos(b*y)&#10;    x = nx; y = ny&#10;    point(x*0.25 + 0.5, y*0.25 + 0.5)&#10;  }&#10;}">★ attractor (morph)</button>
-        <button data-ex="field {&#10;  init: rnd(x*30, y*30)&#10;  step: s + 0.2 * lap()&#10;  show: s&#10;}">★ diffuse (field)</button>
-        <button data-ex="field {&#10;  init: rnd(x*20, y*20)&#10;  step: clamp(s + (sum8()/8 - 0.5) * 0.5, 0, 1)&#10;  show: step(0.5, s)&#10;}">★ coarsen (field)</button>
-        <button data-ex="field {&#10;  Du = 0.16&#10;  Dv = 0.08&#10;  f = 0.06&#10;  k = 0.062&#10;  u: {&#10;    init: 1&#10;    step: u + Du*lap() - u*v*v + f*(1 - u)&#10;  }&#10;  v: {&#10;    init: 1 - step(0.07, dist(x, y, 0.5, 0.5))&#10;    step: v + Dv*lap() + u*v*v - (f + k)*v&#10;  }&#10;  show: v&#10;}">★ gray-scott (field)</button>
+        <button data-ex="1 - worley(x*6 + cos(t)*0.4, y*6 + sin(t)*0.4)">★ worley</button>
+        <button data-ex="sin((x*cos(t) + y*sin(t))*16) * sin((x*cos(t + 0.2) + y*sin(t + 0.2))*16) * 0.5 + 0.5">★ moiré</button>
+        <button data-ex="zr = (x - 0.5)*3&#10;zi = (y - 0.5)*3&#10;cr = cos(t)*0.15 - 0.75&#10;ci = sin(t)*0.15&#10;m = 0&#10;repeat 24 {&#10;  zt = clamp(zr*zr - zi*zi + cr, -4, 4)&#10;  zi = clamp(2*zr*zi + ci, -4, 4)&#10;  zr = zt&#10;  m = m + (zr*zr + zi*zi)&#10;}&#10;clamp(1 - m/120, 0, 1)">★ julia</button>
       </div>
     </div>
     </div>
@@ -168,21 +166,16 @@
             <dt>rnd(x, y)</dt><dd>座標から決まる無状態の擬似乱数 [0,1]。隣どうしは不連続（ザラザラ）。<code>seed</code> で振り直る。</dd>
           </dl>
 
-          <h3>DRAW — 描画モード（点・線を打つ）</h3>
+          <h3>VALUE BLOCK — 文を並べて最後に値を返す</h3>
           <p class="note">
-            <code>draw { … }</code> を書くと「描画モード」になる（場の式の代わり）。毎フレーム実行。
-            <b>自動クリアしない</b>（<code>clear</code> で消す → 蓄積も静止も書ける）。座標は <code>dot/line</code> も [0,1]。アトラクタ・線画向き。
+            式 1 本のほか、<b>代入</b>と <b>repeat</b> を並べてから最後に値の式を 1 つ置ける（julia の脱出時間や N 個の総和など）。文は改行か <code>;</code> で区切る。
           </p>
           <dl>
-            <dt>draw { … }</dt><dd>描画ブロック。毎フレーム中の文を実行。</dd>
-            <dt>name = 式</dt><dd>変数の代入。<code>x = 0</code> など。文は改行か <code>;</code> で区切る。</dd>
-            <dt>repeat N { … }</dt><dd>N 回繰り返す。<code>repeat N as i { … }</code> で番号 i（0..N-1）が使える。</dd>
-            <dt>clear</dt><dd>画面を背景で塗りつぶす（<code>clear(1)</code> で前景）。</dd>
-            <dt>stroke(v)</dt><dd>以降の <code>point/line</code> の描画値（既定 1）。</dd>
-            <dt>point(x, y)</dt><dd>点を打つ（x,y は [0,1]）。</dd>
-            <dt>line(x0,y0, x1,y1)</dt><dd>線を引く（[0,1]）。</dd>
+            <dt>name = 式</dt><dd>変数の代入。<code>s = 0</code> など。</dd>
+            <dt>repeat N { … }</dt><dd>N 回繰り返す。<code>repeat N as i { … }</code> で番号 i（0..N-1）が使える。総和や反復に。</dd>
+            <dt>最後の式</dt><dd>ブロックの値（＝場の値 0..1）。1 つだけ置く。</dd>
           </dl>
-          <p class="note">例: 上の「★ attractor」ボタン（Clifford アトラクタ）。点の密度が中間調になる。</p>
+          <p class="note">例: 上の「★ julia」ボタン（脱出時間を repeat で反復）。</p>
         </div>
       </details>
     <script type="module" src="./main.js"></script>

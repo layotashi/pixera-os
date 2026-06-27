@@ -2,12 +2,11 @@
  * @module lang/core/parser
  * parser.js — 構文解析。
  *
- * プログラムは2つの「形」を取る（自動判別）:
- *   - 場(field): 式1本（Tier0）。`f(x,y,t) =` ヘッダは任意。
- *   - 描画(draw): `draw { 文… }`（Tier1）。文は改行/`;` 区切り。
+ * プログラムは場 f(x,y,t) を表す**式 1 本**。`f(x,y,t) =` ヘッダは任意。
+ * 値ブロック（代入 / repeat を並べ、最後に値の式を 1 つ）も書ける。
  *
- * 式 AST:  {t:'num'|'var'|'call'|'unary'|'bin', …}
- * 文 AST:  {t:'assign', name, expr} / {t:'repeat', count, idx, body} / {t:'cmd', name, args}
+ * 式 AST:  {t:'num'|'var'|'call'|'unary'|'bin'|'fieldblock', …}
+ * 文 AST:  {t:'assign', name, expr} / {t:'repeat', count, idx, body}
  */
 
 import { tokenize, LangError } from "./lexer.js";
@@ -146,57 +145,11 @@ function makeParser(toks, start = 0) {
     throw new LangError(`式が必要です`, tk.pos);
   }
 
-  // ── 文（描画モード） ──
+  // ── 値ブロック: 代入 / repeat の文 ＋ 最終の値式（場の値計算用）。 ──
   function skipSeps() {
     while (peek().type === "SEP") next();
   }
-  function parseStmtList() {
-    const stmts = [];
-    while (true) {
-      skipSeps();
-      const tk = peek();
-      if (tk.type === "RBRACE" || tk.type === "EOF") break;
-      stmts.push(parseStmt());
-      const after = peek().type;
-      if (after !== "SEP" && after !== "RBRACE" && after !== "EOF")
-        throw new LangError(`文の区切り（改行か ;）が必要です`, peek().pos);
-    }
-    return stmts;
-  }
-  function parseStmt() {
-    const tk = peek();
-    if (tk.type !== "ID") throw new LangError(`文が必要です`, tk.pos);
-    if (tk.value === "repeat") return parseRepeat();
-    if (toks[p + 1] && toks[p + 1].type === "EQ") {
-      next(); // name
-      next(); // =
-      return { t: "assign", name: tk.value, expr: parseExpr(0), pos: tk.pos };
-    }
-    next(); // command name
-    if (peek().type === "LP") {
-      next();
-      const args = parseArgs();
-      expect("RP", "')'");
-      return { t: "cmd", name: tk.value, args, pos: tk.pos };
-    }
-    return { t: "cmd", name: tk.value, args: [], pos: tk.pos };
-  }
-  function parseRepeat() {
-    const tk = next(); // 'repeat'
-    const count = parseExpr(0);
-    let idx = null;
-    if (peek().type === "ID" && peek().value === "as") {
-      next();
-      idx = expect("ID", "ループ変数名").value;
-    }
-    expect("LBRACE", "'{'");
-    const body = parseStmtList();
-    expect("RBRACE", "'}'");
-    return { t: "repeat", count, idx, body, pos: tk.pos };
-  }
-
-  // ── 値ブロック（Tier0 拡張）: 代入/repeat の文 ＋ 最終の値式。 ──
-  // draw の文と違い cmd は持たない（場の値計算用）。セル毎の反復・総和に使う。
+  // セル毎の反復・総和（julia の脱出時間、N 個の総和など）に使う。
   function parseValueStmt() {
     const tk = peek();
     if (tk.type !== "ID")
@@ -269,155 +222,9 @@ function makeParser(toks, start = 0) {
     next,
     expect,
     parseExpr,
-    parseStmtList,
     parseFieldBlock,
     posRef: () => p,
   };
-}
-
-/** 描画プログラム `draw { … }` を解析。 */
-function parseDraw(toks) {
-  const ps = makeParser(toks);
-  while (ps.peek().type === "SEP") ps.next();
-  const tk = ps.expect("ID");
-  if (tk.value !== "draw") throw new LangError(`draw が必要です`, tk.pos);
-  ps.expect("LBRACE", "'{'");
-  const body = ps.parseStmtList();
-  ps.expect("RBRACE", "'}'");
-  while (ps.peek().type === "SEP") ps.next();
-  if (ps.peek().type !== "EOF")
-    throw new LangError(`余分なトークン`, ps.peek().pos);
-  return body;
-}
-
-/**
- * Tier2: 状態を持つ場 `field { … }` を解析。2 形態を許す:
- *   単一チャンネル(v1): `field { init: … step: … show: … }`（暗黙チャンネル s）
- *   多チャンネル(v2):  `field { Du = … ; u: { init: … step: … } v: { … } show: … }`
- * エントリ:
- *   `name = expr`           … 定数（フレーム単位で 1 回評価。t 可・x,y 不可）
- *   `name: { init: step: }` … チャンネル（セル毎のスカラー状態）
- *   `init:/step:/show: expr`… v1 セクション（単一チャンネル）/ show は共通
- * 返り値: { consts:[{name,expr}], channels:[{name,init,step}], show }。
- * v1 は channels=[{name:"s",…}] へ正規化（show 既定 = s）。
- */
-function parseCells(toks) {
-  const ps = makeParser(toks);
-  const RESERVED = new Set(["init", "step", "show"]);
-  // エントリ区切りは 改行/`;`（SEP）または `,`。インライン `{ init: …, step: … }` 用。
-  const isSep = (t) => t === "SEP" || t === "COMMA";
-  while (isSep(ps.peek().type)) ps.next();
-  const head = ps.expect("ID");
-  if (head.value !== "field") throw new LangError(`field が必要です`, head.pos);
-  ps.expect("LBRACE", "'{'");
-
-  const consts = [];
-  const channels = [];
-  const sec = {}; // v1 セクション (init/step/show)
-  const seenChan = new Set();
-
-  const endEntry = () => {
-    const after = ps.peek().type;
-    if (!isSep(after) && after !== "RBRACE")
-      throw new LangError(`区切り（改行 / ; / ,）が必要です`, ps.peek().pos);
-  };
-
-  while (true) {
-    while (isSep(ps.peek().type)) ps.next();
-    if (ps.peek().type === "RBRACE") break;
-    const nameTk = ps.expect("ID", "定数 / チャンネル / init/step/show");
-    const name = nameTk.value;
-    const kind = ps.peek().type;
-
-    if (kind === "EQ") {
-      // 定数: name = expr
-      ps.next();
-      consts.push({ name, expr: ps.parseExpr(0) });
-      endEntry();
-      continue;
-    }
-    if (kind !== "COLON")
-      throw new LangError(`'=' か ':' が必要です`, ps.peek().pos);
-    ps.next(); // ':'
-
-    if (ps.peek().type === "LBRACE") {
-      // チャンネルブロック: name: { init: … step: … }
-      if (RESERVED.has(name))
-        throw new LangError(`'${name}' はチャンネル名に使えません`, nameTk.pos);
-      if (seenChan.has(name))
-        throw new LangError(`チャンネル '${name}' が重複しています`, nameTk.pos);
-      seenChan.add(name);
-      ps.next(); // '{'
-      const ch = { name, init: null, step: null };
-      while (true) {
-        while (isSep(ps.peek().type)) ps.next();
-        if (ps.peek().type === "RBRACE") break;
-        const sTk = ps.expect("ID", "init/step");
-        if (sTk.value !== "init" && sTk.value !== "step")
-          throw new LangError(
-            `チャンネル '${name}' に未知のセクション '${sTk.value}'（init/step）`,
-            sTk.pos,
-          );
-        if (ch[sTk.value])
-          throw new LangError(`'${sTk.value}' が重複しています`, sTk.pos);
-        ps.expect("COLON", "':'");
-        ch[sTk.value] = ps.parseExpr(0);
-        const a = ps.peek().type;
-        if (!isSep(a) && a !== "RBRACE")
-          throw new LangError(`区切り（改行 / ; / ,）が必要です`, ps.peek().pos);
-      }
-      ps.expect("RBRACE", "'}'");
-      if (!ch.init)
-        throw new LangError(`チャンネル '${name}' に init: が必要です`, nameTk.pos);
-      if (!ch.step)
-        throw new LangError(`チャンネル '${name}' に step: が必要です`, nameTk.pos);
-      channels.push(ch);
-      endEntry();
-      continue;
-    }
-
-    // v1 セクション: init/step/show: expr
-    if (!RESERVED.has(name))
-      throw new LangError(
-        `未知のセクション '${name}'（init/step/show か、チャンネルは name: {…}）`,
-        nameTk.pos,
-      );
-    if (sec[name])
-      throw new LangError(`セクション '${name}' が重複しています`, nameTk.pos);
-    sec[name] = ps.parseExpr(0);
-    endEntry();
-  }
-
-  ps.expect("RBRACE", "'}'");
-  while (ps.peek().type === "SEP") ps.next();
-  if (ps.peek().type !== "EOF")
-    throw new LangError(`余分なトークン`, ps.peek().pos);
-
-  // ── 組み立て ──
-  if (sec.init || sec.step) {
-    // 単一チャンネル (v1)
-    if (channels.length)
-      throw new LangError(
-        `単一チャンネル (init/step) とチャンネルブロックは混在できません`,
-        head.pos,
-      );
-    if (!sec.init) throw new LangError(`init: が必要です`, head.pos);
-    if (!sec.step) throw new LangError(`step: が必要です`, head.pos);
-    return {
-      consts,
-      channels: [{ name: "s", init: sec.init, step: sec.step }],
-      show: sec.show || { t: "var", name: "s", pos: head.pos },
-    };
-  }
-  // 多チャンネル (v2)
-  if (channels.length === 0)
-    throw new LangError(
-      `チャンネル (name: { init / step }) か init/step が必要です`,
-      head.pos,
-    );
-  if (!sec.show)
-    throw new LangError(`多チャンネルでは show: が必要です`, head.pos);
-  return { consts, channels, show: sec.show };
 }
 
 /**
@@ -462,7 +269,7 @@ const DIRECTIVE_NAMES = new Set(["view", "canvas", "pad", "fps", "seed", "period
  *   - `pad: <N>` / `fps: <N>` / `seed: <N>` / `period: <秒>` … スカラー設定
  *     （`period` = アニメの周期秒。プレビューは t を [0,period) で周回し GIF/MP4 もシームレスループ）
  * コアはこれらを**不透明なデータ**として持つだけ（既定値・範囲クランプ・適用はホスト責務）。
- * `field{}` の channel 構文（`u: {…}`）はブレース内（depth>0）なので衝突しない。
+ * repeat の `{…}` 内（depth>0）は走査しない（ディレクティブは常にトップレベル）。
  * @returns {{ config: object, rest: object[] }} config={view,canvas,pad,fps,seed,period}（未指定は null）
  */
 function extractDirectives(toks) {
@@ -555,18 +362,8 @@ function extractDirectives(toks) {
   return { config, rest };
 }
 
-/** プログラム全体を解析し形を判別して返す（設定ディレクティブ付き）。 */
+/** プログラム全体（場の式 ＋ 設定ディレクティブ）を解析して返す。 */
 export function parseProgram(src) {
   const { config, rest } = extractDirectives(tokenize(src));
-  const hasBlock = (kw) =>
-    rest.some(
-      (t, i) =>
-        t.type === "ID" &&
-        t.value === kw &&
-        rest[i + 1] &&
-        rest[i + 1].type === "LBRACE",
-    );
-  if (hasBlock("draw")) return { kind: "draw", body: parseDraw(rest), config };
-  if (hasBlock("field")) return { kind: "cells", ...parseCells(rest), config };
-  return { kind: "field", expr: parseExprTokens(rest), config };
+  return { expr: parseExprTokens(rest), config };
 }

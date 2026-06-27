@@ -144,231 +144,6 @@ function check(name, cond) {
   console.log(out);
 }
 
-// 7) 描画モード（Tier1）: draw / repeat / dot / clear / 自動判別
-{
-  const cmds = [];
-  const surf = {
-    width: () => 100,
-    height: () => 100,
-    clear: (l) => cmds.push(["clear", l]),
-    stroke: (v) => cmds.push(["stroke", v]),
-    point: (x, y) => cmds.push(["point", x, y]),
-    line: (...a) => cmds.push(["line", ...a]),
-    present: () => cmds.push(["present"]),
-  };
-  const prog = compile("draw {\n clear\n repeat 3 as i {\n point(i*0.1, 0.5)\n }\n}");
-  check("compile detects draw shape", prog.kind === "draw");
-  check("bare expression is field shape", compile("sin(x)").kind === "field");
-  prog.render(surf, 0, 0);
-  const pts = cmds.filter((c) => c[0] === "point");
-  check("draw: clear issued first", cmds[0][0] === "clear");
-  check("draw: repeat ran 3 points", pts.length === 3);
-  check(
-    "draw: point maps [0,1]→px",
-    pts[0][1] === 0 && pts[0][2] === 50 && pts[1][1] === 10,
-  );
-  check("draw: present at end", cmds[cmds.length - 1][0] === "present");
-}
-
-// 8) Tier2: 状態を持つ場（field { init / step / show }）
-{
-  const makeSurf = (W, H) => {
-    const s = { width: () => W, height: () => H, present: () => {}, field: null };
-    s.blitField = (b) => { s.field = b; };
-    return s;
-  };
-
-  check(
-    "cells shape detected",
-    compile("field {\n init: 0\n step: s\n show: s\n}").kind === "cells",
-  );
-
-  // 恒等 step は状態を保つ
-  {
-    const surf = makeSurf(4, 4);
-    compile("field {\n init: 1\n step: s\n show: s\n}").render(surf, 0, 0);
-    check("cells: identity keeps state", surf.field.every((v) => v === 1));
-  }
-
-  // 状態はフレーム間で保持され step が積み上がる
-  {
-    const surf = makeSurf(3, 3);
-    const p = compile("field {\n init: 0\n step: s + 1\n show: s\n}");
-    p.render(surf, 0, 0);
-    check("cells: 1 step → 1", surf.field[0] === 1);
-    p.render(surf, 0, 0);
-    check("cells: state persists (2 steps → 2)", surf.field[0] === 2);
-  }
-
-  // sum8: 全 1 の 8 近傍和 = 8
-  {
-    const surf = makeSurf(4, 4);
-    compile("field {\n init: 1\n step: sum8()\n show: s\n}").render(surf, 0, 0);
-    check("cells: sum8 of all-ones = 8", surf.field.every((v) => v === 8));
-  }
-
-  // lap: 一様場のラプラシアン = 0
-  {
-    const surf = makeSurf(4, 4);
-    compile("field {\n init: 1\n step: lap()\n show: s\n}").render(surf, 0, 0);
-    check("cells: lap of uniform = 0", surf.field.every((v) => v === 0));
-  }
-
-  // nbr + wrap: 右隣を取り込む。端は wrap で反対側へ
-  {
-    const surf = makeSurf(4, 4);
-    compile("field {\n init: x\n step: nbr(1, 0)\n show: s\n}").render(surf, 0, 0);
-    check(
-      "cells: nbr(1,0) shifts, wraps at edge",
-      approx(surf.field[0], 1 / 3) && approx(surf.field[3], 0),
-    );
-  }
-
-  // show 省略は s を既定にする
-  {
-    const surf = makeSurf(2, 2);
-    compile("field {\n init: 0.5\n step: s\n}").render(surf, 0, 0);
-    check("cells: show defaults to s", surf.field.every((v) => v === 0.5));
-  }
-
-  // パースエラー: init 欠落 / 未知セクション
-  for (const [src, label] of [
-    ["field {\n step: s\n show: s\n}", "missing init errors"],
-    ["field {\n init: 0\n foo: 1\n}", "unknown section errors"],
-  ]) {
-    let caught = null;
-    try {
-      compile(src);
-    } catch (e) {
-      caught = e;
-    }
-    check(`cells: ${label}`, caught instanceof LangError);
-  }
-
-  // 発展の ASCII プレビュー（ノイズが拡散して滑らかな塊へ）
-  {
-    const W = 48,
-      H = 20;
-    const surf = makeSurf(W, H);
-    const p = compile(
-      "field {\n init: rnd(x*20, y*20)\n step: s + 0.2 * lap()\n show: s\n}",
-    );
-    for (let i = 0; i < 25; i++) p.render(surf, i * 0.05, 0);
-    const bits = ditherField(surf.field, W, H);
-    let out = "\nTier2 field: rnd を 0.2*lap() で 25 ステップ拡散\n";
-    for (let y = 0; y < H; y++) {
-      let row = "";
-      for (let x = 0; x < W; x++) row += bits[y * W + x] ? "#" : " ";
-      out += row + "\n";
-    }
-    console.log(out);
-  }
-}
-
-// 8b) Tier2 v2: 多チャンネル + 定数（反応拡散）
-{
-  const makeSurf = (W, H) => {
-    const s = { width: () => W, height: () => H, present: () => {}, field: null };
-    s.blitField = (b) => { s.field = b; };
-    return s;
-  };
-
-  check(
-    "v2: multi-channel detected as cells",
-    compile("field {\n u: { init: 0\n step: u }\n v: { init: 0\n step: v }\n show: u\n}").kind ===
-      "cells",
-  );
-
-  // 同期更新: u/v が入れ替わる（旧 curr のみ参照している証拠）
-  {
-    const surf = makeSurf(3, 3);
-    const p = compile("field {\n u: { init: 1\n step: v }\n v: { init: 2\n step: u }\n show: u\n}");
-    p.render(surf, 0, 0);
-    check("v2: synchronous swap → u=2", surf.field[0] === 2);
-    p.render(surf, 0, 0);
-    check("v2: synchronous swap → u=1", surf.field[0] === 1);
-  }
-
-  // 定数（フレーム単位）。step で蓄積
-  {
-    const surf = makeSurf(2, 2);
-    const p = compile("field {\n k = 5\n init: 0\n step: s + k\n show: s\n}");
-    p.render(surf, 0, 0);
-    check("v2: const (=5)", surf.field[0] === 5);
-    p.render(surf, 0, 0);
-    check("v2: const accumulates (=10)", surf.field[0] === 10);
-  }
-
-  // クロスチャンネル: u の step が v の現在値を参照
-  {
-    const surf = makeSurf(2, 2);
-    compile("field {\n u: { init: 1\n step: u + v }\n v: { init: 3\n step: v }\n show: u\n}").render(
-      surf,
-      0,
-      0,
-    );
-    check("v2: cross-channel value coupling (u=4)", surf.field[0] === 4);
-  }
-
-  // lap() は「現チャンネル」に束縛（u は一様→lap=0。v は勾配だが u には効かない）
-  {
-    const surf = makeSurf(4, 4);
-    compile("field {\n u: { init: 1\n step: lap() }\n v: { init: x\n step: v }\n show: u\n}").render(
-      surf,
-      0,
-      0,
-    );
-    check("v2: lap() uses current channel (u-lap=0)", surf.field.every((z) => z === 0));
-  }
-
-  // パースエラー
-  for (const [src, label] of [
-    ["field {\n init: 0\n u: { init: 0\n step: u }\n show: s\n}", "mix single+channel"],
-    ["field {\n u: { init: 0 }\n show: u\n}", "channel missing step"],
-    ["field {\n u: { init: 0\n step: u }\n}", "multi-channel needs show"],
-  ]) {
-    let caught = null;
-    try {
-      compile(src);
-    } catch (e) {
-      caught = e;
-    }
-    check(`v2: ${label} errors`, caught instanceof LangError);
-  }
-
-  // Gray-Scott: 多チャンネル RD が NaN を出さず発展する
-  {
-    let raw = null;
-    const surf = {
-      width: () => 20,
-      height: () => 20,
-      blitField: (b) => { raw = Float32Array.from(b); },
-      present: () => {},
-    };
-    const gs = `field {
-  Du = 0.16
-  Dv = 0.08
-  f = 0.06
-  k = 0.062
-  u: { init: 1, step: u + Du*lap() - u*v*v + f*(1 - u) }
-  v: { init: 1 - step(0.1, dist(x, y, 0.5, 0.5)), step: v + Dv*lap() + u*v*v - (f + k)*v }
-  show: v
-}`;
-    const p = compile(gs);
-    for (let i = 0; i < 40; i++) p.render(surf, i * 0.1, 0);
-    let finite = true,
-      mn = Infinity,
-      mx = -Infinity;
-    for (const z of raw) {
-      if (!Number.isFinite(z)) finite = false;
-      if (z < mn) mn = z;
-      if (z > mx) mx = z;
-    }
-    check("v2: Gray-Scott stays finite", finite);
-    check("v2: Gray-Scott develops variation", mx - mn > 0.05);
-  }
-}
-
 // 8c) view: 表示ディレクティブ（コア不透明データ。ラスタライズはホスト）
 {
   const isView = (v, mode, args) =>
@@ -378,14 +153,8 @@ function check(name, cond) {
     v.args.every((a, i) => a === args[i]);
 
   const p1 = compile("view: dither(2)\nsin(x)");
-  check("view: field 形に付く", p1.kind === "field" && isView(p1.config.view, "dither", [2]));
+  check("view: 場の式に付く", isView(p1.config.view, "dither", [2]));
   check("view: 本体の式は通る", approx(p1.sample(0, 0, 0), 0)); // sin(0)=0
-
-  const p2 = compile("view: contour(7)\nfield{init:0\nstep:s\nshow:s}");
-  check("view: cells 形に付く", p2.kind === "cells" && isView(p2.config.view, "contour", [7]));
-
-  const p3 = compile("view: dither(4)\ndraw{clear}");
-  check("view: draw 形に付く", p3.kind === "draw" && isView(p3.config.view, "dither", [4]));
 
   check("view: 無いと null", compile("sin(x)").config.view === null);
   check("view: 本体の後ろでも可", isView(compile("sin(x)\nview: dither(3)").config.view, "dither", [3]));
@@ -440,10 +209,6 @@ function check(name, cond) {
   check("canvas+pad+view 併用", p5.config.canvas.w === 1024 && p5.config.pad === 16 && p5.config.view.mode === "contour");
   check("ディレクティブ除去後も式は評価できる", Number.isFinite(p5.sample(0.3, 0.3, 0)));
 
-  // field{} 内の channel 構文（u:）はディレクティブと衝突しない
-  const p6 = compile("seed: 3\nfield {\n u: { init: 1\n step: u }\n v: { init: 2\n step: v }\n show: u\n}");
-  check("field channel と非衝突", p6.kind === "cells" && p6.config.seed === 3);
-
   // 本体の後ろに置いてもよい
   const c7 = cfg("sin(x)\nseed: 99");
   check("ディレクティブは本体後でも可", c7.seed === 99);
@@ -470,10 +235,6 @@ function check(name, cond) {
   check("nl: mult at line end (in parens)", Number.isFinite(ev("(sin(x) *\ncos(y))")));
   // ブロック構文の SEP（文区切り）は維持される
   check("nl: value block 維持", Number.isFinite(ev("s = 0\nrepeat 3 as k {\n s = s + k\n}\ns")));
-  const surf = { width: () => 4, height: () => 4, blitField: () => {}, present: () => {} };
-  let ok = true;
-  try { compile("field {\n init: 1\n step: s + lap()\n show: s\n}").render(surf, 0, 0); } catch { ok = false; }
-  check("nl: field block 維持", ok);
 }
 
 // 8e) 大小文字を区別しない（SYNESTA は大文字表示前提。CANVAS と canvas が同じ見た目）
@@ -484,15 +245,9 @@ function check(name, cond) {
   const c = compile("SEED: 8\nVIEW: DITHER(2)\nSIN(X)").config;
   check("ci: SEED directive", c.seed === 8);
   check("ci: VIEW DITHER mode folded", c.view && c.view.mode === "dither");
-  // field{} のキーワード・チャンネルも大文字で通る
-  const surf = { width: () => 4, height: () => 4, blitField: () => {}, present: () => {} };
-  let ok = true;
-  try { compile("FIELD {\n U: { INIT: 1\n STEP: U }\n SHOW: U\n}").render(surf, 0, 0); }
-  catch { ok = false; }
-  check("ci: uppercase field/channel keywords", ok);
 }
 
-// 9) makeBufferSurface: 全モードを 1-bit バッファで受ける（SYNESTA 統合の土台）
+// 9) makeBufferSurface: 場を 1-bit バッファで受ける（SYNESTA 統合の土台）
 {
   // 場: level 1 → 全 on / level 0 → 全 off
   {
@@ -502,28 +257,11 @@ function check(name, cond) {
     compile("0").render(s, 0, 0);
     check("bufsurf: field level 0 → all off", s.buf.every((v) => v === 0));
   }
-  // 描画: point が画素を立てる（[0,1]→px）
-  {
-    const s = makeBufferSurface(10, 10);
-    compile("draw {\n clear\n point(0.0, 0.0)\n point(0.9, 0.9)\n}").render(s, 0, 0);
-    check("bufsurf: point sets pixels", s.buf[0] === 1 && s.buf[9 * 10 + 9] === 1);
-  }
-  // 描画: 横線
-  {
-    const s = makeBufferSurface(10, 10);
-    compile("draw {\n clear\n line(0, 0, 0.9, 0)\n}").render(s, 0, 0);
-    let row0 = true;
-    for (let x = 0; x < 10; x++) if (!s.buf[x]) row0 = false;
-    check("bufsurf: horizontal line", row0);
-  }
-  // 状態場: バッファサーフェスでも step が進む（coarsen 風を数ステップ）
+  // 場（ディザ）: チェッカー状の中間値は 0|1 のみへ落ちる
   {
     const s = makeBufferSurface(16, 16);
-    const p = compile(
-      "field {\n init: rnd(x*20, y*20)\n step: clamp(s + (sum8()/8 - 0.5)*0.5, 0, 1)\n show: step(0.5, s)\n}",
-    );
-    for (let i = 0; i < 5; i++) p.render(s, i * 0.05, 0);
-    check("bufsurf: cells render into buffer (0|1)", s.buf.every((v) => v === 0 || v === 1));
+    compile("sin(x*20)*cos(y*20)*0.5 + 0.5").render(s, 0, 0);
+    check("bufsurf: field dithers to 0|1", s.buf.every((v) => v === 0 || v === 1));
   }
 }
 
@@ -539,23 +277,13 @@ function check(name, cond) {
   check("fmt: parens & tight", f("(a+b)*c") === "(a + b)*c");
   check("fmt: number字面 preserved", f("1.0 + .5") === "1.0 + .5");
   check(
-    "fmt: draw block indents + 1文1行",
-    f("draw{clear\nx=0;y=0}") === "draw {\n  clear\n  x = 0\n  y = 0\n}",
-  );
-  check(
-    "fmt: field sections",
-    f("field{init:0\nstep:s+lap()\nshow:s}") ===
-      "field {\n  init: 0\n  step: s + lap()\n  show: s\n}",
+    "fmt: repeat block indents + 1文1行",
+    f("repeat 2 as i{x=0;y=0}\ns") === "repeat 2 as i {\n  x = 0\n  y = 0\n}\ns",
   );
   check(
     "fmt: nested repeat indent",
-    f("draw{repeat 2 as i{point(i,0)}}") ===
-      "draw {\n  repeat 2 as i {\n    point(i, 0)\n  }\n}",
-  );
-  check(
-    "fmt: channel block indents",
-    f("field{u:{init:1\nstep:u+lap()}\nshow:u}") ===
-      "field {\n  u: {\n    init: 1\n    step: u + lap()\n  }\n  show: u\n}",
+    f("repeat 2 as i{repeat 2 as j{s=i}}\ns") ===
+      "repeat 2 as i {\n  repeat 2 as j {\n    s = i\n  }\n}\ns",
   );
   check(
     "fmt: view directive",
@@ -597,8 +325,8 @@ function check(name, cond) {
     "block: repeat sum",
     approx(compileField("s = 0\nrepeat 3 as k { s = s + k }\ns").sample(0, 0, 0), 3),
   );
-  // 値ブロックは "field" 形
-  check("block is field kind", compile("a=1\na").kind === "field");
+  // 値ブロックも 1 本の式としてコンパイル・評価できる
+  check("block compiles & evaluates", approx(compile("a=1\na").sample(0, 0, 0), 1));
   // 素の式（文なし）は従来どおり（改行をまたぐ単一式も）
   check("plain expr still works", approx(compileField("sin(0)\n + 1").sample(0, 0, 0), 1));
   // エラー: 最終の値式が無い / 値式が複数
