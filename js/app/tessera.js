@@ -23,17 +23,17 @@
  * ウィジェットは廃止した（旧 GENART/初期 TESSERA の名残）。プレビューは size のアスペクト比を反映。
  *
  * 構成:
- *   - コントロール: 書き出し形式(PNG/GIF/MP4) + DL ボタンのみ
+ *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。
+ *     ショートカットは各ボタンの hover ツールチップに表示する。
  *   - 左: コードエディタ (TextArea)。編集で即 compile。
- *   - 右: ライブプレビュー（size のアスペクト比、surface.buf を整数倍 blit）
- *   - 最下部: ショートカット凡例（常時）
- *   - footer: エラー (pos 付き) / 状態 (kind・size・seed) / 書き出し進捗
+ *   - 右: ライブプレビュー（ツールバーの下・size のアスペクト比、surface.buf を整数倍 blit）
+ *   - footer: エラー (pos 付き) / 状態 (size・seed) / 書き出し進捗
  *
  * VFS / 操作:
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
- *   - Ctrl+E / DL で size ちょうどに PNG/GIF/MP4 書き出し。Ctrl+R で seed: を振り直す。
- *   - Shift+Alt+F で整形。未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順
- *     チュートリアル）と /Sketches/Gallery/{Field,Draw,Cells}（形別の作例）に種まき。
+ *   - Ctrl+E / EXPORT で size ちょうどに PNG/GIF/MP4 書き出し。Ctrl+R で seed: を振り直す。
+ *   - Alt+W で現在の場をデスクトップ背景に。Shift+Alt+F で整形。未保存変更は破棄確認。
+ *     サンプルは /Sketches/Learn（番号順チュートリアル）と /Sketches/Gallery（作例）に種まき。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
  */
 
@@ -456,7 +456,7 @@ let isDirty = false;
 // ── ウィジェット (遅延初期化) ──
 // パラメータ（seed/方式/出力/dot/pad/fps）はすべてコードの設定ディレクティブで指定する。
 // 画面に残すコントロールは「書き出し形式 + DOWNLOAD」のみ（最小コントロール）。
-let editor, ddFormat, btnDownload, ctrlRow, root, group;
+let editor, ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, ctrlRow, root, group;
 let _ready = false;
 let _seeded = false;
 
@@ -498,18 +498,27 @@ function _initWidgets() {
   });
   editor.showWhitespace = false; // コード編集では空白/改行マーカーを消す（読みやすさ）
 
-  // 最小コントロール: 書き出し形式 + DOWNLOAD のみ（他は全てコードの設定ディレクティブ）。
+  // ── ツールバー（1 行）: 書き出し形式 + アクション群。ショートカットは各ボタンの
+  // hover ツールチップに表示する（画面下部の凡例は廃止）。
   ddFormat = new UI.DropDown(0, 0, availableFormats().map((f) => f.label), exportFormatIdx, (i) => {
     exportFormatIdx = i;
   });
   ddFormat.tooltip = "Export format: PNG = still, GIF = loop (any browser), MP4 = loop (SNS).";
 
-  btnDownload = new UI.PushButton(0, 0, "DL", () => {
-    exportArt();
-  });
-  btnDownload.tooltip = "Export at the size declared in code (Ctrl+E). PNG / GIF / MP4.";
+  const mkBtn = (label, tip, fn) => {
+    const b = new UI.PushButton(0, 0, label, fn);
+    b.tooltip = tip;
+    return b;
+  };
+  // DL と EXPORT は同一アクション（コード宣言の size に書き出し）＝1 ボタンに統合。
+  btnExport = mkBtn("EXPORT", "Export at the declared size — Ctrl+E (PNG/GIF/MP4)", exportArt);
+  btnReseed = mkBtn("RESEED", "Randomize the seed: directive — Ctrl+R", rerollSeed);
+  btnSave = mkBtn("SAVE", "Save — Ctrl+S   (Save As — Ctrl+Shift+S)", saveFile);
+  btnOpen = mkBtn("OPEN", "Open a .tess sketch — Ctrl+O", openFile);
+  btnNew = mkBtn("NEW", "New sketch — Alt+N", newFile);
+  btnWallpaper = mkBtn("WALLPAPER", "Set as desktop wallpaper, live-rendered — Alt+W", setWallpaper);
 
-  ctrlRow = UI.HBox([ddFormat, btnDownload]);
+  ctrlRow = UI.HBox([ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
 
   root = UI.VBox([ctrlRow, editor]);
   group = new UI.WidgetGroup(root);
@@ -825,10 +834,6 @@ function setWallpaper() {
   }, 1500);
 }
 
-// 常時表示の凡例（ショートカットの発見性。パラメータはコードで指定する設計のため重要）。
-// 画面幅(480px)に収まる範囲で発見性を確保。FORMAT(⇧Alt+F)は About に記載。
-const LEGEND = "^E EXPORT  ^R RESEED  ^S SAVE  ^O OPEN  ALT+N NEW  ALT+W WALLPAPER";
-const LEGEND_H = GLYPH_H + 4;
 
 function onDraw(cr) {
   // ── キーボードショートカット (フォーカス時のみ) ──
@@ -845,13 +850,12 @@ function onDraw(cr) {
 
   GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0); // 背景クリア
 
-  // ── 左カラム (最小コントロール + エディタ) ──
+  // ── トップツールバー + エディタ（左カラム）──
   group.draw(cr);
 
-  // ── 右: ライブプレビュー（コード宣言の size アスペクト比を反映）──
-  const leftW = Math.max(editor.w, ctrlRow ? ctrlRow.w : 0);
-  const pvX = cr.x + editor.x + leftW + GAP;
-  const pvY = cr.y + UI.FOCUS_MARGIN;
+  // ── 右: ライブプレビュー（エディタの右・ツールバーの下。size アスペクト比を反映）──
+  const pvX = cr.x + editor.x + editor.w + GAP;
+  const pvY = cr.y + editor.y;
 
   if (program) {
     // 実効方式（view: があればコードが決める。無ければ既定 dither）。
@@ -882,9 +886,6 @@ function onDraw(cr) {
       GPU.blit(pv.buf, pv.w, pv.h, pvX, pvY, 1);
     }
   }
-
-  // ── 凡例（常時、最下部）──
-  drawText(cr.x + UI.FOCUS_MARGIN, cr.y + cr.h - GLYPH_H - 1, LEGEND, 1);
 }
 
 function onDrawFooter(fr) {
@@ -906,15 +907,12 @@ function onInput(ev) {
 }
 
 function onMeasure() {
-  // 左カラム右端 = 最も広い行（コントロール or エディタ）。プレビューは最大 PV_BOX 角。
-  const leftRight = editor.x + Math.max(editor.w, ctrlRow ? ctrlRow.w : 0);
-  // 本体幅 と 凡例幅 の広い方（凡例が見切れないようウィンドウ幅を確保）。
-  const w = Math.max(
-    leftRight + GAP + PV_BOX + UI.FOCUS_MARGIN,
-    UI.FOCUS_MARGIN + textWidth(LEGEND) + UI.FOCUS_MARGIN,
-  );
-  const bodyH = Math.max(editor.y + editor.h, UI.FOCUS_MARGIN + PV_BOX);
-  const h = bodyH + LEGEND_H + UI.FOCUS_MARGIN; // 最下部に凡例行を確保
+  // トップツールバーが全幅に渡り、その下に [エディタ | プレビュー]。ウィンドウ幅は
+  // 「ツールバー幅」と「エディタ + プレビュー幅」の広い方。
+  const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + PV_BOX);
+  const w = editor.x + contentW + UI.FOCUS_MARGIN;
+  const bodyH = editor.y + Math.max(editor.h, PV_BOX); // プレビューはエディタと同じ上端
+  const h = bodyH + UI.FOCUS_MARGIN;
   return { w, h };
 }
 
