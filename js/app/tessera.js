@@ -471,7 +471,7 @@ function resolvedConfig() {
   const canvas = c.canvas || {};
   const sizeW = clampI(canvas.w ?? DEFAULTS.sizeW, 16, 4096);
   const sizeH = clampI(canvas.h ?? DEFAULTS.sizeH, 16, 4096);
-  const pixel = PIXEL; // 固定（pixel ディレクティブは廃止。c.pix があっても無視）
+  const pixel = PIXEL; // 8 固定（pixel ディレクティブは無し）
   const fps = nearest(c.fps ?? DEFAULTS.fps, FPS_OPTIONS);
   const seed = clampI(c.seed ?? DEFAULTS.seed, 0, 999999);
   // pad（出力px）は base 上で各辺がアート(≥4px)を潰さない範囲にクランプ。

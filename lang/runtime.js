@@ -203,8 +203,8 @@ function compileCells(prog) {
  *  - 場(field): 全セルに式を評価して 1-bit へ（毎フレーム全面更新）。
  *  - 描画(draw): draw ブロックを実行し命令を発行（自動クリアなし＝蓄積可）。
  *  - 状態場(cells): field{init/step/show}。状態を保持し毎フレーム step（反応拡散/CA/成長）。
- * 返り値には設定ディレクティブ `config`（{ view, size, pixel, pad, fps, seed }。未指定は null）が
- * 付く。`view` も後方互換で別途公開（= config.view）。いずれもコアはラスタライズ・適用せず、
+ * 返り値には設定ディレクティブ `config`（{ view, canvas, pad, fps, seed, period }。未指定は null）が
+ * 付く。`view` も別途公開（= config.view）。いずれもコアはラスタライズ・適用せず、
  * ホスト（surface / 出力）が既定値・範囲とともに解釈する＝表示・出力はホストの責務のまま。
  * @param {string} src
  * @returns {{ render:Function, kind:string, view:object|null, config:object }}

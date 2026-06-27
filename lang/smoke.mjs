@@ -405,7 +405,7 @@ function check(name, cond) {
   }
 }
 
-// 8d) 設定ディレクティブ（size/pixel/pad/fps/seed）。コア不透明データ・適用はホスト。
+// 8d) 設定ディレクティブ（canvas/pad/fps/seed/period）。コア不透明データ・適用はホスト。
 {
   const cfg = (src) => compile(src).config;
 
@@ -415,9 +415,9 @@ function check(name, cond) {
   const c2 = cfg("canvas: 800 600\nsin(x)");
   check("canvas: W H 解釈", c2.canvas && c2.canvas.w === 800 && c2.canvas.h === 600);
 
-  // スカラー: pixel / pad / fps / seed / period
-  const c3 = cfg("pixel: 4\npad: 32\nfps: 25\nseed: 7\nsin(x)");
-  check("pixel/pad/fps/seed 解釈", c3.pixel === 4 && c3.pad === 32 && c3.fps === 25 && c3.seed === 7);
+  // スカラー: pad / fps / seed / period
+  const c3 = cfg("pad: 32\nfps: 25\nseed: 7\nsin(x)");
+  check("pad/fps/seed 解釈", c3.pad === 32 && c3.fps === 25 && c3.seed === 7);
   const cl = cfg("period: 5\nsin(x - t)");
   check("period: 秒 解釈", cl.period === 5);
   // 定数式（pi/tau・四則）も受ける
@@ -433,11 +433,11 @@ function check(name, cond) {
 
   // 未指定は null
   const c4 = cfg("sin(x)");
-  check("未指定は null", c4.canvas === null && c4.pixel === null && c4.seed === null && c4.period === null);
+  check("未指定は null", c4.canvas === null && c4.pad === null && c4.seed === null && c4.period === null);
 
   // view と併用・本体は通る／ディレクティブは本体から除去される
-  const p5 = compile("canvas: 1024x1024\npixel: 8\nview: contour(6)\nworley(x*5, y*5)");
-  check("canvas+pixel+view 併用", p5.config.canvas.w === 1024 && p5.config.pixel === 8 && p5.config.view.mode === "contour");
+  const p5 = compile("canvas: 1024x1024\npad: 16\nview: contour(6)\nworley(x*5, y*5)");
+  check("canvas+pad+view 併用", p5.config.canvas.w === 1024 && p5.config.pad === 16 && p5.config.view.mode === "contour");
   check("ディレクティブ除去後も式は評価できる", Number.isFinite(p5.sample(0.3, 0.3, 0)));
 
   // field{} 内の channel 構文（u:）はディレクティブと衝突しない
@@ -451,7 +451,7 @@ function check(name, cond) {
   // エラー
   for (const [src, label] of [
     ["canvas: 1920\nsin(x)", "canvas 高さ欠落"],
-    ["pixel: x\nsin(x)", "pixel 非数値"],
+    ["fps: sin(0)\nsin(x)", "fps に関数は不可"],
   ]) {
     let caught = null;
     try { compile(src); } catch (e) { caught = e; }
@@ -476,13 +476,13 @@ function check(name, cond) {
   check("nl: field block 維持", ok);
 }
 
-// 8e) 大小文字を区別しない（SYNESTA は大文字表示前提。PIXEL と pixel が同じ見た目）
+// 8e) 大小文字を区別しない（SYNESTA は大文字表示前提。CANVAS と canvas が同じ見た目）
 {
   // 関数 / 定数 / 変数を大文字で書いても通る
   check("ci: SIN(X*TAU) == sin(x*tau)", approx(compile("SIN(X * TAU)").sample(0.25, 0, 0), 1, 1e-9));
   // ディレクティブ・方式名も大文字で通る（小文字へ畳まれる）
-  const c = compile("PIXEL: 8\nVIEW: DITHER(2)\nSIN(X)").config;
-  check("ci: PIXEL directive", c.pixel === 8);
+  const c = compile("SEED: 8\nVIEW: DITHER(2)\nSIN(X)").config;
+  check("ci: SEED directive", c.seed === 8);
   check("ci: VIEW DITHER mode folded", c.view && c.view.mode === "dither");
   // field{} のキーワード・チャンネルも大文字で通る
   const surf = { width: () => 4, height: () => 4, blitField: () => {}, present: () => {} };

@@ -90,7 +90,7 @@ export function tokenize(src, opts = {}) {
     if (isIdStart(c)) {
       let s = "";
       while (i < n && isIdPart(src[i])) s += src[i++];
-      // 言語は大小文字を区別しない（SYNESTA は大文字表示が前提＝`PIXEL` と `pixel` が
+      // 言語は大小文字を区別しない（SYNESTA は大文字表示が前提＝`CANVAS` と `canvas` が
       // 同じ見た目になるため、識別子は小文字へ畳んで一致させる）。整形(keepComments)では
       // 元の字面を保つ（保存テキストの大小を変えない＝表示と一致）。
       toks.push({ type: "ID", value: keepComments ? s : s.toLowerCase(), pos: start });
