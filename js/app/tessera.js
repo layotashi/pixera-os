@@ -520,7 +520,9 @@ function _initWidgets() {
 
   ctrlRow = UI.HBox([ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
 
-  root = UI.VBox([ctrlRow, editor]);
+  // エディタは HBox で包む。VBox は直下のリーフ幅を最大子（=幅広ツールバー）へ引き伸ばす
+  // が、Box 子は引き伸ばさない。これで枠が 40 桁テキストと一致する（枠だけ広くならない）。
+  root = UI.VBox([ctrlRow, UI.HBox([editor])]);
   group = new UI.WidgetGroup(root);
 
   recompile(DEFAULT_CODE);
