@@ -23,11 +23,12 @@
  * ウィジェットは廃止した（旧 GENART/初期 TESSERA の名残）。プレビューは size のアスペクト比を反映。
  *
  * 構成:
- *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/CODE/RESEED/SAVE/OPEN/NEW/WALLPAPER。
- *     EXPORT=作品 / CODE=ソースを 1080² カード化（作品＋ハイライトコード）。共通フォーマット。
- *     ショートカットは各ボタンの hover ツールチップに表示する。
+ *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。
+ *     EXPORT は「いまプレビューに出ている見た目」を書き出す（作品 or コードカード）。
  *   - 左: コードエディタ (TextArea)。編集で即 compile。
  *   - 右: ライブプレビュー（ツールバーの下・size のアスペクト比、surface.buf を整数倍 blit）
+ *   - プレビュー直下: カードの見た目トグル CODE / ART INV / CODE INV（CODE ON でコードを
+ *     重ねた「コードカード」に。pad を額縁＆コード余白に使う。INV は作品層/コード層 別々）
  *   - footer: エラー (pos 付き) / 状態 (size・seed) / 書き出し進捗
  *
  * VFS / 操作:
@@ -450,6 +451,10 @@ let winId = null;
 // 再レンダーせず直近バッファを再ブリット＝低 fps はカクつき。
 let _pvCache = null; // 直近に描いた pv（{buf,w,h}）
 let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描画）
+// カードモードのトグル状態（プレビュー＝書き出しを共通化）。
+let codeOn = false; // コードオーバーレイ（OFF=作品のみ / ON=カード）
+let artInv = false; // 作品層の明暗反転
+let codeInv = false; // バー/文字の極性反転
 
 /** 現在編集中のファイル VFS パス (null = 無題) */
 let currentFilePath = null;
@@ -458,12 +463,15 @@ let isDirty = false;
 // ── ウィジェット (遅延初期化) ──
 // パラメータ（seed/方式/出力/dot/pad/fps）はすべてコードの設定ディレクティブで指定する。
 // 画面に残すコントロールは「書き出し形式 + DOWNLOAD」のみ（最小コントロール）。
-let editor, ddFormat, btnExport, btnCode, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, ctrlRow, root, group;
+let editor, ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, ctrlRow, root, group;
+// プレビュー直下の「カードの見た目」トグル群（CODE / ART INV / CODE INV）。
+let codeToggle, artInvToggle, codeInvToggle, sideGroup;
 let _ready = false;
 let _seeded = false;
 
 function recompile(src) {
   _pvFrame = -1; // コード変更（fps 含む）は即プレビューへ反映
+  _cardLayout = null; // ソース/canvas/pad 変更でカードのレイアウト・マスクを作り直す
   try {
     program = compile(src);
     errMsg = "";
@@ -513,20 +521,29 @@ function _initWidgets() {
     return b;
   };
   // DL と EXPORT は同一アクション（コード宣言の size に書き出し）＝1 ボタンに統合。
-  btnExport = mkBtn("EXPORT", "Export the artwork at the declared size — Ctrl+E (PNG/GIF/MP4)", exportArt);
-  btnCode = mkBtn("CODE", "Export the source as a 1080² SYNESTA card (PNG/GIF/MP4): art + highlighted code", exportCode);
+  btnExport = mkBtn("EXPORT", "Export what the preview shows (artwork, or code card) — Ctrl+E (PNG/GIF/MP4)", exportArt);
   btnReseed = mkBtn("RESEED", "Randomize the seed: directive — Ctrl+R", rerollSeed);
   btnSave = mkBtn("SAVE", "Save — Ctrl+S   (Save As — Ctrl+Shift+S)", saveFile);
   btnOpen = mkBtn("OPEN", "Open a .tess sketch — Ctrl+O", openFile);
   btnNew = mkBtn("NEW", "New sketch — Alt+N", newFile);
   btnWallpaper = mkBtn("WALLPAPER", "Set as desktop wallpaper, live-rendered — Alt+W", setWallpaper);
 
-  ctrlRow = UI.HBox([ddFormat, btnExport, btnCode, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
+  ctrlRow = UI.HBox([ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
 
   // エディタは HBox で包む。VBox は直下のリーフ幅を最大子（=幅広ツールバー）へ引き伸ばす
   // が、Box 子は引き伸ばさない。これで枠が 40 桁テキストと一致する（枠だけ広くならない）。
   root = UI.VBox([ctrlRow, UI.HBox([editor])]);
   group = new UI.WidgetGroup(root);
+
+  // ── プレビュー直下: カードの見た目トグル（onDraw で preview の下へ配置）──
+  const onLook = () => { _pvFrame = -1; }; // 変更を即プレビューへ
+  codeToggle = new UI.ToggleButton(0, 0, "CODE", (v) => { codeOn = v; onLook(); }, codeOn);
+  codeToggle.tooltip = "Overlay the source code on the preview/export (= code card)";
+  artInvToggle = new UI.ToggleButton(0, 0, "ART INV", (v) => { artInv = v; onLook(); }, artInv);
+  artInvToggle.tooltip = "Invert the artwork (light/dark swap)";
+  codeInvToggle = new UI.ToggleButton(0, 0, "CODE INV", (v) => { codeInv = v; onLook(); }, codeInv);
+  codeInvToggle.tooltip = "Invert the code highlight: dark bar+light text  <->  light bar+dark text";
+  sideGroup = new UI.WidgetGroup(UI.VBox([codeToggle, artInvToggle, codeInvToggle]));
 
   recompile(DEFAULT_CODE);
 }
@@ -773,59 +790,24 @@ function exportName(ext) {
   return `tessera_${base}_${resolvedConfig().seed}_${ts}.${ext}`;
 }
 
-/** DOWNLOAD / Ctrl+E: 現在のスケッチをコード宣言の size ちょうどに書き出す。 */
-function exportArt() {
-  if (!program || statusText) return; // 未コンパイル or 書き出し中は無視
-  let prog;
-  try {
-    prog = compile(editor.getText()); // プレビューと独立した実体（状態場を壊さない）
-  } catch {
-    return; // プレビューが描けている＝コンパイルは通るはずだが念のため
-  }
-  const key = currentFormatKey();
-  const { baseW, baseH, artW, artH, pixel, fps } = outputDims();
-  const eff = effectiveRender();
-  const mode = eff.mode,
-    params = eff.params;
-  const asciiOn = mode === "ascii";
-  const { seed, period } = resolvedConfig();
-
-  // t→art 解像度バッファを描く（場を art で直接描画）。
-  const artAt = (t) => {
-    const surf = makeExportSurface(artW, artH, asciiOn, mode, params);
-    prog.render(surf, t, seed);
-    return surf.buf;
-  };
-
+/** PNG=1枚 / GIF・MP4=period ループ を frameAt(t) から書き出す共通ヘルパ。 */
+function exportFrames(key, frameAt, w, h, scale, invert, fps, period, tag) {
+  const name = (ext) =>
+    tag ? exportName(ext).replace(/\.(\w+)$/, `_${tag}.$1`) : exportName(ext);
   try {
     if (key === "png") {
       // 画面に出ている量子化フレームと同じ t を捕らえる（WYSIWYG）。
       const t = (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
-      const base = ArtExport.composeMatte(artAt(t), artW, artH, baseW, baseH);
-      ArtExport.downloadPng(base, baseW, baseH, pixel, false, exportName("png"));
+      ArtExport.downloadPng(frameAt(t), w, h, scale, invert, name("png"));
     } else {
-      // GIF/MP4: period 秒ぶん（= period×fps フレーム、上限 PERIOD_CAP_S 秒）を集める。
-      // t∈[0,period) を等間隔サンプル＝シームレスループ（末尾の次が t=0）。
+      // GIF/MP4: t∈[0,period) を等間隔サンプル＝シームレスループ（末尾の次が t=0）。
       const loopFrames = clampI(period * fps, 2, PERIOD_CAP_S * fps);
       const frames = [];
-      for (let i = 0; i < loopFrames; i++) {
-        const t = (i / loopFrames) * period;
-        frames.push(ArtExport.composeMatte(artAt(t), artW, artH, baseW, baseH));
-      }
+      for (let i = 0; i < loopFrames; i++) frames.push(frameAt((i / loopFrames) * period));
       statusText = `ENCODING ${key.toUpperCase()}...`;
-      ArtExport.exportVideo(
-        frames,
-        baseW,
-        baseH,
-        pixel,
-        false,
-        fps,
-        key,
-        exportName(key),
-        (s) => {
-          statusText = s;
-        },
-      );
+      ArtExport.exportVideo(frames, w, h, scale, invert, fps, key, name(key), (s) => {
+        statusText = s;
+      });
     }
   } catch (e) {
     errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
@@ -833,17 +815,56 @@ function exportArt() {
   }
 }
 
-// ── コードカード書き出し（ソースを 1080² の画像/動画に。SNS で世界観を伝える）──
-// 3 段重ね: 作品(field@135→upscale ＝ 8px チャンキー dither) → 行ごとの黒バー(ラギッド) →
-// 大文字グリフ。テーマ配色・1bit は art_export 任せ。base 270(×4)/540(×2) で encode 効率化。
-const CARD_OUT = 1080;
-const CARD_ART_BASE = 135; // 作品の評価解像度（×8 = 1080 ＝ 8px チャンキー）
-const CARD_MARGIN = 12; // base 内の最小余白（中央寄せ＝上下左右均等）
+/**
+ * DOWNLOAD / Ctrl+E: いまプレビューに出ている見た目を選択フォーマットで書き出す。
+ * CODE OFF=作品 / CODE ON=コードカード。ART INV / CODE INV は層別に反映。
+ */
+function exportArt() {
+  if (!program || statusText) return; // 未コンパイル or 書き出し中は無視
+  let prog;
+  try {
+    prog = compile(editor.getText()); // プレビューと独立した実体
+  } catch {
+    return;
+  }
+  const key = currentFormatKey();
+  const { seed, period } = resolvedConfig();
+  const fps = outputDims().fps;
+  if (codeOn) {
+    // コードカード: 作品(額縁=pad) + バー + 文字。art/code の INV は frame に焼き込む。
+    const eff = effectiveRender();
+    const mode = eff.mode === "ascii" ? "dither" : eff.mode; // 背景は面系ディザ
+    const lay = getCardLayout();
+    const frameAt = (t) => renderCard(prog, t, seed, mode, eff.params, lay, artInv, codeInv);
+    exportFrames(key, frameAt, lay.cbW, lay.cbH, lay.scale, false, fps, period, "code");
+  } else {
+    // 作品のみ: base ×pixel で効率出力。ART INV は palette 反転で。
+    const { baseW, baseH, artW, artH, pixel } = outputDims();
+    const eff = effectiveRender();
+    const asciiOn = eff.mode === "ascii";
+    const frameAt = (t) => {
+      const surf = makeExportSurface(artW, artH, asciiOn, eff.mode, eff.params);
+      prog.render(surf, t, seed);
+      return ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
+    };
+    exportFrames(key, frameAt, baseW, baseH, pixel, artInv, fps, period, "");
+  }
+}
+
+// ── コードカード（CODE ON）: 作品＋行ごとの黒バー＋大文字コードの 3 段重ね ──
+// canvas/pad を尊重: 作品の額縁＝pad、コードの余白＝pad。base=canvas/scale(4 or 2) で
+// encode 効率化（8px チャンキー維持: art@canvas/8 → ×(8/scale) → cardBase → ×scale → canvas）。
+// ART INV=作品層を反転 / CODE INV=バー(0↔1)と文字(1↔0)を反転。テーマ配色は art_export 任せ。
 const CARD_BAR_PADX = 3; // バー内の左右パディング（glyph-px）
 const CARD_BAR_PADY = 2; // バー内の上下パディング（glyph-px）
 const CARD_LINE_GAP = 3; // バー間の隙間＝作品が覗く（glyph-px）
 
-/** ソース行（rstrip 済み）の素のブロック寸法（glyph-px, G=1）と行送り・字送り。 */
+/** 現在ソースの行配列（各行 rstrip・末尾の空行は除去）。 */
+function cardLines() {
+  return editor.getText().replace(/\s+$/g, "").split("\n").map((l) => l.replace(/\s+$/, ""));
+}
+
+/** ソース行の素のブロック寸法（glyph-px, G=1）と行送り・字送り。 */
 function cardBlockSize(lines) {
   const adv = GLYPH_W + 1;
   const pitch = GLYPH_H + 2 * CARD_BAR_PADY + CARD_LINE_GAP;
@@ -860,26 +881,49 @@ function cardBlockSize(lines) {
   };
 }
 
-/** base と glyph-scale G を選ぶ（typical=270/×4、長い code=540/×2）。 */
-function pickCard(lines) {
-  const { w, h } = cardBlockSize(lines);
-  for (const base of [270, 540]) {
-    const avail = base - 2 * CARD_MARGIN;
-    const g = Math.min(Math.floor(avail / w), Math.floor(avail / h));
-    if (g >= 1) return { base, scale: CARD_OUT / base, g };
+/** カードのレイアウト（cardBase・scale・マスク）を解決。pad を余白に使い中央寄せ。 */
+function resolveCardLayout() {
+  const lines = cardLines();
+  const { sizeW, sizeH, pad } = resolvedConfig();
+  const { w: bw, h: bh } = cardBlockSize(lines);
+  let scale = 2,
+    cbW = Math.round(sizeW / 2),
+    cbH = Math.round(sizeH / 2),
+    pb = Math.round(pad / 2),
+    g = 1;
+  for (const s of [4, 2]) {
+    const w = Math.round(sizeW / s),
+      h = Math.round(sizeH / s),
+      p = Math.round(pad / s);
+    const gg = Math.min(Math.floor((w - 2 * p) / bw), Math.floor((h - 2 * p) / bh));
+    if (gg >= 1) {
+      scale = s;
+      cbW = w;
+      cbH = h;
+      pb = p;
+      g = gg;
+      break;
+    }
   }
-  return { base: 540, scale: 2, g: 1 }; // 巨大 code: G=1（はみ出しは許容）
+  return { scale, cbW, cbH, ...buildCardMasks(lines, cbW, cbH, pb, g) };
 }
 
-/** バー/インクのマスク（base² の 0/1）を一度だけ作る（全フレーム共通）。 */
-function buildCardMasks(lines, base, g) {
-  const { w, h, pitch, adv } = cardBlockSize(lines);
-  const ox = Math.floor((base - w * g) / 2);
-  const oy = Math.floor((base - h * g) / 2);
-  const barMask = new Uint8Array(base * base);
-  const inkMask = new Uint8Array(base * base);
+/** レイアウト（masks 含む）はソース/canvas/pad に依存＝重いのでキャッシュ（recompile で破棄）。 */
+let _cardLayout = null;
+function getCardLayout() {
+  if (!_cardLayout) _cardLayout = resolveCardLayout();
+  return _cardLayout;
+}
+
+/** バー/インクのマスク（cbW×cbH の 0/1）。コードは padBase 余白の内側に中央寄せ。 */
+function buildCardMasks(lines, cbW, cbH, pb, g) {
+  const { w: bw, h: bh, pitch, adv } = cardBlockSize(lines);
+  const ox = pb + Math.floor((cbW - 2 * pb - bw * g) / 2);
+  const oy = pb + Math.floor((cbH - 2 * pb - bh * g) / 2);
+  const barMask = new Uint8Array(cbW * cbH);
+  const inkMask = new Uint8Array(cbW * cbH);
   const set = (m, x, y) => {
-    if (x >= 0 && x < base && y >= 0 && y < base) m[y * base + x] = 1;
+    if (x >= 0 && x < cbW && y >= 0 && y < cbH) m[y * cbW + x] = 1;
   };
   const barH = (GLYPH_H + 2 * CARD_BAR_PADY) * g;
   for (let i = 0; i < lines.length; i++) {
@@ -907,59 +951,33 @@ function buildCardMasks(lines, base, g) {
   return { barMask, inkMask };
 }
 
-/** 1 フレーム合成: 作品(t) → 黒バー(0) → 文字(1)。 */
-function renderCodeCard(prog, t, seed, mode, params, base, masks) {
-  const surf = makeExportSurface(CARD_ART_BASE, CARD_ART_BASE, false, mode, params);
+/** 1 フレーム合成: 作品(t, 額縁=pad) → バー → 文字。aInv=作品層反転 / cInv=バー/文字反転。 */
+function renderCard(prog, t, seed, mode, params, lay, aInv, cInv) {
+  const { baseW, baseH, artW, artH } = outputDims();
+  const surf = makeExportSurface(artW, artH, false, mode, params);
   prog.render(surf, t, seed);
-  const art = ArtExport.resampleNN(surf.buf, CARD_ART_BASE, CARD_ART_BASE, base, base);
-  const { barMask, inkMask } = masks;
-  const out = new Uint8Array(base * base);
+  const baseArt = ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
+  const art = ArtExport.resampleNN(baseArt, baseW, baseH, lay.cbW, lay.cbH);
+  const { barMask, inkMask } = lay;
+  const barVal = cInv ? 1 : 0;
+  const textVal = cInv ? 0 : 1;
+  const out = new Uint8Array(lay.cbW * lay.cbH);
   for (let i = 0; i < out.length; i++)
-    out[i] = inkMask[i] ? 1 : barMask[i] ? 0 : art[i];
+    out[i] = inkMask[i]
+      ? textVal
+      : barMask[i]
+        ? barVal
+        : aInv
+          ? art[i] ? 0 : 1
+          : art[i];
   return out;
 }
 
-/** CODE: ソースカードを選択フォーマットで書き出す（PNG=1枚 / GIF・MP4=ループ）。 */
-function exportCode() {
-  if (!program || statusText) return;
-  let prog;
-  try {
-    prog = compile(editor.getText());
-  } catch {
-    return;
-  }
-  const key = currentFormatKey();
-  const eff = effectiveRender();
-  const mode = eff.mode === "ascii" ? "dither" : eff.mode; // 背景は面系ディザに固定
-  const params = eff.params;
-  const { seed, period } = resolvedConfig();
-  const fps = outputDims().fps;
-  const lines = editor
-    .getText()
-    .replace(/\s+$/g, "")
-    .split("\n")
-    .map((l) => l.replace(/\s+$/, ""));
-  const { base, scale, g } = pickCard(lines);
-  const masks = buildCardMasks(lines, base, g);
-  const frameAt = (t) => renderCodeCard(prog, t, seed, mode, params, base, masks);
-  const name = (ext) => exportName(ext).replace(/\.(\w+)$/, "_code.$1");
-  try {
-    if (key === "png") {
-      const t = (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
-      ArtExport.downloadPng(frameAt(t), base, base, scale, false, name("png"));
-    } else {
-      const loopFrames = clampI(period * fps, 2, PERIOD_CAP_S * fps);
-      const frames = [];
-      for (let i = 0; i < loopFrames; i++) frames.push(frameAt((i / loopFrames) * period));
-      statusText = `ENCODING ${key.toUpperCase()}...`;
-      ArtExport.exportVideo(frames, base, base, scale, false, fps, key, name(key), (s) => {
-        statusText = s;
-      });
-    }
-  } catch (e) {
-    errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
-    statusText = "";
-  }
+/** プレビュー用: カード 1 フレームをプレビュー枠 (pvW×pvH) へ NN 縮小（文字は小さくなる）。 */
+function renderCardPreview(t, seed, mode, params, pvW, pvH) {
+  const lay = getCardLayout();
+  const card = renderCard(program, t, seed, mode, params, lay, artInv, codeInv);
+  return { buf: ArtExport.resampleNN(card, lay.cbW, lay.cbH, pvW, pvH), w: pvW, h: pvH };
 }
 
 /** ALT+W: 現在の場をデスクトップ背景に設定（ソースをスナップショット保存 → live-render）。 */
@@ -981,7 +999,7 @@ function setWallpaper() {
 function fitToolbar() {
   if (!ctrlRow) return;
   const target = editor.w + GAP + previewScale(asciiActive).w; // エディタ左〜プレビュー右
-  const btns = [ddFormat, btnExport, btnCode, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
+  const btns = [ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
   const sumW = btns.reduce((s, b) => s + b.w, 0);
   // ceil で target 以上に（端数はエディタ⇄プレビューの間隔へ回す＝右端ぴったり）。
   ctrlRow.gap = Math.max(UI.FOCUS_MARGIN * 2, Math.ceil((target - sumW) / (btns.length - 1)));
@@ -1009,7 +1027,8 @@ function onDraw(cr) {
   // ── 右: ライブプレビュー（ツールバーの下。**右端をツールバー右端へ揃える**）──
   // 枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）ので、エディタ枠（drawRoundRect）と
   // 上端を揃えるため pvY を +1。右端は ctrlRow.w に合わせ、エディタ⇄プレビュー間隔で吸収。
-  const pvW = previewScale(asciiActive).w;
+  const pv0 = previewScale(asciiActive); // プレビュー枠サイズ（カードもこの枠へ縮小）
+  const pvW = pv0.w;
   const contentW = Math.max(ctrlRow.w, editor.w + GAP + pvW);
   const pvX = cr.x + editor.x + contentW - pvW;
   const pvY = cr.y + editor.y + 1;
@@ -1019,7 +1038,7 @@ function onDraw(cr) {
     const eff = effectiveRender();
     activeMode = eff.mode;
     activeParams = eff.params;
-    asciiActive = activeMode === "ascii";
+    asciiActive = activeMode === "ascii" && !codeOn; // CODE ON の背景は面系ディザ
     const { seed, period, fps } = resolvedConfig();
     // WYSIWYG: プレビューを宣言 fps のフレームグリッドへ量子化（書き出しと同じ間引き・速度）。
     // フレーム番号が変わったときだけ再レンダー。
@@ -1028,7 +1047,16 @@ function onDraw(cr) {
     const t = (frameIdx / fps) % period;
     try {
       if (frameIdx !== _pvFrame || _pvCache === null) {
-        _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive);
+        if (codeOn) {
+          const cm = activeMode === "ascii" ? "dither" : activeMode;
+          _pvCache = renderCardPreview(t, seed, cm, activeParams, pv0.w, pv0.h);
+        } else {
+          _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive);
+          if (artInv && _pvCache) {
+            const b = _pvCache.buf; // 作品層の反転＝表示バッファ反転（palette swap 相当）
+            for (let i = 0; i < b.length; i++) b[i] = b[i] ? 0 : 1;
+          }
+        }
         _pvFrame = frameIdx;
       }
     } catch (e) {
@@ -1043,6 +1071,11 @@ function onDraw(cr) {
       GPU.blit(pv.buf, pv.w, pv.h, pvX, pvY, 1);
     }
   }
+
+  // ── プレビュー直下: カードの見た目トグル（CODE / ART INV / CODE INV）──
+  codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
+  sideGroup.setLayoutOrigin(editor.x + contentW - pvW, editor.y + 1 + pv0.h + GAP);
+  sideGroup.draw(cr);
 }
 
 function onDrawFooter(fr) {
@@ -1061,6 +1094,8 @@ function onDrawFooter(fr) {
 
 function onInput(ev) {
   group.update(ev);
+  codeInvToggle.visible = codeOn; // hit 判定の前に可視性を同期
+  sideGroup.update(ev);
 }
 
 function onMeasure() {
@@ -1070,7 +1105,9 @@ function onMeasure() {
   const pv = previewScale(asciiActive);
   const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + pv.w);
   const w = editor.x + contentW + UI.FOCUS_MARGIN;
-  const bodyH = editor.y + Math.max(editor.h, pv.h); // プレビューはエディタと同じ上端で右寄せ
+  // 右カラム = プレビュー + トグル群（プレビュー直下）。エディタとの高い方。
+  const sideH = codeToggle ? 1 + pv.h + GAP + codeToggle.h * 3 + UI.FOCUS_MARGIN * 4 : pv.h;
+  const bodyH = editor.y + Math.max(editor.h, sideH);
   const h = bodyH + UI.FOCUS_MARGIN;
   return { w, h };
 }
@@ -1109,9 +1146,10 @@ WM.wmRegister(
         "(pixel is fixed at 8 = chunky 1-bit). " +
         "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
-        "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / EXPORT artwork " +
-        "(PNG/GIF/MP4 at the declared size), CODE = export the source as a " +
-        "1080 square SYNESTA card (art + highlighted code), Ctrl+R reseed, " +
+        "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / EXPORT exports what " +
+        "the preview shows (PNG/GIF/MP4). Below the preview: CODE overlays the " +
+        "source (= code card, pad becomes the frame/margin); ART INV / CODE INV " +
+        "flip the artwork and the code-highlight separately. Ctrl+R reseed, " +
         "Alt+W set as desktop wallpaper (live-rendered), Shift+Alt+F format.",
       onRelayout: relayout,
     });
