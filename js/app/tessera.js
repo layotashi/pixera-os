@@ -1095,6 +1095,15 @@ function onDrawFooter(fr) {
 function onInput(ev) {
   group.update(ev);
   codeInvToggle.visible = codeOn; // hit 判定の前に可視性を同期
+  // フォーカスは全体で 1 つ（Helpers）。sideGroup は down/mdown が自分のトグルに当たった
+  // ときだけ処理する（外れ down で clearFocus し、main group のエディタ focus を奪うのを防ぐ）。
+  // hover/up/held はそのまま渡す（tooltip・トグル完了。これらは focus を消さない）。
+  if (ev.type === "down" || ev.type === "mdown") {
+    const hit = [codeToggle, artInvToggle, codeInvToggle].some(
+      (t) => t.visible !== false && t.hitTest(ev.localX, ev.localY),
+    );
+    if (!hit) return;
+  }
   sideGroup.update(ev);
 }
 
