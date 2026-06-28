@@ -60,7 +60,7 @@ const GALLERY_DIR = "/Sketches/Gallery";
 
 // ── レイアウト/プレビュー ──
 const COLS = 40; // エディタ幅 (文字数)。40桁 = レトロ家庭機の画面幅
-const ROWS = 16; // エディタ表示行数
+const ROWS = 24; // エディタ表示行数（最長サンプル julia ~23 行をスクロール無しで表示）
 const MAX_LINES = 9999;
 const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
 // プレビューは出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で見せる
