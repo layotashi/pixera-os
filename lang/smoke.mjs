@@ -183,6 +183,11 @@ function check(name, cond) {
   check("canvas: WxH 解釈", c1.canvas && c1.canvas.w === 1920 && c1.canvas.h === 1080);
   const c2 = cfg("canvas: 800 600\nsin(x)");
   check("canvas: W H 解釈", c2.canvas && c2.canvas.w === 800 && c2.canvas.h === 600);
+  // W・H は定数式可（他のスカラー系と同様）
+  const c2e = cfg("canvas: 480*2 360*2\nsin(x)");
+  check("canvas: 式 W H 解釈", c2e.canvas && c2e.canvas.w === 960 && c2e.canvas.h === 720);
+  const c2g = cfg("canvas: 480*2x720\nsin(x)");
+  check("canvas: 式 + glued 高さ", c2g.canvas && c2g.canvas.w === 960 && c2g.canvas.h === 720);
 
   // スカラー: pad / fps / seed / period
   const c3 = cfg("pad: 32\nfps: 25\nseed: 7\nsin(x)");

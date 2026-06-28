@@ -312,23 +312,36 @@ function extractDirectives(toks) {
       j++;
       config.view = { mode: modeTk.value, args };
     } else if (name === "canvas") {
-      // `1920x1080` は NUM(1920)+ID("x1080") に字句化される。`1920 1080` も許す。
-      const w = toks[j];
-      if (!w || w.type !== "NUM")
-        throw new LangError(`canvas: は 幅 高さ（例 1920x1080）`, colonPos);
-      j++;
-      const nx = toks[j];
-      let h;
-      if (nx && nx.type === "ID" && /^x\d+$/.test(nx.value)) {
-        h = parseInt(nx.value.slice(1), 10);
-        j++;
-      } else if (nx && nx.type === "NUM") {
-        h = nx.value;
-        j++;
-      } else {
-        throw new LangError(`canvas: 高さが必要です（例 1920x1080 / 1920 1080）`, w.pos);
+      // `WxH`（1920x1080）/ `W H`（1920 1080）。W・H とも定数式可（480*2 360*2 等）。
+      // 他のスカラー系（pad/fps/…）と同じく SEP までを値とみなし定数評価する。
+      // `1920x1080` は NUM(1920)+ID("x1080") に字句化される（glued 高さ）。
+      let m = j;
+      const valToks = [];
+      while (toks[m] && toks[m].type !== "SEP" && toks[m].type !== "EOF") {
+        valToks.push(toks[m]);
+        m++;
       }
-      config.canvas = { w: w.value, h };
+      if (valToks.length === 0)
+        throw new LangError(`canvas: は 幅 高さ（例 1920x1080 / 480*2 360*2）`, colonPos);
+      valToks.push({ type: "EOF", pos: valToks[valToks.length - 1].pos });
+      const sp = makeParser(valToks, 0);
+      let cw, ch;
+      try {
+        cw = evalConstExpr(sp.parseExpr(0), colonPos);
+        const nx = sp.peek();
+        if (nx.type === "ID" && /^x\d+$/.test(nx.value)) {
+          ch = parseInt(nx.value.slice(1), 10); // glued: 480x360
+          sp.next();
+        } else {
+          ch = evalConstExpr(sp.parseExpr(0), colonPos); // 空白区切りの 2 つ目の式
+        }
+      } catch {
+        throw new LangError(`canvas: の値が不正です（例 1920x1080 / 480*2 360*2）`, colonPos);
+      }
+      if (sp.peek().type !== "EOF")
+        throw new LangError(`canvas: は 幅 高さ の 2 値です`, sp.peek().pos);
+      config.canvas = { w: cw, h: ch };
+      j = m;
     } else {
       // pad / fps / seed / period: 定数式（数値 / pi / tau / 2*pi 等）。
       // SEP までを式とみなし、本体へ食い込まないよう EOF 付きスライスで解析→定数評価。
