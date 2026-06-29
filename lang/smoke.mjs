@@ -304,6 +304,40 @@ function check(name, cond) {
   check("fmt: idempotent", f(f("(a+b)*c")) === f("(a+b)*c"));
   check("fmt: blank idempotent", f(f("1\n\n2")) === f("1\n\n2"));
   check("fmt: lex error → unchanged", f("1 + /* open") === "1 + /* open");
+
+  // ── TESS 専用: 40桁折り返し(A) / ディレクティブ整列(B) / 代入整列(C) / コメント(E) ──
+  const allFit = (s) => f(s).split("\n").every((l) => l.length <= 40);
+  const idem = (s) => f(f(s)) === f(s);
+
+  // B: 順不同ディレクティブ → 正準順(canvas→pad→fps→period→seed→view) + コロン揃え
+  check(
+    "fmt(B): directive reorder + colon align",
+    f("view: dither(2)\nseed: 0\ncanvas: 1080x1080\npad: 80") ===
+      "canvas: 1080x1080\npad:    80\nseed:   0\nview:   dither(2)",
+  );
+  check("fmt(B): lone directive unchanged", f("seed:1\nx") === "seed: 1\nx");
+
+  // C: 同深度で連続する代入の `=` を揃える（40桁内のみ）
+  check("fmt(C): assignment = align", f("ax = 1\nbbb = 2\nc = 3") === "ax  = 1\nbbb = 2\nc   = 3");
+  check(
+    "fmt(C): align guard (would overflow → stay unaligned)",
+    f("a = sin(x*8) + sin(y*8) + cos(x*8)\nlongername = 0").split("\n")[0] ===
+      "a = sin(x*8) + sin(y*8) + cos(x*8)",
+  );
+
+  // A1: 括弧内の長い和を 40桁で折る（全行 ≤40・演算子先頭レール・冪等）
+  const a1 = "(sin(x*9 - t) + sin(y*9 + t) + sin((x + y)*9 - t) + cos(x*9 - t))*0.5 + 0.5";
+  check("fmt(A1): wraps inside parens, all lines <=40", allFit(a1));
+  check("fmt(A1): operator-leading rail", /\n\+ /.test(f(a1)));
+  check("fmt(A1): idempotent", idem(a1));
+
+  // A2: 括弧の無い深度0の長い和 → グルーピング括弧を補って折る
+  const a2 = "aaaa + bbbb + cccc + dddd + eeee + ffff + gggg + hhhh";
+  check("fmt(A2): inserts grouping paren + wraps <=40", allFit(a2) && f(a2).startsWith("( "));
+  check("fmt(A2): idempotent", idem(a2));
+
+  // E: 単独行コメントも正規化（`//x` → `// x`）
+  check("fmt(E): own-line comment normalized", f("//hi\n1") === "// hi\n1");
 }
 
 // 11) 言語拡張: worley（stdlib）+ Tier0 値ブロック（文＋最終式）

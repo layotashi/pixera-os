@@ -74,6 +74,11 @@ export class TextArea extends FocusableWidget {
     this.showWhitespace = true;
     /** 入力を大文字へ畳むか（SYNESTA は大文字表示が前提。表示＝保存を一致させる）。 */
     this.uppercaseInput = true;
+    /**
+     * 桁ガイド列（null=無効）。設定すると、その列に点線の縦ガイドを描き、その列を超える
+     * 行は右端を実線ティックで強調する（TESS の 40桁制約を可視化＝折り返しの目安）。
+     */
+    this.guideCol = null;
   }
 
   /** @private 現在状態のスナップショット */
@@ -444,6 +449,25 @@ export class TextArea extends FocusableWidget {
       } else {
         this._drawLineChars(visible, innerX, lineY, charW);
         this._drawNewlineIcon(line, lineIdx, innerX, lineY, charW);
+      }
+    }
+
+    // 桁ガイド + オーバーフロー（D）。guideCol 設定時のみ。点線ガイド＋超過行は実線ティック。
+    if (this.guideCol != null) {
+      const gx = innerX + (this.guideCol - this.scrollX) * charW - 1;
+      if (gx >= innerX && gx < innerX + innerW) {
+        for (let yy = innerY; yy < innerY + innerH; yy += 3) Ports.pset(gx, yy, 1);
+        // 超過行は 2px 実線ティックで強調（点線ガイドと明確に区別）。
+        for (let viewRow = 0; viewRow < this.visibleRows; viewRow++) {
+          const lineIdx = this._vScroll.offset + viewRow;
+          if (lineIdx >= this.lines.length) break;
+          if (this.lines[lineIdx].length > this.guideCol) {
+            const lineY = innerY + viewRow * Helpers.TEXTAREA_LINE_HEIGHT;
+            const y1 = lineY + Helpers.TEXTAREA_LINE_HEIGHT - 1; // 行全高（連続超過行は実線で繋がる）
+            Ports.vline(gx, lineY, y1, 1);
+            Ports.vline(gx - 1, lineY, y1, 1);
+          }
+        }
       }
     }
 
