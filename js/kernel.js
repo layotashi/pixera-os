@@ -51,11 +51,6 @@ import * as Config from "./config.js";
 import { runSplash, fadeInDesktop } from "./splash.js";
 import { initSystemSfxHooks } from "./core/sfx.js";
 
-// ── 状態 ──
-
-/** 経過フレーム数 */
-let frameCount = 0;
-
 // ── メインループ ──
 
 function mainLoop() {
@@ -73,7 +68,6 @@ function mainLoop() {
   draw();
 
   resetInput();
-  frameCount++;
 
   requestAnimationFrame(mainLoop);
 }
