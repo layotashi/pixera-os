@@ -77,9 +77,7 @@ const GALLERY_DIR = "/Sketches/Gallery";
 const COLS = 40; // エディタ幅 (文字数)。40桁 = レトロ家庭機の画面幅
 const ROWS = 24; // エディタ表示行数（最長サンプル julia ~23 行をスクロール無しで表示）
 const MAX_LINES = 9999;
-const PV_BOX = 176; // プレビュー枠の長辺px の**自然サイズ**（最小）。onDraw で利用可能領域へ拡大
-// 現フレームのプレビュー枠長辺px。onDraw が cr から算出（自然サイズ以上）。onMeasure は PV_BOX。
-let _pvBox = PV_BOX;
+const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
 // プレビューは出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で見せる
 // ＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。
 const GAP = 8; // エディタ⇄プレビュー間
@@ -546,10 +544,12 @@ function toggleAudio() {
   else playAudio();
 }
 
-/** Alt+Enter / Esc: PERFORM（全域プレビュー）トグル。プレビュー寸法が変わるので再描画を強制。 */
+/**
+ * Alt+Enter: PERFORM（フルスクリーンのライブ演奏ビュー）トグル。
+ * TESSERA では fullscreen ⇔ PERFORM を 1:1 同期する（F11 と等価。onDraw 冒頭で同期）。
+ */
 function togglePerform() {
-  performMode = !performMode;
-  _pvFrame = -1; // プレビュー寸法が変わるため次フレームで作り直す
+  if (winId !== null) WM.wmToggleFullscreen(winId);
 }
 
 // ── AV 同期（P3）: 視覚の場が音を読む ─────────────────────────────────
@@ -575,6 +575,47 @@ function ampAt(prog, t, seed, period) {
 function renderField(prog, surf, t, seed) {
   const period = resolvedConfig(prog).period;
   prog.render(surf, t, seed, { period, amp: ampAt(prog, t, seed, period) });
+}
+
+// ── PERFORM 描画: 画面そのものがキャンバス ─────────────────────────────
+// canvas:/pad: は無視し、グリッド = floor(画面/8) チャンク（1 アートドット = 8 画面px）。
+// 8 で割り切れない解像度 (480x270 等) は余り (≤7px) を上下左右に折半した暗色レターボックス。
+// view: は尊重するが ascii はオーバーレイと噛み合わないため dither 代替 (CODE カードと同じ規則)。
+function drawPerform(cr) {
+  if (!program) return;
+  const eff = effectiveRender();
+  activeMode = eff.mode === "ascii" ? "dither" : eff.mode;
+  activeParams = eff.params;
+  asciiActive = false;
+  const { seed, period, fps } = resolvedConfig();
+  // 通常プレビューと同じ fps 量子化・period 周回（音同期 currentVisualTime とも一致）。
+  const frameIdx = Math.floor(((performance.now() - t0) / 1000) * fps);
+  const t = (frameIdx / fps) % period;
+  const gw = Math.max(1, Math.floor(cr.w / PIXEL));
+  const gh = Math.max(1, Math.floor(cr.h / PIXEL));
+  try {
+    if (frameIdx !== _pvFrame || _pvCache === null) {
+      ensureSurface(gw, gh);
+      renderField(program, surface, t, seed);
+      if (artInv) {
+        const b = surface.buf;
+        for (let i = 0; i < b.length; i++) b[i] = b[i] ? 0 : 1;
+      }
+      // 整数 8× NN 拡大＝チャンク正確（クリーン倍率・モアレ無し）。
+      const up = ArtExport.resampleNN(surface.buf, gw, gh, gw * PIXEL, gh * PIXEL);
+      _pvCache = { buf: up, w: gw * PIXEL, h: gh * PIXEL };
+      _pvFrame = frameIdx;
+    }
+  } catch (e) {
+    // 描画中の例外でも直前の good フレームを保持（ライブ耐性）。
+    errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
+  }
+  const pv = _pvCache;
+  if (pv) {
+    const ox = cr.x + ((cr.w - pv.w) >> 1);
+    const oy = cr.y + ((cr.h - pv.h) >> 1);
+    GPU.blit(pv.buf, pv.w, pv.h, ox, oy, 1);
+  }
 }
 
 // ── プレビュー surface（art 評価解像度で確保。解像度が変わるときだけ再確保＝状態場を温存）──
@@ -641,8 +682,8 @@ let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描
 let codeOn = false; // コードオーバーレイ（OFF=作品のみ / ON=カード）
 let artInv = false; // 作品層の明暗反転
 let codeInv = false; // バー/文字の極性反転
-// PERFORM: エディタ/ツールバーを隠しプレビューをコンテンツ全域へ＝大きなライブ演奏ビュー。
-// 入力はエディタに届くので CODE 重畳でコードを見せたままライブ編集できる。Alt+Enter / Esc。
+// PERFORM: フルスクリーン (WM) と 1:1 同期するライブ演奏ビュー。画面そのものがキャンバス
+// (1 アートドット = 8 画面px)。Alt+Enter / F11 で入り、Esc / F11 で出る。
 let performMode = false;
 
 /** 現在編集中のファイル VFS パス (null = 無題) */
@@ -907,8 +948,8 @@ function previewScale(ascii) {
   const maxBase = Math.max(baseW, baseH);
   let renderDenom = 1,
     displayScale = 1;
-  if (maxBase <= _pvBox) displayScale = Math.max(1, Math.floor(_pvBox / maxBase));
-  else renderDenom = Math.ceil(maxBase / _pvBox);
+  if (maxBase <= PV_BOX) displayScale = Math.max(1, Math.floor(PV_BOX / maxBase));
+  else renderDenom = Math.ceil(maxBase / PV_BOX);
   // ASCII はグリフを拡大すると汚いので等倍表示。
   if (ascii && displayScale > 1) displayScale = 1;
   const rbW = Math.max(1, Math.round(baseW / renderDenom));
@@ -1224,6 +1265,13 @@ function fitToolbar() {
 }
 
 function onDraw(cr) {
+  // ── PERFORM ⇔ フルスクリーンを 1:1 同期（Alt+Enter / F11 / Esc すべて同じ経路）──
+  const fs = winId !== null && WM.wmIsFullscreen(winId);
+  if (fs !== performMode) {
+    performMode = fs;
+    _pvFrame = -1; // プレビュー解像度が変わるため次フレームで作り直す
+  }
+
   // ── キーボードショートカット (フォーカス時のみ) ──
   if (WM.wmIsFocused(winId)) {
     if (ctrlShiftDown("KeyS")) saveFileAs();
@@ -1234,54 +1282,31 @@ function onDraw(cr) {
     else if (altDown("KeyW")) setWallpaper(); // 現在の場をデスクトップ背景に
     else if (altDown("KeyN")) newFile();
     else if (altDown("KeyP")) toggleAudio(); // sound: の再生/停止トグル
-    else if (altDown("Enter")) togglePerform(); // ライブ演奏ビュー（全域プレビュー）
+    else if (altDown("Enter")) togglePerform(); // PERFORM（フルスクリーン演奏ビュー）
     else if (altShiftDown("KeyF")) formatEditor();
-    else if (performMode && keyDown("Escape")) togglePerform(); // Esc で PERFORM 解除
+    else if (performMode && keyDown("Escape"))
+      WM.wmSetFullscreen(winId, false); // Esc で PERFORM 解除
   }
 
   GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0); // 背景クリア
 
-  // ── プレビュー枠 _pvBox を利用可能領域から算出（整数クリーン倍率で拡大）──
-  // 通常はエディタの右。ただし既定解像度では縦の空きが 2×(base*2) に届かず 1× に留まる。
-  // PERFORM(Alt+Enter) はエディタ/ツールバーを隠しコンテンツ全域を使う＝クリーン倍率のまま
-  // 最大化した大きなライブ演奏ビュー（CODE トグルでコードを重畳した表示に）。
-  {
-    const { baseW, baseH } = outputDims();
-    let availW, availH;
-    if (performMode) {
-      availW = cr.w - UI.FOCUS_MARGIN * 2;
-      availH = cr.h - UI.FOCUS_MARGIN * 2;
-    } else {
-      const sideH = sideGroup ? sideGroup.measure().h : 0;
-      availW = cr.w - editor.x - editor.w - GAP - UI.FOCUS_MARGIN;
-      availH = cr.h - (editor.y + 1) - GAP - sideH - UI.FOCUS_MARGIN;
-    }
-    const box =
-      baseW >= baseH
-        ? Math.min(availW, (availH * baseW) / baseH)
-        : Math.min(availH, (availW * baseH) / baseW);
-    _pvBox = Math.max(PV_BOX, Number.isFinite(box) ? Math.floor(box) : 0);
-  }
-
-  // ── 通常モードのみ: トップツールバー + エディタ（左カラム）を描く ──
-  if (!performMode) {
-    fitToolbar();
-    group.draw(cr);
-  }
-
-  // ── ライブプレビュー（PERFORM=中央 / 通常=エディタ右） ──
-  const pv0 = previewScale(asciiActive); // プレビュー枠サイズ（カードもこの枠へ縮小）
-  let pvX,
-    pvY,
-    contentW = 0;
+  // ── PERFORM: 画面そのものがキャンバス（通常レイアウトは描かない）──
   if (performMode) {
-    pvX = cr.x + Math.floor((cr.w - pv0.w) / 2);
-    pvY = cr.y + Math.floor((cr.h - pv0.h) / 2);
-  } else {
-    contentW = Math.max(ctrlRow.w, editor.w + GAP + pv0.w);
-    pvX = cr.x + editor.x + contentW - pv0.w;
-    pvY = cr.y + editor.y + 1;
+    drawPerform(cr);
+    return;
   }
+
+  // ── トップツールバー（全幅に均等配分）+ エディタ（左カラム）──
+  fitToolbar();
+  group.draw(cr);
+
+  // ── 右: ライブプレビュー（ツールバーの下。**右端をツールバー右端へ揃える**）──
+  // 枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）ので、エディタ枠（drawRoundRect）と
+  // 上端を揃えるため pvY を +1。右端は ctrlRow.w に合わせ、エディタ⇄プレビュー間隔で吸収。
+  const pv0 = previewScale(asciiActive); // プレビュー枠サイズ（カードもこの枠へ縮小）
+  const contentW = Math.max(ctrlRow.w, editor.w + GAP + pv0.w);
+  const pvX = cr.x + editor.x + contentW - pv0.w;
+  const pvY = cr.y + editor.y + 1;
 
   if (program) {
     // 実効方式（view: があればコードが決める。無ければ既定 dither）。
@@ -1321,21 +1346,15 @@ function onDraw(cr) {
     }
   }
 
-  // ── 通常モードのみ: プレビュー直下のトグル群（CODE / ART INV / CODE INV）──
-  if (!performMode) {
-    codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
-    sideGroup.setLayoutOrigin(editor.x + contentW - pv0.w, editor.y + 1 + pv0.h + GAP);
-    sideGroup.draw(cr);
-  }
+  // ── プレビュー直下: カードの見た目トグル（CODE / ART INV / CODE INV）──
+  codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
+  sideGroup.setLayoutOrigin(editor.x + contentW - pv0.w, editor.y + 1 + pv0.h + GAP);
+  sideGroup.draw(cr);
 }
 
 function onDrawFooter(fr) {
   if (errMsg) {
     drawText(fr.x, fr.y, "ERR " + errMsg, 1);
-    return;
-  }
-  if (performMode) {
-    drawText(fr.x, fr.y, "PERFORM  Alt+Enter or Esc to exit", 1);
     return;
   }
   const rc = resolvedConfig();
@@ -1348,6 +1367,9 @@ function onDrawFooter(fr) {
 }
 
 function onInput(ev) {
+  // PERFORM 中は隠れたウィジェットへ配信しない（誤クリック・tooltip・Esc による
+  // フォーカス解除を回避）。編集入力は Phase C のオーバーレイエディタが担う。
+  if (performMode) return;
   group.update(ev);
   codeInvToggle.visible = codeOn; // hit 判定の前に可視性を同期
   // フォーカスは全体で 1 つ（Helpers）。sideGroup は down/mdown が自分のトグルに当たった
@@ -1365,7 +1387,6 @@ function onInput(ev) {
 function onMeasure() {
   // トップツールバーは全幅に均等配分し、その下に [エディタ | プレビュー]。ウィンドウは
   // エディタ + 実プレビュー幅ちょうど（プレビューが右下端に揃う）。
-  _pvBox = PV_BOX; // 自然サイズで測る（onDraw の拡大値を測定へ持ち込まない＝フィードバック回避）
   fitToolbar();
   const pv = previewScale(asciiActive);
   const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + pv.w);
