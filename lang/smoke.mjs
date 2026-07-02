@@ -280,7 +280,7 @@ function check(name, cond) {
   check("fmt: call & comma", f("mix( a,b )") === "mix(a, b)");
   check("fmt: unary tight", f("sin(-1.4*y)") === "sin(-1.4*y)");
   check("fmt: parens & tight", f("(a+b)*c") === "(a + b)*c");
-  // 数値正準化: 先頭/末尾ゼロを落とす（GLSL/tixy 慣習・40桁節約・意味不変）。
+  // 数値正準化: 先頭/末尾ゼロを落とす（GLSL/tixy 慣習・39桁節約・意味不変）。
   check("fmt: number canon (.5 / 1.0->1)", f("0.5 + 1.0") === ".5 + 1");
   check("fmt: number canon (trailing zeros)", f("2.00 + 1.50 + .250") === "2 + 1.5 + .25");
   check("fmt: number canon (int kept)", f("30 + 0 + 8") === "30 + 0 + 8");
@@ -308,7 +308,7 @@ function check(name, cond) {
   check("fmt: blank idempotent", f(f("1\n\n2")) === f("1\n\n2"));
   check("fmt: lex error → unchanged", f("1 + /* open") === "1 + /* open");
 
-  // ── TESS 専用: 40桁折り返し(A) / ディレクティブ整列(B) / 代入整列(C) / コメント(E) ──
+  // ── TESS 専用: 39桁折り返し(A) / ディレクティブ整列(B) / 代入整列(C) / コメント(E) ──
   const allFit = (s) => f(s).split("\n").every((l) => l.length <= 40);
   const idem = (s) => f(f(s)) === f(s);
 
@@ -320,7 +320,7 @@ function check(name, cond) {
   );
   check("fmt(B): lone directive unchanged", f("seed:1\nx") === "seed: 1\nx");
 
-  // C: 同深度で連続する代入の `=` を揃える（40桁内のみ）
+  // C: 同深度で連続する代入の `=` を揃える（39桁内のみ）
   check("fmt(C): assignment = align", f("ax = 1\nbbb = 2\nc = 3") === "ax  = 1\nbbb = 2\nc   = 3");
   check(
     "fmt(C): align guard (would overflow → stay unaligned)",
@@ -328,15 +328,15 @@ function check(name, cond) {
       "a = sin(x*8) + sin(y*8) + cos(x*8)",
   );
 
-  // A1: 括弧内の長い和を 40桁で折る（全行 ≤40・演算子先頭レール・冪等）
+  // A1: 括弧内の長い和を 39桁で折る（全行 ≤39・演算子先頭レール・冪等）
   const a1 = "(sin(x*9 - t) + sin(y*9 + t) + sin((x + y)*9 - t) + cos(x*9 - t))*0.5 + 0.5";
-  check("fmt(A1): wraps inside parens, all lines <=40", allFit(a1));
+  check("fmt(A1): wraps inside parens, all lines <=39", allFit(a1));
   check("fmt(A1): operator-leading rail", /\n\+ /.test(f(a1)));
   check("fmt(A1): idempotent", idem(a1));
 
   // A2: 括弧の無い深度0の長い和 → グルーピング括弧を補って折る
   const a2 = "aaaa + bbbb + cccc + dddd + eeee + ffff + gggg + hhhh";
-  check("fmt(A2): inserts grouping paren + wraps <=40", allFit(a2) && f(a2).startsWith("( "));
+  check("fmt(A2): inserts grouping paren + wraps <=39", allFit(a2) && f(a2).startsWith("( "));
   check("fmt(A2): idempotent", idem(a2));
 
   // E: 単独行コメントも正規化（`//x` → `// x`）

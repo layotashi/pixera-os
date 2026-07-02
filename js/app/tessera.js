@@ -74,7 +74,10 @@ const LEARN_DIR = "/Sketches/Learn";
 const GALLERY_DIR = "/Sketches/Gallery";
 
 // ── レイアウト/プレビュー ──
-const COLS = 40; // エディタ幅 (文字数)。40桁 = レトロ家庭機の画面幅
+// エディタ幅 (文字数)。39桁 = PERFORM (最小幅 480px) に 2x グリフ
+// (字送り12px) が対称余白 (透過4+バー3 ×左右) 込みでぴったり収まる桁数:
+// 4+3 + (39*12-2) + 3+4 = 480。
+const COLS = 39;
 const ROWS = 24; // エディタ表示行数（最長サンプル julia ~23 行をスクロール無しで表示）
 const MAX_LINES = 9999;
 const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
@@ -182,22 +185,26 @@ s/(s + 1)`,
   },
   {
     file: "09_sound" + EXT,
-    src: `// sound is a field over time a(t) -> -1..1,
-// just like the visual field is over space.
-// press Alt+P to play / stop. chiptune only:
-// pulse = square wave. step/seq walk a little
-// riff; decay(beat(8)) fades each of 8 steps.
-// audio loops over 'period', same as the view.
+    src: `// sound is a field over time
+// a(t) -> -1..1, just like the visual
+// field is over space. Alt+P plays
+// and stops. chiptune only: pulse =
+// square wave. step/seq walk a riff;
+// decay(beat(8)) fades every step.
+// audio loops over 'period' like the
+// view does.
 sin(x*8 - t)*.5 + .5
 
-sound: pulse(hz(45 + seq(step(8), 0, 3, 7, 12))) * decay(beat(8))`,
+sound:
+  p = 45 + seq(step(8), 0, 3, 7, 12)
+  pulse(hz(p)) * decay(beat(8))`,
   },
   {
     file: "10_voices" + EXT,
-    src: `// name your timbres up top with 'voice'
-// (f = the pitch you pass in), then play
-// them by name below. mix voices by adding.
-// = a tiny 3-part chiptune loop. Alt+P.
+    src: `// name your timbres up top with
+// 'voice'. f is the pitch you pass.
+// play them by name below and mix by
+// adding. 3 parts, one loop. Alt+P.
 voice lead: pulse(f, .25)
 voice bass: tri(f)
 voice hat:  nz(1000)
@@ -205,24 +212,29 @@ voice hat:  nz(1000)
 sin(x*8 - t)*.5 + .5
 
 sound:
-  m = lead(hz(60 + seq(step(8), 0, 3, 7, 10))) * decay(beat(8))
+  s = step(8)
+  n = 60 + seq(s, 0, 3, 7, 10)
+  m = lead(hz(n)) * decay(beat(8))
   b = bass(hz(36))
   h = hat() * decay(beat(16))
   m*.4 + b*.4 + h*.2`,
   },
   {
     file: "11_react" + EXT,
-    src: `// the visual field can read the sound.
-// amp = the current audio level (0..1);
-// beat(n)/step(n) share the loop clock,
-// so the picture locks to the rhythm.
-// here a disc pulses with the beat. Alt+P.
+    src: `// the picture can read the sound.
+// amp = the audio level right now.
+// beat(n) shares the loop clock, so
+// the picture locks to the rhythm.
+// a disc pulses with the beat. Alt+P.
 voice lead: pulse(f, .25)
 
-d = dist(x, y, .5, .5)
-(1 - smoothstep(.18, .22, d)) * (.25 + .75*amp)
+d    = dist(x, y, .5, .5)
+disc = 1 - smoothstep(.18, .22, d)
+disc * (.25 + .75*amp)
 
-sound: lead(hz(50 + seq(step(8), 0, 5, 7, 12))) * decay(beat(8))`,
+sound:
+  n = 50 + seq(step(8), 0, 5, 7, 12)
+  lead(hz(n)) * decay(beat(8))`,
   },
 ];
 
@@ -743,7 +755,7 @@ function _initWidgets() {
     recompile(text); // 編集で即コンパイル (LangError は footer へ)
   });
   editor.showWhitespace = false; // コード編集では空白/改行マーカーを消す（読みやすさ）
-  editor.guideCol = COLS; // 40桁ガイド（点線）＋超過行ティック。TESS の桁制約を可視化（D）
+  editor.guideCol = COLS; // 39桁ガイド（点線）＋超過行ティック。TESS の桁制約を可視化（D）
 
   // ── ツールバー（1 行）: 書き出し形式 + アクション群。ショートカットは各ボタンの
   // hover ツールチップに表示する（画面下部の凡例は廃止）。
