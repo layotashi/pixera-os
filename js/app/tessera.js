@@ -43,7 +43,7 @@
  *     1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして書き出す。Ctrl+R で seed: 振り直し。
  *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
  *   - PERFORM（ライブ演奏ビュー）: Alt+Enter / F11 でフルスクリーン化し、画面そのものが
- *     キャンバスになる（1 アートドット = 8 画面px。canvas:/pad: は無視、Esc / F11 で解除）。
+ *     キャンバスになる（1 アートドット = PERFORM_CHUNK(=4) 画面px。canvas:/pad: は無視、Esc / F11 で解除）。
  *     動くアートの上に「暗色バー + 明色 2x コード + カーソル」のオーバーレイエディタが重なり、
  *     通常どおり編集できる（編集モデルは同じ TextArea。編集は即 recompile ＝ライブコーディング）。
  *     エラーは最下端の反転バーに出し、映像/音は直前 good が流れ続ける。
@@ -421,6 +421,10 @@ const VIEW_PARAM = {
 // pixel ディレクティブは廃止（理念＝低解像度の徹底・性能の予測可能性）。canvas が
 // 実質「ドット数（base = canvas/8）」を決める。額縁 pad は出力px。fps のみスナップ。
 const PIXEL = 8; // 固定。1 アートドット = 8 出力px（チャンキーさ＝Tessera の identity）
+// PERFORM は「画面を埋めるライブビュー」なので EXPORT の PIXEL とは別軸。低解像度な画面で
+// 8px/ドットだとドット数が少なく粗すぎるため、4px/ドットで細かく描く（既定キャンバス 1080→
+// 135 ドットに近い密度になる）。24px の行ピッチ（=6 チャンク）とも整数整合するので美しい。
+const PERFORM_CHUNK = 4;
 // fps は全て 100 の約数。GIF の遅延はセンチ秒(1/100s)整数なので、約数でないと
 // round(100/fps) の丸めで再生速度がズレ・ループ長も狂う（MP4 は μ秒で約数不問だが統一）。
 const FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
@@ -592,8 +596,8 @@ function renderField(prog, surf, t, seed) {
 }
 
 // ── PERFORM 描画: 画面そのものがキャンバス ─────────────────────────────
-// canvas:/pad: は無視し、グリッド = floor(画面/8) チャンク（1 アートドット = 8 画面px）。
-// 8 で割り切れない解像度 (480x270 等) は余り (≤7px) を上下左右に折半した暗色レターボックス。
+// canvas:/pad: は無視し、グリッド = floor(画面/CHUNK) ドット（1 アートドット = CHUNK 画面px）。
+// 割り切れない解像度 (480x270 等) は余り (≤CHUNK-1px) を上下左右に折半した暗色レターボックス。
 // view: は尊重するが ascii はオーバーレイと噛み合わないため dither 代替 (CODE カードと同じ規則)。
 function drawPerform(cr) {
   if (!program) return;
@@ -605,8 +609,8 @@ function drawPerform(cr) {
   // 通常プレビューと同じ fps 量子化・period 周回（音同期 currentVisualTime とも一致）。
   const frameIdx = Math.floor(((performance.now() - t0) / 1000) * fps);
   const t = (frameIdx / fps) % period;
-  const gw = Math.max(1, Math.floor(cr.w / PIXEL));
-  const gh = Math.max(1, Math.floor(cr.h / PIXEL));
+  const gw = Math.max(1, Math.floor(cr.w / PERFORM_CHUNK));
+  const gh = Math.max(1, Math.floor(cr.h / PERFORM_CHUNK));
   try {
     if (frameIdx !== _pvFrame || _pvCache === null) {
       ensureSurface(gw, gh);
@@ -615,9 +619,10 @@ function drawPerform(cr) {
         const b = surface.buf;
         for (let i = 0; i < b.length; i++) b[i] = b[i] ? 0 : 1;
       }
-      // 整数 8× NN 拡大＝チャンク正確（クリーン倍率・モアレ無し）。
-      const up = ArtExport.resampleNN(surface.buf, gw, gh, gw * PIXEL, gh * PIXEL);
-      _pvCache = { buf: up, w: gw * PIXEL, h: gh * PIXEL };
+      // 整数 CHUNK× NN 拡大＝ドット正確（クリーン倍率・モアレ無し）。
+      const dw = gw * PERFORM_CHUNK,
+        dh = gh * PERFORM_CHUNK;
+      _pvCache = { buf: ArtExport.resampleNN(surface.buf, gw, gh, dw, dh), w: dw, h: dh };
       _pvFrame = frameIdx;
     }
   } catch (e) {
@@ -660,10 +665,10 @@ let _ovDragging = false;
 let _ovDragAnchor = null; // ドラッグ選択の起点 {r, c}
 let _ovLastCursor = ""; // カーソル移動検知 (追従スクロールはカーソルが動いたときだけ)
 
-/** オーバーレイのレイアウト (アートのレターボックス原点にアンカー＝チャンク整合)。 */
+/** オーバーレイのレイアウト (アートのレターボックス原点にアンカー＝ドット整合)。 */
 function ovLayout(cr) {
-  const artW = Math.floor(cr.w / PIXEL) * PIXEL;
-  const artH = Math.floor(cr.h / PIXEL) * PIXEL;
+  const artW = Math.floor(cr.w / PERFORM_CHUNK) * PERFORM_CHUNK;
+  const artH = Math.floor(cr.h / PERFORM_CHUNK) * PERFORM_CHUNK;
   const ax = cr.x + ((cr.w - artW) >> 1);
   const ay = cr.y + ((cr.h - artH) >> 1);
   // 画面に入る桁数 (対称余白込み・上限 COLS)。480 幅 → ちょうど 39。
