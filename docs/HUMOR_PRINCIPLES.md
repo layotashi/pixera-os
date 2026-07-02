@@ -307,13 +307,18 @@ SYNESTA のテキストレンダリングは等幅グリフ (5x5px)、1-bit。
 
 #### dolphin.js
 
-| 要素                                                    | 使用している原則             | 評価                              |
-| ------------------------------------------------------- | ---------------------------- | --------------------------------- |
-| `"Do you like dolphins?"`                               | 選択の無意味化 (§1.2) の入口 | ✅ 機能している                   |
-| `"Click click click! (That's dolphin for 'thank you')"` | 不条理な精密さ (§1.6)        | ✅ 翻訳を付けることで精密さが増す |
-| `"Error 404: Good taste not found."`                    | トーンの不一致 (§1.1)        | ✅ 技術用語 + 主観的判断の不一致  |
-| `"The dolphin will remember this. Forever."`            | 感情の非対称 (§1.4)          | ✅ デッドパンの脅迫               |
-| `"Sincerely, The Dolphin"`                              | トーンの不一致 (§1.1)        | ✅ 書簡形式 + イルカ署名          |
+各行は `要素 — 使用している原則 — 評価`。
+
+- `"Do you like dolphins?"` — 選択の無意味化 (§1.2) の入口
+  — ✅ 機能している
+- `"Click click click! (That's dolphin for 'thank you')"` — 不条理な精密さ (§1.6)
+  — ✅ 翻訳を付けることで精密さが増す
+- `"Error 404: Good taste not found."` — トーンの不一致 (§1.1)
+  — ✅ 技術用語 + 主観的判断の不一致
+- `"The dolphin will remember this. Forever."` — 感情の非対称 (§1.4)
+  — ✅ デッドパンの脅迫
+- `"Sincerely, The Dolphin"` — トーンの不一致 (§1.1)
+  — ✅ 書簡形式 + イルカ署名
 
 **改善の余地**:
 
