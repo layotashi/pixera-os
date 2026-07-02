@@ -643,20 +643,20 @@ function drawPerform(cr) {
 // 同じ TextArea をそのまま使い、ここは描画とマウス座標変換だけを担う専用ビュー。
 //
 // メトリクス (画面px。コード層は 2px = 1 単位):
-//   縦: バー上 4 / 文字 10 / 間 2 / カーソル 2 / バー下 4 = バー 22 + 透過行間 4 = 26
-//     （行間 4px = 4px チャンク 1 ドットぶんアートが覗く）
+//   縦: バー上 6 / 文字 10 / 間 2 / カーソル(下線) 2 / バー下 2 = バー 22 + 透過行間 6 = 28
+//     （ピッチ 28 = 4px チャンク 7 個で整数整合。行間 6px でアートが覗く）
 //   横: 透過 4 / バー 3 / 文字 10 (字間 2) …/ バー 3 / 透過 4 — 480px 幅に 39 桁が
 //       ぴったり対称に収まる (4+3 + (39*12-2) + 3+4 = 480)。広い画面では中央寄せ。
 const OV = {
   adv: 12, // 字送り (文字 10 + 字間 2)
   textH: 10, // 2x グリフ (5x5 → 10x10)
-  padTop: 4,
+  padTop: 6,
   gapCursor: 2,
   cursorH: 2,
-  padBottom: 4,
-  lineGap: 4, // バー間の透過行間 (アートが覗く。4px = チャンク 1 ドット)
+  padBottom: 2,
+  lineGap: 6, // バー間の透過行間 (アートが覗く)
   barH: 22, // padTop+textH+gapCursor+cursorH+padBottom
-  pitch: 26, // barH + lineGap
+  pitch: 28, // barH + lineGap
   barPadX: 3,
   marginX: 4,
 };
