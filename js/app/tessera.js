@@ -25,6 +25,8 @@
  *   同型・チップチューン割り切り）。1 周期ぶんをオフラインレンダ → ループ AudioBuffer で
  *   period 同期再生（Alt+P でトグル）。無ければ従来どおり無音。`voice <名前>: <式(f)>` で
  *   名前付き音色（＝トラック名）を宣言し、音の場から `名前(freq)` で呼んで `+` で混ぜる。
+ *   AV 同期: 視覚の場から `amp`（音の振幅エンベロープ 0..1）や `beat(n)`/`step(n)` を読める
+ *   ＝オーディオリアクティブ（決定論＋t/period 共有なので外部アナライザ不要）。
  *
  * 構成:
  *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。
@@ -202,6 +204,20 @@ sound:
   b = bass(hz(36))
   h = hat() * decay(beat(16))
   m*.4 + b*.4 + h*.2`,
+  },
+  {
+    file: "11_react" + EXT,
+    src: `// the visual field can read the sound.
+// amp = the current audio level (0..1);
+// beat(n)/step(n) share the loop clock,
+// so the picture locks to the rhythm.
+// here a disc pulses with the beat. Alt+P.
+voice lead: pulse(f, .25)
+
+d = dist(x, y, .5, .5)
+(1 - smoothstep(.18, .22, d)) * (.25 + .75*amp)
+
+sound: lead(hz(50 + seq(step(8), 0, 5, 7, 12))) * decay(beat(8))`,
   },
 ];
 
@@ -398,8 +414,8 @@ const clampF = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const nearest = (v, arr) => arr.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
 
 /** program.config（生の宣言値）を既定値・範囲とともに解決した実効設定にする。 */
-function resolvedConfig() {
-  const c = (program && program.config) || {};
+function resolvedConfig(prog = program) {
+  const c = (prog && prog.config) || {};
   const canvas = c.canvas || {};
   const sizeW = clampI(canvas.w ?? DEFAULTS.sizeW, 16, 4096);
   const sizeH = clampI(canvas.h ?? DEFAULTS.sizeH, 16, 4096);
@@ -506,6 +522,31 @@ function playAudio() {
 function toggleAudio() {
   if (audioSource) stopAudio();
   else playAudio();
+}
+
+// ── AV 同期（P3）: 視覚の場が音を読む ─────────────────────────────────
+// 決定論＋t/period 共有なので、外部アナライザ無しで「音に反応する画」が作れる。
+// renderField が毎フレーム amp（音の振幅エンベロープ）と音クロック(period)を視覚の場へ渡す
+// ＝視覚の場で amp / beat(n) / step(n) / decay が使える。プレビューも書き出しも同じ経路。
+
+/** amp(t) = 音の振幅エンベロープ [0,1]（短い窓の RMS）。sound: が無ければ 0。 */
+function ampAt(prog, t, seed, period) {
+  if (!prog || !prog.audio) return 0;
+  const W = 0.04,
+    K = 64; // 約 40ms の窓を 64 点でならす（決定論・軽量）
+  let s = 0;
+  for (let i = 0; i < K; i++) {
+    const v = prog.audio.sampleAudio(t + (i / K) * W, seed, period);
+    s += v * v;
+  }
+  const r = Math.sqrt(s / K);
+  return r < 0 ? 0 : r > 1 ? 1 : r;
+}
+
+/** 視覚の場を描画する共通ラッパ。AV 同期の uniform（period, amp）を渡す。 */
+function renderField(prog, surf, t, seed) {
+  const period = resolvedConfig(prog).period;
+  prog.render(surf, t, seed, { period, amp: ampAt(prog, t, seed, period) });
 }
 
 // ── プレビュー surface（art 評価解像度で確保。解像度が変わるときだけ再確保＝状態場を温存）──
@@ -852,7 +893,7 @@ function renderPreview(t, seed, mode, params, ascii) {
   const raH = Math.max(1, rbH - 2 * rpad);
 
   ensureSurface(raW, raH);
-  program.render(surface, t, seed); // surface.buf = raW×raH の art（評価解像度で直接）
+  renderField(program, surface, t, seed); // surface.buf = raW×raH の art（AV 同期つき）
   const base = ArtExport.composeMatte(surface.buf, raW, raH, rbW, rbH);
 
   if (displayScale === 1) return { buf: base, w: rbW, h: rbH };
@@ -963,7 +1004,7 @@ function exportArt() {
     const asciiOn = eff.mode === "ascii";
     const frameAt = (t) => {
       const surf = makeExportSurface(artW, artH, asciiOn, eff.mode, eff.params);
-      prog.render(surf, t, seed);
+      renderField(prog, surf, t, seed);
       return ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
     };
     exportFrames(key, frameAt, baseW, baseH, pixel, artInv, fps, period, "");
@@ -1074,7 +1115,7 @@ function buildCardMasks(lines, cbW, cbH, pb, g) {
 function renderCard(prog, t, seed, mode, params, lay, aInv, cInv) {
   const { baseW, baseH, artW, artH } = outputDims();
   const surf = makeExportSurface(artW, artH, false, mode, params);
-  prog.render(surf, t, seed);
+  renderField(prog, surf, t, seed);
   const baseArt = ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
   const art = ArtExport.resampleNN(baseArt, baseW, baseH, lay.cbW, lay.cbH);
   const { barMask, inkMask } = lay;
@@ -1283,7 +1324,9 @@ WM.wmRegister(
         "Add a sound: block for chiptune audio — a field over time a(t) -> -1..1 " +
         "(pulse/tri/saw/nz, hz, beat/step/seq, decay). Alt+P plays / stops; " +
         "it loops over 'period' in sync with the view. Declare named timbres with " +
-        "voice <name>: <expr with f>, then play them by name and mix with +.",
+        "voice <name>: <expr with f>, then play them by name and mix with +. " +
+        "The visual field can read the sound: amp (audio level 0..1) and beat(n)/" +
+        "step(n) share the loop clock, so visuals react to the audio.",
       onRelayout: relayout,
     });
     refreshTitle();

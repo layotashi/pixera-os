@@ -26,7 +26,7 @@ export function compileField(src) {
 /** 既に解析済みの式 AST から場 runner を作る（compile が directive 抽出後に使う）。 */
 function compileFieldAst(ast) {
   const exprFn = compileExpr(ast); // AST を 1 度だけクロージャ化（per-pixel を高速に）
-  const env = { vars: { x: 0, y: 0, t: 0, seed: 0 } };
+  const env = { vars: { x: 0, y: 0, t: 0, seed: 0, amp: 0 } };
 
   function sample(x, y, t = 0, seed = 0) {
     setSeed(seed); // rnd/noise/fbm が seed を取り込む
@@ -37,7 +37,12 @@ function compileFieldAst(ast) {
     return exprFn(env);
   }
 
-  function render(surface, t = 0, seed = 0) {
+  // opts で AV 同期の uniform を渡せる（ホストが毎フレーム設定・視覚の場から読める）:
+  //   opts.period → 音クロックを共有し、視覚の場でも beat(n)/step(n)/decay が t に同期する
+  //   opts.amp    → 音の振幅エンベロープ [0,1]（フレーム定数＝オーディオリアクティブ）
+  function render(surface, t = 0, seed = 0, opts = {}) {
+    env.vars.amp = opts.amp || 0;
+    setAudioClock(t, opts.period || Math.PI * 2); // フレーム内で一定
     const w = surface.width();
     const h = surface.height();
     const buf = new Float32Array(w * h);

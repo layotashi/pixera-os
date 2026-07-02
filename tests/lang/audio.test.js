@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../../lang/runtime.js";
 import { FUNCS, setAudioClock, setSeed } from "../../lang/stdlib.js";
+import { makeBufferSurface } from "../../lang/surface.js";
 
 describe("parseProgram / compile: sound: の分割", () => {
   it("sound: が無ければ audio は null（従来どおり）", () => {
@@ -120,5 +121,22 @@ describe("voice: 名前付き音色（多声）", () => {
   it("未宣言の名前を呼ぶと評価時に投げる（voice でも stdlib でもない）", () => {
     const p = compile("0\nsound: leadX(hz(69))");
     expect(() => p.audio.sampleAudio(0, 0, 1)).toThrow();
+  });
+});
+
+describe("AV 同期（視覚の場が音を読む）", () => {
+  it("視覚の場が amp を読める（amp=1 と amp=0 で出力が変わる）", () => {
+    const p = compile("amp"); // 視覚 = amp
+    const surf = makeBufferSurface(4, 4);
+    p.render(surf, 0, 0, { amp: 1, period: 1 });
+    expect([...surf.buf].every((v) => v === 1)).toBe(true);
+    p.render(surf, 0, 0, { amp: 0, period: 1 });
+    expect([...surf.buf].every((v) => v === 0)).toBe(true);
+  });
+
+  it("視覚の場で beat(n) が使える（音クロック共有・例外なし）", () => {
+    const p = compile("beat(4)");
+    const surf = makeBufferSurface(4, 4);
+    expect(() => p.render(surf, 0.1, 0, { period: 1 })).not.toThrow();
   });
 });
