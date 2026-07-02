@@ -493,6 +493,16 @@ function stopAudio() {
   }
 }
 
+/**
+ * いま画面に出ている映像の位相（秒）。onDraw の t 計算と同一式。
+ * 音の開始オフセットに使い、映像と音を同位相で始める（＝完全同期）。
+ */
+function currentVisualTime() {
+  const { fps, period } = resolvedConfig();
+  const frameIdx = Math.floor(((performance.now() - t0) / 1000) * fps);
+  return (frameIdx / fps) % period;
+}
+
 /** 現在のプログラムの音の場を 1 周期ぶんレンダしてループ再生する。 */
 function playAudio() {
   stopAudio();
@@ -513,7 +523,11 @@ function playAudio() {
   g.gain.value = 0.3;
   src.connect(g);
   g.connect(getMasterGain());
-  src.start();
+  // 映像と完全同期: いま画面に出ている映像の位相から音を開始する（映像クロックは
+  // 触らない＝映像は途切れない）。ループ長は双方 period なので以後ずっと同位相でロックする。
+  const bufDur = data.length / sr;
+  const offset = ((currentVisualTime() % bufDur) + bufDur) % bufDur;
+  src.start(ctx.currentTime, offset);
   audioSource = src;
   audioGain = g;
 }
