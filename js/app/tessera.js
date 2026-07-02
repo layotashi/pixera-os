@@ -768,13 +768,14 @@ function drawPerformOverlay(cr) {
     }
   }
 
-  // エラーバー (画面最下端・極性反転で 1 行)。ライブ耐性で直前 good が動き続けるため、
-  // 「いまのコードは反映されていない」ことをここで知らせる。
+  // エラーバー: 最下グリッド行に重ね、全幅（コードグリッドと同幅）＋極性反転で描く。
+  // グリッドに整列するのでコードとズレず、全幅なので左右対称。ライブ耐性で直前 good が
+  // 動き続けるため、「いまのコードは反映されていない」ことをここで知らせる。
   if (errMsg) {
     const msg = ("ERR " + errMsg).toUpperCase().slice(0, L.maxCols);
-    const y = cr.y + cr.h - OV.barH - OV.lineGap;
-    const barW = OV.barPadX * 2 + msg.length * OV.adv - 2;
-    GPU.fillRect(L.x0 - OV.barPadX, y, barW, OV.barH, 1);
+    const y = L.y0 + (L.maxRows - 1) * OV.pitch;
+    const barW = OV.barPadX * 2 + L.maxCols * OV.adv - 2; // 全幅（コード行と同じ）
+    GPU.fillRect(L.x0 - OV.barPadX, y, barW, OV.barH, 1); // 明色バー = 警告
     for (let c = 0; c < msg.length; c++)
       drawGlyph2x(msg[c], L.x0 + c * OV.adv, y + OV.padTop, 0);
   }
