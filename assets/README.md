@@ -1,85 +1,45 @@
 # assets/ — アセット管理
 
-SYNESTA が使用するすべてのビジュアルアセット (アイコン・カーソル・フォント・ロゴ) を格納します。
+SYNESTA が使うビジュアルアセット (カーソル・アイコン・フォント) を格納する。
 
-## フォルダ構成
+## 構成
 
 ```
 assets/
-  cursors/          カーソル画像 (15×15 px, 3 階調)
-    manifest.json   カーソル定義 (ファイル名・ホットスポット・説明)
-    *.png           個別カーソル PNG
-  icons/            アイコン画像 (7×7 px, 1-bit)
-    manifest.json   アイコン定義 (ファイル名・説明)
-    *.png           個別アイコン PNG
-  icons-text/       テキスト用アイコン (5×7 px, 1-bit)
-    manifest.json   テキストアイコン定義
-    *.png           個別テキストアイコン PNG
-  font/             ビットマップフォント
-    font.png        ASCII 95 グリフスプライトシート (5×7 px/グリフ)
+  cursors/          カーソル画像 + manifest.json
+  icons/            UI アイコン + manifest.json
+  icons-text/       テキスト表示用の特殊記号 (中点・改行矢印等) + manifest.json
+  app-icons/        デスクトップ用アプリアイコン + manifest.json
+  font/             ビットマップフォント PNG (どれを使うかは config.js の FONTS が参照)
+  favicon.png       ブラウザタブ用アイコン
 ```
 
-## マニフェスト仕様
+## manifest 駆動 (SSoT)
 
-各フォルダの `manifest.json` がアセット定義のマスターファイルです。  
-JS コードはマニフェストを `fetch` し、記載された PNG を動的に読み込みます。
+各フォルダの `manifest.json` がアセット定義の唯一の出所。JS 側 (`core/cursor.js` /
+`icon.js` / `text_icon.js` / `app_icon.js`) はこれを `fetch` し、記載された PNG を動的に読む。
 
-### icons/manifest.json
+- `format` — そのフォルダ共通の寸法 (`width`/`height`) とエンコーディング。
+  **寸法・しきい値の正は manifest**。README には書き写さない。
+- 各エントリ — 論理名 → `file` (PNG 名) ＋ `description` (生成 AI 向けの説明文)。
+  カーソルは `hotX`/`hotY` (ホットスポット) も持つ。
 
-```jsonc
-{
-  "format": {
-    "width": 7, // アイコン幅 (px)
-    "height": 7, // アイコン高さ (px)
-    "encoding": "1bit-white-fg",
-    "description": "White pixel (R>=128) = foreground, black = transparent",
-  },
-  "icons": {
-    "<論理名>": {
-      "file": "<ファイル名>.png",
-      "description": "アイコンの説明文 (生成AI向け)",
-    },
-  },
-}
-```
+PNG は明度しきい値で 1-bit 化する。エンコーディングは 2 系統:
 
-### cursors/manifest.json
+- `1bit-white-fg` — 白=前景 / 黒=透過。icons 系。
+- `3level` — 白=前景 / 灰=アウトライン / 黒=透過。cursors・app-icons。
+  bg→fg の 2 パス描画で任意背景でも視認できる。
 
-```jsonc
-{
-  "format": {
-    "width": 15,
-    "height": 15,
-    "encoding": "3level",
-    "description": "White (R>=192) = foreground, gray (64<=R<192) = outline, black = transparent",
-  },
-  "cursors": {
-    "<論理名>": {
-      "file": "<ファイル名>.png",
-      "hotX": 7, // ホットスポット X
-      "hotY": 7, // ホットスポット Y
-      "description": "カーソルの説明文",
-    },
-  },
-}
-```
+正確なしきい値は各 manifest の `format.description` を参照。
 
-## アイコン・カーソルの追加手順
+## アセット追加手順
 
-1. 個別 PNG ファイルを該当フォルダに配置
-2. `manifest.json` にエントリを追加 (`file`, `description` 等)
-3. JS コード側の変更は不要 (マニフェスト駆動のため自動認識)
-
-## ピクセルエンコーディング
-
-| エンコーディング | 前景    | 背景/アウトライン | 透過    |
-| ---------------- | ------- | ----------------- | ------- |
-| `1bit-white-fg`  | R ≥ 128 | —                 | R < 128 |
-| `3level`         | R ≥ 192 | 64 ≤ R < 192      | R < 64  |
+1. PNG を該当フォルダに置く (寸法は manifest の `format` に合わせる)
+2. `manifest.json` にエントリを追加 (`file` / `description` / カーソルは `hotX`/`hotY`)
+3. JS の変更は不要 (manifest 駆動で自動認識される)
 
 ## 命名規則
 
-- **アイコン名**: 描かれている「モノ・概念」ベース (例: `arrow-down`, `check`, `note-quarter`)
-- **カーソル名**: 用途ベース、ハイフン区切り (例: `resize-ew`, `drag-h`)
-- ファイル名 = 論理名 + `.png` (現状は 1:1 対応)
-
+- アイコン名: 描かれるモノ・概念ベース (`arrow-down`, `close`, `note-quarter`)
+- カーソル名: 用途ベース・ハイフン区切り (`resize-ew`, `move`)
+- ファイル名 = 論理名 + `.png`

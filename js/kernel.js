@@ -174,13 +174,13 @@ async function boot() {
     );
     // 組込デフォルトのグリフをスナップショットしてレジストリに格納する。
     // (ユーザーフォントから default へ戻す切替も content-swap で行えるように)
-    Config.setFontGlyphs("default_5x5", getAllGlyphs());
+    Config.setFontGlyphs("default", getAllGlyphs());
 
     // ── ユーザーフォント (FONTSMITH 製) の登録と選択復元 ──
     VFS.initVfs();
     loadUserFonts();
     const savedFontId = Config.getSystemFontId();
-    if (savedFontId !== "default_5x5") {
+    if (savedFontId !== "default") {
       const g = Config.getFontGlyphs(savedFontId);
       if (g) setGlyphs(g); // 保存されていたユーザーフォントを適用
     }

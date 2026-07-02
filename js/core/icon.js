@@ -6,7 +6,7 @@
  * 名前で引ける描画 API を提供する。
  *
  * マニフェスト仕様:
- *   - format.width / format.height: アイコンサイズ (既定 7×7)
+ *   - format.width / format.height: アイコンサイズ (寸法の正は manifest)
  *   - format.encoding: "1bit-white-fg" (白 R≥128 = 前景、黒 = 透過)
  *   - icons[name].file: PNG ファイル名 (manifest.json と同階層)
  *   - icons[name].description: アイコンの説明文
@@ -81,7 +81,7 @@ function loadIconPng(url, w, h) {
  * @returns {Promise<void>}
  */
 /**
- * @param {string} manifestUrl  マニフェスト URL (例: "./assets/icons-7x7/manifest.json")
+ * @param {string} manifestUrl  マニフェスト URL (フォント定義の iconDir から構築。例 "./assets/icons/manifest.json")
  */
 export async function initIcon(manifestUrl) {
   _manifestUrl = manifestUrl;

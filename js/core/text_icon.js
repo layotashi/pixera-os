@@ -7,7 +7,7 @@
  * スペース中点 (·) や改行矢印 (↵) など。
  *
  * マニフェスト仕様:
- *   - format.width / format.height: アイコンサイズ (既定 5×7)
+ *   - format.width / format.height: アイコンサイズ (寸法の正は manifest)
  *   - format.encoding: "1bit-white-fg" (白 R≥128 = 前景、黒 = 透過)
  *   - icons[name].file: PNG ファイル名
  *   - icons[name].description: アイコンの説明文
@@ -78,7 +78,7 @@ function loadTextIconPng(url, w, h) {
  * @returns {Promise<void>}
  */
 /**
- * @param {string} manifestUrl  マニフェスト URL (例: "./assets/icons-text-5x7/manifest.json")
+ * @param {string} manifestUrl  マニフェスト URL (フォント定義の textIconDir から構築。例 "./assets/icons-text/manifest.json")
  */
 export async function initTextIcon(manifestUrl) {
   _manifestUrl = manifestUrl;
