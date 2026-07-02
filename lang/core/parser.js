@@ -375,8 +375,37 @@ function extractDirectives(toks) {
   return { config, rest };
 }
 
-/** プログラム全体（場の式 ＋ 設定ディレクティブ）を解析して返す。 */
+/**
+ * トップレベル（brace 深さ 0）の `sound:` を境に、視覚の場と音の場を分ける。
+ * `sound:` 以降（EOF まで）が音の場 `a(t)`。無ければ audioToks は null（従来どおり）。
+ * 音は視覚と同型の「時間の場」＝同じ式・値ブロックで書ける（別パラダイムを増やさない）。
+ */
+function splitAudioSection(toks) {
+  let depth = 0;
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.type === "LBRACE") { depth++; continue; }
+    if (t.type === "RBRACE") { depth--; continue; }
+    if (depth !== 0) continue;
+    if (t.type === "ID" && t.value === "sound" && toks[i + 1] && toks[i + 1].type === "COLON") {
+      const visualToks = toks.slice(0, i);
+      visualToks.push({ type: "EOF", pos: t.pos });
+      const audioToks = toks.slice(i + 2); // `sound` と `:` を飛ばす（末尾 EOF は残る）
+      return { visualToks, audioToks };
+    }
+  }
+  return { visualToks: toks, audioToks: null };
+}
+
+/**
+ * プログラム全体を解析して返す。
+ * @returns {{ expr:object, audio:(object|null), config:object }}
+ *   expr=視覚の場 f(x,y,t) / audio=音の場 a(t)（無ければ null）/ config=設定ディレクティブ。
+ */
 export function parseProgram(src) {
   const { config, rest } = extractDirectives(tokenize(src));
-  return { expr: parseExprTokens(rest), config };
+  const { visualToks, audioToks } = splitAudioSection(rest);
+  const expr = parseExprTokens(visualToks);
+  const audio = audioToks ? parseExprTokens(audioToks) : null;
+  return { expr, audio, config };
 }

@@ -21,6 +21,10 @@
  * 画面のコントロールは「書き出し形式 + DL」のみ＝最小（設定はコード側）。
  * プレビューは canvas のアスペクト比を反映。
  *
+ * 音（任意）: `sound:` ブロックで「時間の場」a(t) -> -1..1 を書ける（視覚が空間の場なのと
+ *   同型・チップチューン割り切り）。1 周期ぶんをオフラインレンダ → ループ AudioBuffer で
+ *   period 同期再生（Alt+P でトグル）。無ければ従来どおり無音。
+ *
  * 構成:
  *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。
  *     EXPORT は「いまプレビューに出ている見た目」を書き出す（作品 or コードカード）。
@@ -34,8 +38,8 @@
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
  *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。CODE はソースを
  *     1080² の SYNESTA カード（作品背景＋ハイライトコード）として書き出す。Ctrl+R で seed: 振り直し。
- *   - Alt+W で現在の場をデスクトップ背景に。Shift+Alt+F で整形。未保存変更は破棄確認。
- *     サンプルは /Sketches/Learn（番号順チュートリアル）と /Sketches/Gallery（作例）に種まき。
+ *   - Alt+W で現在の場をデスクトップ背景に。Alt+P で音の再生/停止。Shift+Alt+F で整形。
+ *     未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順・09 で音）と /Sketches/Gallery。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
  */
 
@@ -48,6 +52,7 @@ import { altShiftDown, altDown, ctrlDown, ctrlShiftDown } from "../core/input.js
 import * as FieldRender from "../core/field_render.js";
 import * as AsciiArt from "../core/ascii_art.js";
 import * as ArtExport from "../core/art_export.js";
+import { initAudio, getAudioContext, getMasterGain } from "../core/audio.js";
 import { compile } from "../../lang/runtime.js";
 import { makeBufferSurface } from "../../lang/surface.js";
 import { format } from "../../lang/format.js";
@@ -166,6 +171,18 @@ repeat 4 as k {
   s  = s + .012/(dx*dx + dy*dy + .001)
 }
 s/(s + 1)`,
+  },
+  {
+    file: "09_sound" + EXT,
+    src: `// sound is a field over time a(t) -> -1..1,
+// just like the visual field is over space.
+// press Alt+P to play / stop. chiptune only:
+// pulse = square wave. step/seq walk a little
+// riff; decay(beat(8)) fades each of 8 steps.
+// audio loops over 'period', same as the view.
+sin(x*8 - t)*.5 + .5
+
+sound: pulse(hz(45 + seq(step(8), 0, 3, 7, 12))) * decay(beat(8))`,
   },
 ];
 
@@ -416,6 +433,62 @@ function effectiveRender() {
   return { mode: DEFAULT_MODE, params: MODE_PARAMS };
 }
 
+// ── 音のライブ再生（P1）─────────────────────────────────────────────
+// 音は決定論的で period でループするので、1 周期ぶんをオフラインレンダ →
+// ループする AudioBuffer で鳴らす（グリッチ皆無・継ぎ目なし・WAV/MP4 書き出しと同じ
+// レンダラを共用）。連続音や外部入力への即時反応が要るまで AudioWorklet は持ち込まない。
+// P1 は Alt+P でトグル（押すたびに現在のコードを作り直して再生＝Strudel 的な commit）。
+let audioSource = null; // 再生中の AudioBufferSourceNode（null=停止）
+let audioGain = null;
+
+/** 再生を停止しノードを破棄する。 */
+function stopAudio() {
+  if (audioSource) {
+    try {
+      audioSource.stop();
+    } catch {
+      /* すでに停止済みなら無視 */
+    }
+    audioSource.disconnect();
+    audioSource = null;
+  }
+  if (audioGain) {
+    audioGain.disconnect();
+    audioGain = null;
+  }
+}
+
+/** 現在のプログラムの音の場を 1 周期ぶんレンダしてループ再生する。 */
+function playAudio() {
+  stopAudio();
+  if (!program || !program.audio) return; // sound: が無ければ何もしない
+  initAudio();
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume();
+  const { seed, period } = resolvedConfig();
+  const sr = ctx.sampleRate;
+  const data = program.audio.renderAudio(sr, period, seed, period); // 決定論・1 周期
+  const buf = ctx.createBuffer(1, data.length, sr);
+  buf.getChannelData(0).set(data);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.loop = true; // period でシームレスループ（視覚のループと同じ長さ）
+  const g = ctx.createGain();
+  g.gain.value = 0.3;
+  src.connect(g);
+  g.connect(getMasterGain());
+  src.start();
+  audioSource = src;
+  audioGain = g;
+}
+
+/** Alt+P: 再生/停止トグル。sound: が無いプログラムでは無音。 */
+function toggleAudio() {
+  if (audioSource) stopAudio();
+  else playAudio();
+}
+
 // ── プレビュー surface（art 評価解像度で確保。解像度が変わるときだけ再確保＝状態場を温存）──
 let surface = null,
   pvW = 0,
@@ -605,6 +678,7 @@ function refreshTitle() {
 
 // ── 状態リセット（新規/閉じる時） ──
 function resetState() {
+  stopAudio(); // 閉じる/新規/リセットで再生も止める
   currentFilePath = null;
   isDirty = false;
   setCode(DEFAULT_CODE);
@@ -1041,6 +1115,7 @@ function onDraw(cr) {
     else if (ctrlDown("KeyR")) rerollSeed(); // seed: をコード内で振り直す
     else if (altDown("KeyW")) setWallpaper(); // 現在の場をデスクトップ背景に
     else if (altDown("KeyN")) newFile();
+    else if (altDown("KeyP")) toggleAudio(); // sound: の再生/停止トグル
     else if (altShiftDown("KeyF")) formatEditor();
   }
 
@@ -1185,7 +1260,10 @@ WM.wmRegister(
         "the preview shows (PNG/GIF/MP4). Below the preview: CODE overlays the " +
         "source (= code card, pad becomes the frame/margin); ART INV / CODE INV " +
         "flip the artwork and the code-highlight separately. Ctrl+R reseed, " +
-        "Alt+W set as desktop wallpaper (live-rendered), Shift+Alt+F format.",
+        "Alt+W set as desktop wallpaper (live-rendered), Shift+Alt+F format. " +
+        "Add a sound: block for chiptune audio — a field over time a(t) -> -1..1 " +
+        "(pulse/tri/saw/nz, hz, beat/step/seq, decay). Alt+P plays / stops; " +
+        "it loops over 'period' in sync with the view.",
       onRelayout: relayout,
     });
     refreshTitle();

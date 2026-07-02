@@ -11,7 +11,7 @@
 
 import { parse, parseProgram } from "./core/parser.js";
 import { compileExpr } from "./core/interp.js";
-import { setSeed } from "./stdlib.js";
+import { setSeed, setAudioClock } from "./stdlib.js";
 
 /**
  * @param {string} src
@@ -56,15 +56,49 @@ function compileFieldAst(ast) {
 }
 
 /**
+ * 音の場 a(t) を AST からコンパイルする。音は「時間の場」＝視覚の場と同じ式言語で、
+ * t（秒）と seed から振幅 [-1,1] を返す純関数。オシレータ/拍は setAudioClock で
+ * 渡す音クロックを暗黙に読む（stdlib）。出力は [-1,1] にクランプ。
+ * @returns {{ sampleAudio:(t,seed,period)=>number,
+ *             renderAudio:(sampleRate,seconds,seed,period)=>Float32Array }}
+ */
+function compileAudioAst(ast) {
+  const exprFn = compileExpr(ast);
+  const env = { vars: { t: 0, seed: 0, period: Math.PI * 2 } };
+
+  function sampleAudio(t, seed = 0, period = Math.PI * 2) {
+    setSeed(seed);
+    setAudioClock(t, period); // オシレータ/拍が読む音クロック
+    env.vars.t = t;
+    env.vars.seed = seed;
+    env.vars.period = period;
+    const v = exprFn(env);
+    return v < -1 ? -1 : v > 1 ? 1 : v;
+  }
+
+  /** seconds 秒ぶんを sampleRate で決定論オフラインレンダ（ループ再生・WAV 書き出し共用）。 */
+  function renderAudio(sampleRate, seconds, seed = 0, period = Math.PI * 2) {
+    const n = Math.max(1, Math.round(sampleRate * seconds));
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = sampleAudio(i / sampleRate, seed, period);
+    return out;
+  }
+
+  return { sampleAudio, renderAudio };
+}
+
+/**
  * ソースをコンパイルし、場 runner を返す。render(surface, t, seed) を持つ
  * （playground はこれだけ呼ぶ）。全セルに式を評価して 1-bit へ（毎フレーム全面更新）。
- * 返り値には設定ディレクティブ `config`（{ view, canvas, pad, fps, seed, period }。未指定は null）が
- * 付く。コアはラスタライズ・適用せず、ホスト（surface / 出力）が既定値・範囲とともに
- * 解釈する＝表示・出力はホストの責務のまま。
+ * 返り値には設定ディレクティブ `config`（{ view, canvas, pad, fps, seed, period }。未指定は null）と、
+ * `sound:` があれば音の場 `audio`（{ sampleAudio, renderAudio }。無ければ null）が付く。
+ * コアはラスタライズ・適用・発音せず、ホスト（surface / 出力 / AudioContext）が
+ * 既定値・範囲とともに解釈する＝表示・出力・発音はホストの責務のまま。
  * @param {string} src
- * @returns {{ render:Function, sample:Function, config:object }}
+ * @returns {{ render:Function, sample:Function, config:object, audio:(object|null) }}
  */
 export function compile(src) {
   const prog = parseProgram(src); // 構文エラーはここで投げる
-  return { config: prog.config, ...compileFieldAst(prog.expr) };
+  const audio = prog.audio ? compileAudioAst(prog.audio) : null;
+  return { config: prog.config, audio, ...compileFieldAst(prog.expr) };
 }
