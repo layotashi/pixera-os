@@ -23,27 +23,42 @@
 - `hidden: true` — ランチャに出さない (イースターエッグ)。
 - `about` — ヘッダ右クリック → ABOUT パネルの説明文 (宣言したアプリのみ)。
 
-| カテゴリ         | アプリ (役割)                                                   |
-| ---------------- | --------------------------------------------------------------- |
-| **CREATIVE**     | `studio/`(音楽 DAW; dev)、`tessera`(生成的アート言語 Tessera のエディタ+出力)、`paint`(1-bit ピクセルペイント) |
-| (トップレベル)   | `notepad`(テキスト編集)、`explorer`(VFS マネージャ)、`capture`(スクショ/動画/GIF 撮影)、`settings`(パレット/壁紙/解像度/エフェクト)、`about`(バージョン情報) |
-| **GAMES**        | `lifegame`(ライフゲーム)、`breakout`(ブロック崩し)、`graze`(弾幕サバイバル)、`delve`(1-bit ローグライク) |
-| **EXPERIMENT**   | `band`(音声反応ビジュアル)、`fontsmith`(フォントエディタ)、`aquarium`/`observatory`(「映える画面」)、`telex`(テレタイプ演出)、`oracle`(隠しテキストアドベンチャー) |
-| **DEMO** (dev)   | `easing_demo`、`ascii_art_demo`、`gradient_demo` (プリミティブ動作確認)  |
-| (hidden)         | `dolphin` (イースターエッグ)                                     |
+- **CREATIVE**
+  - `studio/` — 音楽 DAW (dev)
+  - `tessera` — 生成的アート言語 Tessera のエディタ + 出力
+  - `paint` — 1-bit ピクセルペイント
+- **トップレベル** (カテゴリ無し = OS ユーティリティ)
+  - `notepad` — テキスト編集
+  - `explorer` — VFS マネージャ
+  - `capture` — スクショ/動画/GIF 撮影
+  - `settings` — パレット/壁紙/解像度/エフェクト
+  - `about` — バージョン情報
+- **GAMES**
+  - `lifegame` — ライフゲーム / `breakout` — ブロック崩し
+  - `graze` — 弾幕サバイバル / `delve` — 1-bit ローグライク
+- **EXPERIMENT**
+  - `band` — 音声反応ビジュアル / `fontsmith` — フォントエディタ
+  - `aquarium` / `observatory` — 「映える画面」
+  - `telex` — テレタイプ演出 / `oracle` — 隠しテキストアドベンチャー
+- **DEMO** (dev) — `easing_demo` / `ascii_art_demo` / `gradient_demo`
+  (プリミティブ動作確認)
+- **hidden** — `dolphin` (イースターエッグ)
 
 ## 非ウィンドウ・システムモジュール
 
-| ファイル            | 役割                                                             |
-| ------------------- | ---------------------------------------------------------------- |
-| `app.js`            | アプリ層ハブ。全アプリを副作用 import し、毎フレームの `update()` / `draw()` を提供 |
-| `game_utils.js`     | ゲーム共通ユーティリティ (オーバーレイ・シェイク・パーティクル・`registerGameApp` の WM 統合) |
-| `input_overlay.js`  | 入力可視化オーバーレイ (SNS 共有用)。`input.js` のイベントログを消費する薄いビューア |
-| `vram_dump.js`      | VRAM ダンプ (開発デバッグ用。BIN/HEX/RLE でクリップボードへ)     |
+- `app.js` — アプリ層ハブ。全アプリを副作用 import し、
+  毎フレームの `update()` / `draw()` を提供
+- `game_utils.js` — ゲーム共通ユーティリティ
+  (オーバーレイ・シェイク・パーティクル・`registerGameApp` の WM 統合)
+- `input_overlay.js` — 入力可視化オーバーレイ (SNS 共有用)。
+  `input.js` のイベントログを消費する薄いビューア
+- `vram_dump.js` — VRAM ダンプ (開発デバッグ用。BIN/HEX/RLE でクリップボードへ)
 
 ## 設計原則
 
-- **登録パターン**: 各ウィンドウは `wmRegister()` で自己登録し、`app.js` が副作用 import で読み込む。
+- **登録パターン**: 各ウィンドウは `wmRegister()` で自己登録し、
+  `app.js` が副作用 import で読み込む。
 - **WM お任せ配置**: `wmOpen(-1, -1, ...)` で座標を指定せず、WM のカスケード配置に委譲する。
 - **統合ウィンドウ**: 音楽制作機能は `studio/` に統合し、タブ (INST / PIANO_ROLL) で切替。
-- **DI データ提供**: `studio/piano_roll.js` の `tracks` / `setPlayheadPos` は `kernel.js` から再生エンジンへ注入される。
+- **DI データ提供**: `studio/piano_roll.js` の `tracks` / `setPlayheadPos` は
+  `kernel.js` から再生エンジンへ注入される。

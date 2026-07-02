@@ -22,30 +22,34 @@ app/  →  wm/  →  ui/  →  core/
                         audio/  →  core/   (UI なし)
 ```
 
-| レイヤ        | 役割                                                             |
-| ------------- | ---------------------------------------------------------------- |
-| `core/`       | 描画・入力・フォント・音声・ストレージ等のプラットフォーム基盤    |
-| `audio/`      | STUDIO 専用の再生エンジン・トランスポート UI (UI 非依存のエンジン + UI) |
-| `ui/`         | OS 風ウィジェットライブラリ (DI で `core` から切り離し・再利用可能) |
-| `wm/`         | OS 風ウィンドウマネージャ・デスクトップ                           |
-| `app/`        | 各アプリケーションウィンドウ                                     |
-| ルート        | `kernel` (配線) / `config` (定数) / `splash` / `wallpaper`       |
+- `core/` — 描画・入力・フォント・音声・ストレージ等のプラットフォーム基盤
+- `audio/` — STUDIO 専用の再生エンジンとトランスポート UI
+- `ui/` — OS 風ウィジェットライブラリ (DI で `core` から切り離し、再利用可能)
+- `wm/` — OS 風ウィンドウマネージャ・デスクトップ
+- `app/` — 各アプリケーションウィンドウ
+- ルート — `kernel` (配線) / `config` (定数) / `splash` / `wallpaper`
 
 各レイヤのファイル一覧・規約は配下の `README.md` を参照。
 
 ## DI (依存注入) — 逆方向参照の解決
 
 レイヤ間の逆方向参照はすべてコールバック注入で解決し、配線は `kernel.js` の `boot()` に集約。
+各項目は `注入関数 (方向) — 渡すもの`。
 
-| 注入                                | 方向         | 渡すもの                                                        |
-| ----------------------------------- | ------------ | --------------------------------------------------------------- |
-| `initPorts(...)`                    | core → ui    | gpu / font / icon / input / textIcon / dither (ui/ports.js)     |
-| `wmSetUiCallbacks(...)`             | ui → wm      | flushPopups / hasOpenPopup / hasTextInputFocus / dispatchPopupInput |
-| `WidgetGroup.setWmCallbacks(...)`   | wm → ui      | setTooltip / requestCursor                                      |
-| `transportSetPianoRollCallbacks(...)` | app → audio | getTracks / setPlayheadPos                                      |
-| `transportSetIsHostFocused(...)`    | wm → audio   | STUDIO フォーカス判定 (Space キー制御用)                        |
-| `configSetSaveCallback(...)`        | core → config | 設定保存ディスパッチャ (storage へ)                            |
-| `configSetFontSwitchCallback(...)`  | core → config | フォント切替時のグリフ差し替え (font へ)                       |
+- `initPorts(...)` (core → ui)
+  — gpu / font / icon / input / textIcon / dither (ui/ports.js)
+- `wmSetUiCallbacks(...)` (ui → wm)
+  — flushPopups / hasOpenPopup / hasTextInputFocus / dispatchPopupInput
+- `WidgetGroup.setWmCallbacks(...)` (wm → ui)
+  — setTooltip / requestCursor
+- `transportSetPianoRollCallbacks(...)` (app → audio)
+  — getTracks / setPlayheadPos
+- `transportSetIsHostFocused(...)` (wm → audio)
+  — STUDIO フォーカス判定 (Space キー制御用)
+- `configSetSaveCallback(...)` (core → config)
+  — 設定保存ディスパッチャ (storage へ)
+- `configSetFontSwitchCallback(...)` (core → config)
+  — フォント切替時のグリフ差し替え (font へ)
 
 ## 技術スタック
 

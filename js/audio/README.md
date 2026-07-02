@@ -13,10 +13,10 @@ transport.js       → playback_engine.js, config.js, core/input, core/icon, ui/
 
 ## モジュール
 
-| ファイル             | 役割                                                             |
-| -------------------- | ---------------------------------------------------------------- |
-| `playback_engine.js` | 再生エンジン。look-ahead スケジューラ、メトロノーム、WAV オフラインレンダリング (`renderToBuffer`)。UI 非依存でトラックデータは DI で受け取る |
-| `transport.js`       | トランスポート UI (再生/停止/BPM/ループ)。STUDIO ウィンドウ内に配置 |
+- `playback_engine.js` — 再生エンジン。look-ahead スケジューラ、メトロノーム、
+  WAV オフラインレンダリング (`renderToBuffer`)。UI 非依存で、トラックデータは
+  DI で受け取る
+- `transport.js` — トランスポート UI (再生/停止/BPM/ループ)。STUDIO ウィンドウ内に配置
 
 ## 設計原則
 
