@@ -27,6 +27,9 @@ function unknownFunc(name, pos) {
 }
 
 let _uid = 0; // 生成コード内の一時名を一意化（ループカウンタ等）
+// stdlib 以外に「関数として呼べる名前」の集合（TESSERA の voice = 名前付き音色など）。
+// compileExpr の間だけ設定（同期・非再入）。null なら stdlib のみ。
+let _extraFuncs = null;
 const q = (s) => JSON.stringify(s); // 文字列リテラルを安全に埋め込む
 const jsNum = (v) => (v < 0 ? `(${v})` : `${v}`); // 負数は隣接演算子との結合を避け括弧で包む
 
@@ -72,8 +75,10 @@ function genExpr(node, scopes, free) {
       return `(${a}${node.op}${b})`;
     }
     case "call": {
-      // stdlib 関数はコンパイル時に F へ束縛。未知の関数名は評価時に投げる。
-      if (!FUNCS[node.name]) return `UF(${q(node.name)},${node.pos})`;
+      // stdlib 関数 / 注入された extra 関数（voice 等）はコンパイル時に F へ束縛。
+      // どちらでもない名前は未知の関数として評価時に投げる。
+      if (!FUNCS[node.name] && !(_extraFuncs && _extraFuncs.has(node.name)))
+        return `UF(${q(node.name)},${node.pos})`;
       const args = node.args.map((x) => genExpr(x, scopes, free)).join(",");
       return `F[${q(node.name)}](${args})`;
     }
@@ -124,16 +129,21 @@ function freeDecl(name, pos) {
 }
 
 /**
- * 式 AST を `(env) => number` にコンパイルする（JS ソース → new Function）。
- * env.vars が入力（x/y/t/seed・チャンネル・定数）、env.funcs が近傍プリミティブ。
+ * 式 AST を `(env, F?) => number` にコンパイルする（JS ソース → new Function）。
+ * env.vars が入力（x/y/t/seed・f・定数）。F は関数表（既定 stdlib の FUNCS。
+ * voice 等を混ぜた表を渡すとそれを使う）。
+ * @param {object} node
+ * @param {Set<string>|null} [extraFuncs]  stdlib 以外に呼べる名前（voice 等）。
  */
-export function compileExpr(node) {
+export function compileExpr(node, extraFuncs = null) {
   _uid = 0;
+  _extraFuncs = extraFuncs;
   const free = new Map();
   const code = genExpr(node, [], free);
   let pre = "";
   for (const [name, pos] of free) pre += freeDecl(name, pos);
   // eslint-disable-next-line no-new-func
   const fn = new Function("env", "F", "M", "UF", "UN", `${pre}return ${code};`);
-  return (env) => fn(env, FUNCS, fmod, unknownFunc, unknownName);
+  _extraFuncs = null;
+  return (env, F) => fn(env, F || FUNCS, fmod, unknownFunc, unknownName);
 }

@@ -11,7 +11,7 @@
 
 import { parse, parseProgram } from "./core/parser.js";
 import { compileExpr } from "./core/interp.js";
-import { setSeed, setAudioClock } from "./stdlib.js";
+import { setSeed, setAudioClock, FUNCS } from "./stdlib.js";
 
 /**
  * @param {string} src
@@ -62,9 +62,21 @@ function compileFieldAst(ast) {
  * @returns {{ sampleAudio:(t,seed,period)=>number,
  *             renderAudio:(sampleRate,seconds,seed,period)=>Float32Array }}
  */
-function compileAudioAst(ast) {
-  const exprFn = compileExpr(ast);
-  const env = { vars: { t: 0, seed: 0, period: Math.PI * 2 } };
+function compileAudioAst(ast, voices = []) {
+  const env = { vars: { t: 0, seed: 0, period: Math.PI * 2, f: 0 } };
+
+  // 関数表 = stdlib（prototype）＋ voice（名前付き音色）。voice は呼ばれると f（周波数）を
+  // 束縛して評価する＝上で音色を宣言し、下で名前を呼んで使う（作曲と音作りを分離）。
+  const F = Object.create(FUNCS);
+  const voiceNames = new Set(voices.map((v) => v.name));
+  for (const v of voices) {
+    const vFn = compileExpr(v.ast); // voice は stdlib + f のみ（voice 同士の呼び出しは不可）
+    F[v.name] = (freq) => {
+      env.vars.f = freq === undefined ? 0 : freq;
+      return vFn(env, F);
+    };
+  }
+  const exprFn = compileExpr(ast, voiceNames); // 音の場は voice を呼べる
 
   function sampleAudio(t, seed = 0, period = Math.PI * 2) {
     setSeed(seed);
@@ -72,7 +84,7 @@ function compileAudioAst(ast) {
     env.vars.t = t;
     env.vars.seed = seed;
     env.vars.period = period;
-    const v = exprFn(env);
+    const v = exprFn(env, F);
     return v < -1 ? -1 : v > 1 ? 1 : v;
   }
 
@@ -99,6 +111,6 @@ function compileAudioAst(ast) {
  */
 export function compile(src) {
   const prog = parseProgram(src); // 構文エラーはここで投げる
-  const audio = prog.audio ? compileAudioAst(prog.audio) : null;
+  const audio = prog.audio ? compileAudioAst(prog.audio, prog.voices) : null;
   return { config: prog.config, audio, ...compileFieldAst(prog.expr) };
 }

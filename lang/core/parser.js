@@ -376,6 +376,47 @@ function extractDirectives(toks) {
 }
 
 /**
+ * トップレベル（brace 深さ 0）の `voice <名前>: <式>` を抽出する（名前付き音色＝トラック名）。
+ * 式は `f`（周波数）を参照でき、音の場から `名前(freq)` で呼ぶと f が束縛される。
+ * @returns {{ voices:{name:string,ast:object}[], rest:object[] }}
+ */
+function extractVoices(toks) {
+  const voices = [];
+  const consumed = new Set();
+  let depth = 0;
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.type === "LBRACE") { depth++; continue; }
+    if (t.type === "RBRACE") { depth--; continue; }
+    if (depth !== 0) continue;
+    if (t.type !== "ID" || t.value !== "voice") continue;
+    const nameTk = toks[i + 1];
+    if (!nameTk || nameTk.type !== "ID") continue;
+    if (!toks[i + 2] || toks[i + 2].type !== "COLON") continue;
+    const colonPos = toks[i + 2].pos;
+    let j = i + 3;
+    const valToks = [];
+    while (toks[j] && toks[j].type !== "SEP" && toks[j].type !== "EOF") {
+      valToks.push(toks[j]);
+      j++;
+    }
+    if (valToks.length === 0)
+      throw new LangError(`voice ${nameTk.value}: の音色式が必要です`, colonPos);
+    valToks.push({ type: "EOF", pos: valToks[valToks.length - 1].pos });
+    const sp = makeParser(valToks, 0);
+    const ast = sp.parseExpr(0);
+    if (sp.peek().type !== "EOF")
+      throw new LangError(`voice ${nameTk.value}: の式が不正です`, sp.peek().pos);
+    voices.push({ name: nameTk.value, ast });
+    for (let k = i; k < j; k++) consumed.add(k);
+    if (toks[j] && toks[j].type === "SEP") consumed.add(j); // 直後の区切りも畳む
+    i = j - 1;
+  }
+  const rest = toks.filter((_, idx) => !consumed.has(idx));
+  return { voices, rest };
+}
+
+/**
  * トップレベル（brace 深さ 0）の `sound:` を境に、視覚の場と音の場を分ける。
  * `sound:` 以降（EOF まで）が音の場 `a(t)`。無ければ audioToks は null（従来どおり）。
  * 音は視覚と同型の「時間の場」＝同じ式・値ブロックで書ける（別パラダイムを増やさない）。
@@ -399,13 +440,15 @@ function splitAudioSection(toks) {
 
 /**
  * プログラム全体を解析して返す。
- * @returns {{ expr:object, audio:(object|null), config:object }}
- *   expr=視覚の場 f(x,y,t) / audio=音の場 a(t)（無ければ null）/ config=設定ディレクティブ。
+ * @returns {{ expr:object, audio:(object|null), voices:{name,ast}[], config:object }}
+ *   expr=視覚の場 f(x,y,t) / audio=音の場 a(t)（無ければ null）/
+ *   voices=名前付き音色（音の場から呼ぶ）/ config=設定ディレクティブ。
  */
 export function parseProgram(src) {
-  const { config, rest } = extractDirectives(tokenize(src));
-  const { visualToks, audioToks } = splitAudioSection(rest);
+  const { config, rest: r1 } = extractDirectives(tokenize(src));
+  const { voices, rest: r2 } = extractVoices(r1);
+  const { visualToks, audioToks } = splitAudioSection(r2);
   const expr = parseExprTokens(visualToks);
   const audio = audioToks ? parseExprTokens(audioToks) : null;
-  return { expr, audio, config };
+  return { expr, audio, voices, config };
 }

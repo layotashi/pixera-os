@@ -78,3 +78,47 @@ describe("renderAudio: オフラインレンダ", () => {
     expect(Array.from(a)).toEqual(Array.from(b));
   });
 });
+
+describe("voice: 名前付き音色（多声）", () => {
+  it("voice を呼ぶと f が束縛される（インライン展開と一致）", () => {
+    const withVoice = compile("0\nvoice lead: pulse(f, .25)\nsound: lead(hz(69))");
+    const inline = compile("0\nsound: pulse(hz(69), .25)");
+    expect(withVoice.audio).not.toBe(null);
+    for (let i = 0; i < 8; i++) {
+      const t = i / 8;
+      expect(withVoice.audio.sampleAudio(t, 0, 1)).toBeCloseTo(
+        inline.audio.sampleAudio(t, 0, 1),
+        9,
+      );
+    }
+  });
+
+  it("多声を + で混合（値ブロック）・値域 [-1,1]・決定論", () => {
+    const src =
+      "0\nvoice lead: pulse(f)\nvoice bass: tri(f)\n" +
+      "sound:\n  lead(hz(69))*.5 + bass(hz(45))*.5";
+    const p = compile(src);
+    const a = p.audio.renderAudio(200, 1, 0, 1);
+    const b = p.audio.renderAudio(200, 1, 0, 1);
+    for (const v of a) {
+      expect(v).toBeGreaterThanOrEqual(-1);
+      expect(v).toBeLessThanOrEqual(1);
+    }
+    expect(Array.from(a)).toEqual(Array.from(b));
+  });
+
+  it("引数なしの voice（f を使わない音色）も呼べる", () => {
+    const p = compile("0\nvoice hat: nz(1000)\nsound: hat() * decay(beat(4))");
+    const buf = p.audio.renderAudio(200, 1, 0, 1);
+    expect(buf.length).toBe(200);
+    for (const v of buf) {
+      expect(v).toBeGreaterThanOrEqual(-1);
+      expect(v).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("未宣言の名前を呼ぶと評価時に投げる（voice でも stdlib でもない）", () => {
+    const p = compile("0\nsound: leadX(hz(69))");
+    expect(() => p.audio.sampleAudio(0, 0, 1)).toThrow();
+  });
+});

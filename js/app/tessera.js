@@ -23,7 +23,8 @@
  *
  * 音（任意）: `sound:` ブロックで「時間の場」a(t) -> -1..1 を書ける（視覚が空間の場なのと
  *   同型・チップチューン割り切り）。1 周期ぶんをオフラインレンダ → ループ AudioBuffer で
- *   period 同期再生（Alt+P でトグル）。無ければ従来どおり無音。
+ *   period 同期再生（Alt+P でトグル）。無ければ従来どおり無音。`voice <名前>: <式(f)>` で
+ *   名前付き音色（＝トラック名）を宣言し、音の場から `名前(freq)` で呼んで `+` で混ぜる。
  *
  * 構成:
  *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。
@@ -183,6 +184,24 @@ s/(s + 1)`,
 sin(x*8 - t)*.5 + .5
 
 sound: pulse(hz(45 + seq(step(8), 0, 3, 7, 12))) * decay(beat(8))`,
+  },
+  {
+    file: "10_voices" + EXT,
+    src: `// name your timbres up top with 'voice'
+// (f = the pitch you pass in), then play
+// them by name below. mix voices by adding.
+// = a tiny 3-part chiptune loop. Alt+P.
+voice lead: pulse(f, .25)
+voice bass: tri(f)
+voice hat:  nz(1000)
+
+sin(x*8 - t)*.5 + .5
+
+sound:
+  m = lead(hz(60 + seq(step(8), 0, 3, 7, 10))) * decay(beat(8))
+  b = bass(hz(36))
+  h = hat() * decay(beat(16))
+  m*.4 + b*.4 + h*.2`,
   },
 ];
 
@@ -1263,7 +1282,8 @@ WM.wmRegister(
         "Alt+W set as desktop wallpaper (live-rendered), Shift+Alt+F format. " +
         "Add a sound: block for chiptune audio — a field over time a(t) -> -1..1 " +
         "(pulse/tri/saw/nz, hz, beat/step/seq, decay). Alt+P plays / stops; " +
-        "it loops over 'period' in sync with the view.",
+        "it loops over 'period' in sync with the view. Declare named timbres with " +
+        "voice <name>: <expr with f>, then play them by name and mix with +.",
       onRelayout: relayout,
     });
     refreshTitle();
