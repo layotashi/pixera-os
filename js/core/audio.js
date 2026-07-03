@@ -271,6 +271,32 @@ export function getAudioContext() {
   return ctx;
 }
 
+/**
+ * DC ブロッカ（一極ハイパス）。純関数——書き出しなどのオフライン処理向け。
+ * 再生時のマスターチェーン（initAudio の dcBlocker: HP 20Hz）と同じ意図で、非対称
+ * パルス波（duty≠.5、例: pulse(f,.25) は DC≈-0.5）が持つ 0Hz 成分を除く。DC が残ると
+ * ヘッドルームを浪費し、ピークが片側に寄って AAC で歪みやすい（＝再生と違う音になる）。
+ * @param {Float32Array} samples  入力（不変）
+ * @param {number} sampleRate
+ * @param {number} [cutoffHz=20]  マスターチェーンと同じ 20Hz
+ * @returns {Float32Array} 新しい配列
+ */
+export function dcBlock(samples, sampleRate, cutoffHz = 20) {
+  const n = samples.length;
+  const out = new Float32Array(n);
+  const R = 1 - (2 * Math.PI * cutoffHz) / sampleRate; // 一極係数（≈0.997 @20Hz/44.1k）
+  let x1 = 0,
+    y1 = 0;
+  for (let i = 0; i < n; i++) {
+    const x = samples[i];
+    const y = x - x1 + R * y1; // 標準 DC ブロッカ y[n]=x[n]-x[n-1]+R·y[n-1]
+    out[i] = y;
+    x1 = x;
+    y1 = y;
+  }
+  return out;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  SynthChannel クラス
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

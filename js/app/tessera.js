@@ -63,7 +63,7 @@ import { altShiftDown, altDown, ctrlDown, ctrlShiftDown, keyDown } from "../core
 import * as FieldRender from "../core/field_render.js";
 import * as AsciiArt from "../core/ascii_art.js";
 import * as ArtExport from "../core/art_export.js";
-import { initAudio, getAudioContext, getMasterGain } from "../core/audio.js";
+import { initAudio, getAudioContext, getMasterGain, dcBlock } from "../core/audio.js";
 import { encodeWav } from "../core/wav.js";
 import { compile } from "../../lang/runtime.js";
 import { makeBufferSurface } from "../../lang/surface.js";
@@ -432,6 +432,10 @@ const PERFORM_CHUNK = 4;
 const FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
 const TAU = Math.PI * 2; // period 既定（t を sin/cos に通す作例の 1 周期）
 const PERIOD_CAP_S = 30; // 動画 1 本の上限秒（period をこの長さでクランプ）
+// 音の出力ゲイン。sound: の a(t) は ±1 フルスケールなので、そのまま出すと過大＝AAC で
+// 歪む/クリップする。再生（playAudio の GainNode）と書き出し（exportAudioPcm）で同じ値を
+// 掛けて音量を一致させる＝WYSIWYG（SSoT。ここだけを変えれば両方に効く）。
+const AUDIO_GAIN = 0.3;
 const DEFAULTS = { sizeW: 1080, sizeH: 1080, pad: 80, fps: 20, seed: 0, period: TAU };
 
 const clampI = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
@@ -546,9 +550,9 @@ function playAudio() {
   src.buffer = buf;
   src.loop = true; // period でシームレスループ（視覚のループと同じ長さ）
   const g = ctx.createGain();
-  g.gain.value = 0.3;
+  g.gain.value = AUDIO_GAIN; // 書き出しと同じ出力ゲイン（WYSIWYG）
   src.connect(g);
-  g.connect(getMasterGain());
+  g.connect(getMasterGain()); // masterGain→dcBlocker(HP20)→limiter（DC 除去＋クリップ防止）
   // 映像と完全同期: いま画面に出ている映像の位相から音を開始する（映像クロックは
   // 触らない＝映像は途切れない）。ループ長は双方 period なので以後ずっと同位相でロックする。
   const bufDur = data.length / sr;
@@ -562,6 +566,24 @@ function playAudio() {
 function toggleAudio() {
   if (audioSource) stopAudio();
   else playAudio();
+}
+
+/**
+ * sound: の 1 周期を書き出し用 PCM にする（WAV/MP4 共通）。
+ * 再生（Alt+P）と同じ出力処理を掛けるので、ファイルが再生と同じ音・同じ音量になる
+ * ＝WYSIWYG: 生の a(t) → DC ブロック（再生時のマスター HP20 相当） → 出力ゲイン AUDIO_GAIN。
+ * DC ブロッカはループ前提で 1 周ぶん暖機してから本番の 1 周を採る（起動過渡＝境界の
+ * クリックを消す。周期信号なので 2 周目は暖機済み＝ループ端が滑らかに繋がる）。
+ */
+function exportAudioPcm(prog, sr, period, seed) {
+  const dry = prog.audio.renderAudio(sr, period, seed, period); // 決定論・1 周期
+  const two = new Float32Array(dry.length * 2); // 2 周ぶんでフィルタを暖機
+  two.set(dry, 0);
+  two.set(dry, dry.length);
+  const hp = dcBlock(two, sr).subarray(dry.length); // 2 周目（暖機済み）
+  const out = new Float32Array(dry.length);
+  for (let i = 0; i < out.length; i++) out[i] = hp[i] * AUDIO_GAIN;
+  return out;
 }
 
 /**
@@ -1301,7 +1323,7 @@ function exportArt() {
       return;
     }
     const sr = 44100;
-    const data = prog.audio.renderAudio(sr, period, seed, period);
+    const data = exportAudioPcm(prog, sr, period, seed); // 再生と同じ音・音量（WYSIWYG）
     downloadBlob(new Blob([encodeWav(data, sr)], { type: "audio/wav" }), exportName("wav"));
     return;
   }
@@ -1309,7 +1331,7 @@ function exportArt() {
   let audio = null;
   if (key === "mp4" && prog.audio) {
     const sr = 44100;
-    audio = { samples: prog.audio.renderAudio(sr, period, seed, period), sampleRate: sr };
+    audio = { samples: exportAudioPcm(prog, sr, period, seed), sampleRate: sr };
   }
   if (codeOn) {
     // コードカード: 作品(額縁=pad) + バー + 文字。art/code の INV は frame に焼き込む。

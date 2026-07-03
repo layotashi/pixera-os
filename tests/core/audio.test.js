@@ -19,6 +19,7 @@ import {
   createSfxChannels,
   SamplePlayer,
   playSample,
+  dcBlock,
 } from "@/core/audio.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -39,6 +40,47 @@ describe("NOTE_NAMES", () => {
     expect(NOTE_NAMES).toContain("C#");
     expect(NOTE_NAMES).toContain("F#");
     expect(NOTE_NAMES).toContain("G#");
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  dcBlock（書き出しの DC 除去 = 再生との音一致）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("dcBlock", () => {
+  const SR = 44100;
+  const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+
+  it("入力を破壊しない（新しい配列を返す）", () => {
+    const src = new Float32Array([1, 1, 1, 1]);
+    const out = dcBlock(src, SR);
+    expect(out).not.toBe(src);
+    expect([...src]).toEqual([1, 1, 1, 1]);
+  });
+
+  it("非対称パルス波（duty=.25, DC≈-0.5）の DC 成分をほぼ 0 にする", () => {
+    // 200Hz・duty 0.25 のパルスを 0.5 秒。1周だけだと過渡が残るので後半で評価。
+    const f = 200;
+    const n = SR / 2;
+    const pulse = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const ph = (i * f) / SR;
+      pulse[i] = ph - Math.floor(ph) < 0.25 ? 1 : -1;
+    }
+    expect(mean(pulse)).toBeLessThan(-0.4); // 元は強い DC オフセット
+    const out = dcBlock(pulse, SR).subarray(n >> 1); // 暖機後（後半）
+    expect(Math.abs(mean(out))).toBeLessThan(0.01); // DC がほぼ消える
+  });
+
+  it("可聴帯域（440Hz サイン）の振幅はほぼ保つ（DC だけ抜く）", () => {
+    const f = 440;
+    const n = SR;
+    const sine = new Float32Array(n);
+    for (let i = 0; i < n; i++) sine[i] = Math.sin((2 * Math.PI * f * i) / SR);
+    const out = dcBlock(sine, SR).subarray(SR >> 1); // 後半
+    let peak = 0;
+    for (const v of out) peak = Math.max(peak, Math.abs(v));
+    expect(peak).toBeGreaterThan(0.98); // 440Hz は 20Hz HP をほぼ素通り
   });
 });
 
