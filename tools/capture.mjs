@@ -174,6 +174,16 @@ async function main() {
       await page.waitForTimeout(300);
     }
 
+    // 環境変数 SYNESTA_INVERT=1 で反転表示 (reverse video) を ON にできる
+    if (process.env.SYNESTA_INVERT) {
+      console.log(`[capture] enabling invert (reverse video)`);
+      await page.evaluate(async () => {
+        const Config = await import("/js/config.js");
+        Config.setInvert(true);
+      });
+      await page.waitForTimeout(300);
+    }
+
     // ウィンドウを開く (desktop モードはスキップ)
     if (windowName.toLowerCase() !== "desktop") {
       console.log(`[capture] opening window: ${windowName}`);
