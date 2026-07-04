@@ -45,7 +45,7 @@ let imageBits = null;
 // ── "tessera" モード（.tess を live-render）──
 let tessSource = null; // 現在の .tess ソース（スナップショット）
 let tessProgram = null; // compile 結果（render/config）
-let tessConfig = null; // 解決済み { seed, period, fps, aspect, viewMode, viewParams }
+let tessConfig = null; // 解決済み { seed, period, fps, viewMode, viewParams }
 let tessBits = null; // 直近に描いた 1-bit（VRAM サイズ）
 let tessFrame = -1; // 直近に描いた fps フレーム番号
 let tessT0 = 0; // アニメ開始 wall-clock(ms)
@@ -137,37 +137,20 @@ function loadImageFromVfs(path) {
 
 // ディレクティブ解決 (fps スナップ・view→パラメータ・既定値/クランプ) と
 // 場サーフェス生成は core/tess_host.js に一元化 (tessera プレビュー/書き出しと共有)。
-// 壁紙は結果から seed/period/fps/aspect/view のみ使う。
+// 壁紙は結果から seed/period/fps/view のみ使う。
 
 /**
- * 場を時刻 t で 1 フレーム描く。canvas アスペクトを VRAM 内に最大内接（中央）させ、
- * その領域を画面解像度で評価（チャンキー化しない）→ 余白は imageFillBit で埋める。
- * @returns {Uint8Array} VRAM サイズの 1-bit
+ * 場を時刻 t で 1 フレーム描く。壁紙は常に画面いっぱい (Fill)＝画面解像度・
+ * アスペクトで場を再評価する。場の座標は canvas 寸法に依らず x,y ∈ [0,1] なので
+ * (lang/runtime.js)、これはラスタ画像の引き伸ばしと違いネイティブ解像度の再描画で
+ * 劣化しない。canvas ディレクティブの縦横比はプレビュー/書き出し枠であり壁紙では無視。
+ * @returns {Uint8Array} VRAM サイズの 1-bit (毎回新規バッファ)
  */
 function renderTessFrame(t) {
-  const { seed, aspect, viewMode, viewParams } = tessConfig;
-  let rw, rh;
-  if (aspect >= VRAM_WIDTH / VRAM_HEIGHT) {
-    rw = VRAM_WIDTH;
-    rh = Math.max(1, Math.round(rw / aspect));
-  } else {
-    rh = VRAM_HEIGHT;
-    rw = Math.max(1, Math.round(rh * aspect));
-  }
-  const surf = makeFieldSurface(rw, rh, viewMode, viewParams);
+  const { seed, viewMode, viewParams } = tessConfig;
+  const surf = makeFieldSurface(VRAM_WIDTH, VRAM_HEIGHT, viewMode, viewParams);
   tessProgram.render(surf, t, seed);
-  const region = surf.buf;
-
-  const bits = new Uint8Array(VRAM_WIDTH * VRAM_HEIGHT);
-  bits.fill(imageFillBit);
-  const ox = (VRAM_WIDTH - rw) >> 1;
-  const oy = (VRAM_HEIGHT - rh) >> 1;
-  for (let y = 0; y < rh; y++) {
-    const dy = oy + y;
-    if (dy < 0 || dy >= VRAM_HEIGHT) continue;
-    bits.set(region.subarray(y * rw, y * rw + rw), dy * VRAM_WIDTH + ox);
-  }
-  return bits;
+  return surf.buf;
 }
 
 const eqBits = (a, b) => {
@@ -279,9 +262,9 @@ export function drawWallpaper() {
         }
       }
       if (tessBits) vram.set(tessBits);
-      else vram.fill(imageFillBit);
+      else vram.fill(0);
     } else {
-      vram.fill(imageFillBit);
+      vram.fill(0);
     }
     return;
   }
@@ -391,17 +374,13 @@ export function getImagePath() {
   return imagePath;
 }
 
-/** Image / Tessera 背景の未カバー領域（マット）を埋めるビットを設定する (0 | 1) */
+/** Image 背景の未カバー領域（マット）を埋めるビットを設定する (0 | 1) */
 export function setImageFillBit(bit) {
   const nextBit = bit ? 1 : 0;
   if (nextBit === imageFillBit) return;
   imageFillBit = nextBit;
   Storage.saveBgImageFillBit(imageFillBit);
   if (imagePath) loadImageFromVfs(imagePath);
-  // 静止 tessera はキャッシュなのでマット変更を即反映（アニメは次フレームで反映）
-  if (wallpaperMode === "tessera" && tessProgram && tessStatic) {
-    tessBits = renderTessFrame(0);
-  }
 }
 
 /** 現在の Image 背景埋めビットを返す */

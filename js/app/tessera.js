@@ -130,8 +130,8 @@ const clampI = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
 /**
  * program.config（生の宣言値）を実効設定へ解決する。
  * 既定値・クランプ・fps スナップ・view 解決の規則は tess_host.js が SSoT。
- * 返り値は { sizeW, sizeH, pixel, pad, fps, seed, period, aspect,
- * viewMode, viewParams }（tessera は前 7 つ、壁紙は seed/period/fps/aspect/view を使う）。
+ * 返り値は { sizeW, sizeH, pixel, pad, fps, seed, period,
+ * viewMode, viewParams }（tessera は前 7 つ、壁紙は seed/period/fps/view を使う）。
  */
 function resolvedConfig(prog = program) {
   return resolveTessConfig((prog && prog.config) || {});

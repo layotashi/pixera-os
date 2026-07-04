@@ -7,8 +7,8 @@
  * と、場 (0..1) を 1-bit へ描くサーフェス生成を、TESSERA アプリ (プレビュー /
  * 書き出し) と壁紙 (live-render) で共有し、二重定義による乖離を防ぐ。
  *
- * tessera は size/pad/pixel/fps/seed/period を、壁紙は seed/period/fps/aspect/
- * view を同じ resolveTessConfig() の結果から取り出す。
+ * tessera は size/pad/pixel/fps/seed/period を、壁紙は seed/period/fps/view を
+ * 同じ resolveTessConfig() の結果から取り出す。
  */
 
 import { renderField } from "./field_render.js";
@@ -72,7 +72,7 @@ export function resolveView(view) {
  * canvas 16..4096 / pad の各辺クランプ / fps スナップ / period 上限を一元化。
  * @param {object} config  program.config (無ければ既定)
  * @returns {{ sizeW:number, sizeH:number, pixel:number, pad:number, fps:number,
- *             seed:number, period:number, aspect:number,
+ *             seed:number, period:number,
  *             viewMode:string, viewParams:object }}
  */
 export function resolveTessConfig(config) {
@@ -91,7 +91,6 @@ export function resolveTessConfig(config) {
   const pad = clampI(c.pad ?? DEFAULTS.pad, 0, padMax);
   // period (秒) = プレビュー周期かつ動画長。既定 tau、上限 PERIOD_CAP_S。
   const period = clampF(c.period ?? DEFAULTS.period, 0.1, PERIOD_CAP_S);
-  const aspect = sizeH ? sizeW / sizeH : 1;
   const view = resolveView(c.view);
   return {
     sizeW,
@@ -101,7 +100,6 @@ export function resolveTessConfig(config) {
     fps,
     seed,
     period,
-    aspect,
     viewMode: view.mode,
     viewParams: view.params,
   };

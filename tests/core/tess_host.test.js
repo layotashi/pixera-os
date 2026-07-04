@@ -24,7 +24,6 @@ describe("resolveTessConfig 既定値", () => {
     expect(r.fps).toBe(20);
     expect(r.seed).toBe(0);
     expect(r.period).toBe(TAU);
-    expect(r.aspect).toBe(1);
     expect(r.viewMode).toBe("dither");
   });
 });
@@ -57,14 +56,6 @@ describe("resolveTessConfig fps スナップ", () => {
     expect(resolveTessConfig({ fps: 17 }).fps).toBe(20);
     expect(resolveTessConfig({ fps: 7 }).fps).toBe(5);
     expect(resolveTessConfig({ fps: 40 }).fps).toBe(50);
-  });
-});
-
-describe("resolveTessConfig aspect", () => {
-  it("clamp 後の sizeW/sizeH 比で算出", () => {
-    expect(resolveTessConfig({ canvas: { w: 1920, h: 1080 } }).aspect).toBeCloseTo(
-      1920 / 1080,
-    );
   });
 });
 

@@ -705,8 +705,8 @@ function refreshBackground() {
   for (const row of solidWidgets) row.visible = mode === "solid";
   for (const row of imageWidgets) row.visible = mode === "image";
   for (const row of tesseraWidgets) row.visible = mode === "tessera";
-  // Fill（マット）は image / tessera 共通
-  imageFillRow.visible = mode === "image" || mode === "tessera";
+  // Fill（マット）は image 専用。tessera は常に画面いっぱい (Fill) でマット無し。
+  imageFillRow.visible = mode === "image";
 }
 
 /** 背景関連ウィジェットを壁紙設定と同期する (initWallpaper 後に 1 回)。 */
