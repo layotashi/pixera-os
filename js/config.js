@@ -778,7 +778,7 @@ export function setInputOverlay(v) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /** システム SFX の ON/OFF (localStorage から復元、デフォルト ON) */
-let _systemSfx = load("systemSfx", false) !== false;
+let _systemSfx = load("systemSfx", true) !== false;
 
 /** システム SFX が有効か */
 export function isSystemSfxOn() {
