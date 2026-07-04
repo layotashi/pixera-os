@@ -78,8 +78,9 @@ export const SCROLLBAR_SLOT_WIDTH = SCROLLBAR_W + SCROLLBAR_MARGIN * 2 + 1;
 const THUMB_MIN = 5;
 
 /**
- * ステッパーボタン (端の ▲▼ / ◀▶) の一辺 (px)。スロット内幅 (sep を除く
- * = SCROLLBAR_W + margin*2 = 9) と同じ 9x9 の正方形にし、矢印を中央へ置く。
+ * ステッパーボタン 1 セルの一辺 (px)。スロット内幅 (sep を除く = SCROLLBAR_W +
+ * margin*2 = 9) と同じ 9x9 の正方形セル。セル内で反転領域は 7x7 (上下左右 1px 余白)、
+ * キャレットは 5x5 相当を中央に置く (サム 7px と同じ「1px 余白付き」の見た目に揃える)。
  * scrollBy(±step) でスクロール軸方向に 1 段 (縦=1行 / 横=1桁) 動かす。
  */
 const SCROLLBAR_BTN = SCROLLBAR_W + SCROLLBAR_MARGIN * 2;
@@ -87,12 +88,14 @@ const SCROLLBAR_BTN = SCROLLBAR_W + SCROLLBAR_MARGIN * 2;
 /** ボタン領域とサム領域を隔てる区切り線の太さ (px)。 */
 const BTN_SEP = 1;
 
+/** 端ゾーンの消費量: ボタンセル(9) + 区切り線(1) + サム余白(1) = 11px。 */
+const END_ZONE = SCROLLBAR_BTN + BTN_SEP + SCROLLBAR_MARGIN;
+
 /**
- * ボタンを出す最小トラック長 (px)。両端 (ボタン + 区切り線) + 最小サムが
- * 収まらない短いトラックではボタンを出さず、従来どおりサムのみ表示する
- * (小窓での破綻回避)。
+ * ボタンを出す最小トラック長 (px)。両端ゾーン + 最小サムが収まらない短い
+ * トラックではボタンを出さず、従来どおりサムのみ表示する (小窓での破綻回避)。
  */
-const MIN_TRACK_FOR_BUTTONS = (SCROLLBAR_BTN + BTN_SEP) * 2 + THUMB_MIN;
+const MIN_TRACK_FOR_BUTTONS = END_ZONE * 2 + THUMB_MIN;
 
 /** ボタン押しっぱなしオートリピート: 初動から反復開始までの hold フレーム数。 */
 const BTN_REPEAT_DELAY = 20;
@@ -262,58 +265,63 @@ function thumbGeom(s, trackStart, trackLen) {
  */
 function trackLayout(s, trackStart, trackLen) {
   if (!scrollNeeded(s) || trackLen < MIN_TRACK_FOR_BUTTONS) {
+    // ボタン無し: サムはスロット内で上下(左右) 1px 余白を取って走る (従来挙動)。
     return {
       showButtons: false,
       aStart: 0,
       bStart: 0,
       sepA: 0,
       sepB: 0,
-      thumbStart: trackStart,
-      thumbLen: trackLen,
+      thumbStart: trackStart + SCROLLBAR_MARGIN,
+      thumbLen: trackLen - SCROLLBAR_MARGIN * 2,
     };
   }
-  const end = SCROLLBAR_BTN + BTN_SEP; // ボタン(9) + 区切り線(1)
   return {
     showButtons: true,
-    aStart: trackStart, // 上/左ボタン開始
-    bStart: trackStart + trackLen - SCROLLBAR_BTN, // 下/右ボタン開始
+    aStart: trackStart, // 上/左ボタンセル開始
+    bStart: trackStart + trackLen - SCROLLBAR_BTN, // 下/右ボタンセル開始
     sepA: trackStart + SCROLLBAR_BTN, // 上/左ボタン直後の区切り線
     sepB: trackStart + trackLen - SCROLLBAR_BTN - BTN_SEP, // 下/右ボタン直前の区切り線
-    thumbStart: trackStart + end,
-    thumbLen: trackLen - end * 2,
+    // サムは区切り線からさらに 1px 余白 (SCROLLBAR_MARGIN) 内側で走らせ、
+    // 上下端でもボタンと繋がって見えないようにする。
+    thumbStart: trackStart + END_ZONE,
+    thumbLen: trackLen - END_ZONE * 2,
   };
 }
 
-/** 9x9 ボタン内に中央寄せの三角形 (▲▼◀▶) を色 c で描く。(bx,by)=ボタン左上。 */
+/**
+ * 9x9 ボタンセル (bx,by=左上) の中央に 5px キャレット三角形 (▲▼◀▶) を色 c で描く。
+ * キャレットは 5x3 (▲▼) / 3x5 (◀▶)＝中央 (bx+4,by+4) 対称。7x7 反転領域の内側に
+ * さらに 1px 余白が残る大きさにして、反転時に矢印が枠へ潰れないようにする。
+ */
 function drawArrow(dir, bx, by, c) {
   if (dir === "up") {
-    pset(bx + 4, by + 2, c);
-    hline(bx + 3, bx + 5, by + 3, c);
-    hline(bx + 2, bx + 6, by + 4, c);
-    hline(bx + 1, bx + 7, by + 5, c);
+    pset(bx + 4, by + 3, c);
+    hline(bx + 3, bx + 5, by + 4, c);
+    hline(bx + 2, bx + 6, by + 5, c);
   } else if (dir === "down") {
-    hline(bx + 1, bx + 7, by + 3, c);
-    hline(bx + 2, bx + 6, by + 4, c);
-    hline(bx + 3, bx + 5, by + 5, c);
-    pset(bx + 4, by + 6, c);
+    hline(bx + 2, bx + 6, by + 3, c);
+    hline(bx + 3, bx + 5, by + 4, c);
+    pset(bx + 4, by + 5, c);
   } else if (dir === "left") {
-    pset(bx + 2, by + 4, c);
-    vline(bx + 3, by + 3, by + 5, c);
-    vline(bx + 4, by + 2, by + 6, c);
-    vline(bx + 5, by + 1, by + 7, c);
+    pset(bx + 3, by + 4, c);
+    vline(bx + 4, by + 3, by + 5, c);
+    vline(bx + 5, by + 2, by + 6, c);
   } else {
     // right
-    vline(bx + 3, by + 1, by + 7, c);
-    vline(bx + 4, by + 2, by + 6, c);
-    vline(bx + 5, by + 3, by + 5, c);
-    pset(bx + 6, by + 4, c);
+    vline(bx + 3, by + 2, by + 6, c);
+    vline(bx + 4, by + 3, by + 5, c);
+    pset(bx + 5, by + 4, c);
   }
 }
 
-/** ステッパーボタンを描く。押下中は 9x9 を塗り潰して矢印を抜き文字にし反転表示。 */
+/**
+ * ステッパーボタンを描く。押下中は反転領域 (9x9 セル内に 1px 余白の 7x7=サムと
+ * 同寸) を塗り潰し、キャレットを抜き文字にして反転表示する。
+ */
 function drawButton(dir, bx, by, pressed) {
   if (pressed) {
-    fillRect(bx, by, SCROLLBAR_BTN, SCROLLBAR_BTN, 1);
+    fillRect(bx + 1, by + 1, SCROLLBAR_W, SCROLLBAR_W, 1); // 7x7 反転領域 (1px 余白)
     drawArrow(dir, bx, by, 0);
   } else {
     drawArrow(dir, bx, by, 1);
@@ -403,12 +411,10 @@ export function drawHScrollSep(x1, x2, y) {
 export function drawVScrollbarSlot(s, x, y, h) {
   // sep 線
   vline(x, y, y + h - 1, 1);
-  const btnX = x + 1; // ボタンはスロット内幅いっぱい (9px)
+  if (h <= 0) return;
+  const btnX = x + 1; // ボタンはスロット内幅いっぱい (9px, sep の右) にフラッシュ
   const thumbX = x + 1 + SCROLLBAR_MARGIN; // サムは内側に 1px inset (7px)
-  const trackY = y + SCROLLBAR_MARGIN;
-  const trackH = h - SCROLLBAR_MARGIN * 2;
-  if (trackH <= 0) return;
-  const L = trackLayout(s, trackY, trackH);
+  const L = trackLayout(s, y, h); // ボタンはスロット端にフラッシュ、余白はサム側で
   if (L.showButtons) {
     drawButton("up", btnX, L.aStart, s._btnHeld === -1);
     drawButton("down", btnX, L.bStart, s._btnHeld === 1);
@@ -435,12 +441,10 @@ export function drawVScrollbarSlot(s, x, y, h) {
 export function drawHScrollbarSlot(s, x, y, w) {
   // sep 線
   hline(x, x + w - 1, y, 1);
-  const btnY = y + 1; // ボタンはスロット内高いっぱい (9px)
+  if (w <= 0) return;
+  const btnY = y + 1; // ボタンはスロット内高いっぱい (9px, sep の下) にフラッシュ
   const thumbY = y + 1 + SCROLLBAR_MARGIN; // サムは内側に 1px inset (7px)
-  const trackX = x + SCROLLBAR_MARGIN;
-  const trackW = w - SCROLLBAR_MARGIN * 2;
-  if (trackW <= 0) return;
-  const L = trackLayout(s, trackX, trackW);
+  const L = trackLayout(s, x, w); // ボタンはスロット端にフラッシュ、余白はサム側で
   if (L.showButtons) {
     drawButton("left", L.aStart, btnY, s._btnHeld === -1);
     drawButton("right", L.bStart, btnY, s._btnHeld === 1);
@@ -452,20 +456,22 @@ export function drawHScrollbarSlot(s, x, y, w) {
 }
 
 /**
- * drawVScrollbarSlot で描画されるスロットの thumb 領域を返す。
- * 入力処理 (handleVScrollInput) に渡す trackY / trackH を得るため。
+ * drawVScrollbarSlot のスロット内側 (sep を除いた 9px 幅 × スロット全高) を返す。
+ * 入力処理はこの矩形で当たり判定し、trackY=y / trackH=h を handleVScrollInput へ渡す。
+ * ボタンはスロット端にフラッシュ配置されるため、当たり判定・トラックともスロット全高で
+ * 扱う (サム側の 1px 余白は trackLayout が内部で処理する)。
  *
- * @param {number} slotX  スロット左端 X
+ * @param {number} slotX  スロット左端 X (sep の X)
  * @param {number} slotY  スロット上端 Y
  * @param {number} slotH  スロット高さ
  * @returns {{ x:number, y:number, w:number, h:number }}
  */
 export function vScrollbarSlotThumbArea(slotX, slotY, slotH) {
   return {
-    x: slotX + 1 + SCROLLBAR_MARGIN,
-    y: slotY + SCROLLBAR_MARGIN,
-    w: SCROLLBAR_W,
-    h: Math.max(0, slotH - SCROLLBAR_MARGIN * 2),
+    x: slotX + 1, // sep の右 = 内側領域の左端
+    y: slotY,
+    w: SCROLLBAR_SLOT_WIDTH - 1, // 内側 9px (ボタン=フル幅 / サム=inset)
+    h: Math.max(0, slotH),
   };
 }
 
