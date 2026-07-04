@@ -22,6 +22,7 @@ export function snapshotConfig() {
     // ── SETTINGS (外観) ──
     palette: Config.getPaletteName(),
     customPalette: Config.getCustomPaletteRgb(),
+    invert: Config.isInvert(),
     headerPad: Config.getHeaderPad(),
     contentPad: Config.getContentPad(),
     textTransform: Config.getTextTransform(),

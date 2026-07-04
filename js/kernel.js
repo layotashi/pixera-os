@@ -137,6 +137,7 @@ async function boot() {
         case "inputOverlay":
         case "systemSfx":
         case "fontId":
+        case "invert":
           Storage.save(key, value);
           break;
       }

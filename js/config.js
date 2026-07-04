@@ -678,37 +678,62 @@ let currentPaletteName = "plato";
 let customPaletteHex = loadCustomPalette({ bg: "#201600", fg: "#fdb931" });
 
 /**
+ * 反転表示 (reverse video) フラグ (localStorage から復元、デフォルト OFF)。
+ * ON のとき palette の bg/fg を入れ替え、描画全体の明暗を反転する。
+ * 実機端末の NORMAL/REVERSE スイッチに相当する画面モード。
+ */
+let _invert = !!load("invert", false);
+
+/**
  * 現在のパレットオブジェクト (ライブ参照)
  * gpu.js の flush() が毎フレームここを参照する。
  * bg / fg は [R, G, B] 配列 (高速参照用)。
+ * 値は _applyPalette() が currentPaletteName / _invert から算出する。
  */
-export let palette = {
-  bg: hex2rgb(PALETTES[currentPaletteName].bg),
-  fg: hex2rgb(PALETTES[currentPaletteName].fg),
-};
+export let palette = { bg: [0, 0, 0], fg: [0, 0, 0] };
+
+/**
+ * 現在の選択 (プリセット or Custom) の authored な bg/fg を返す (反転は未適用)。
+ * @returns {{ bg: number[], fg: number[] }}
+ */
+function _authoredRgb() {
+  if (currentPaletteName === CUSTOM_PALETTE_NAME) {
+    return {
+      bg: hex2rgb(customPaletteHex.bg),
+      fg: hex2rgb(customPaletteHex.fg),
+    };
+  }
+  const p = PALETTES[currentPaletteName] || PALETTES.plato;
+  return { bg: hex2rgb(p.bg), fg: hex2rgb(p.fg) };
+}
+
+/**
+ * authored な bg/fg を _invert を考慮して live palette へ反映する。
+ * gpu.js flush() は palette.bg/fg をライブ参照するため、参照を保ったまま
+ * プロパティを破壊的に更新する。
+ */
+function _applyPalette() {
+  const a = _authoredRgb();
+  palette.bg = _invert ? a.fg : a.bg;
+  palette.fg = _invert ? a.bg : a.fg;
+}
+
+// 初期パレットを確定 (currentPaletteName=plato + 復元済み _invert)
+_applyPalette();
 
 /**
  * パレットを動的に切り替える。
  * @param {string} name  PALETTES に定義された名前、または "Custom"
  */
 export function setPalette(name) {
-  if (name === CUSTOM_PALETTE_NAME) {
-    currentPaletteName = name;
-    palette.bg = hex2rgb(customPaletteHex.bg);
-    palette.fg = hex2rgb(customPaletteHex.fg);
-    if (_onSave) _onSave("palette", name);
-    return;
-  }
-  const p = PALETTES[name];
-  if (!p) {
+  if (name !== CUSTOM_PALETTE_NAME && !PALETTES[name]) {
     console.warn(
       `Unknown palette: "${name}". Available: ${Object.keys(PALETTES).join(", ")}`,
     );
     return;
   }
   currentPaletteName = name;
-  palette.bg = hex2rgb(p.bg);
-  palette.fg = hex2rgb(p.fg);
+  _applyPalette();
   if (_onSave) _onSave("palette", name);
 }
 
@@ -717,9 +742,29 @@ export function getPaletteName() {
   return currentPaletteName;
 }
 
+/** 反転表示 (reverse video) が有効か */
+export function isInvert() {
+  return _invert;
+}
+
+/**
+ * 反転表示 (reverse video) を切り替える。
+ * palette の bg/fg を入れ替え、文字・アイコン・壁紙・ディザまで一括で
+ * 明暗反転する (すべて 1-bit の 2色マッピングを通るため自動で一貫する)。
+ * @param {boolean} v
+ */
+export function setInvert(v) {
+  v = !!v;
+  if (v === _invert) return;
+  _invert = v;
+  _applyPalette();
+  if (_onSave) _onSave("invert", _invert);
+}
+
 /**
  * カスタムパレットの色を RGB で設定する。
- * 現在 Custom が選択中なら即座に描画に反映される。
+ * 現在 Custom が選択中なら即座に描画に反映される (反転も考慮)。
+ * numberbox は常に authored 値を編集し、反転は表示時にのみ適用される。
  * @param {"bg"|"fg"} role
  * @param {number} r  0-255
  * @param {number} g  0-255
@@ -728,7 +773,7 @@ export function getPaletteName() {
 export function setCustomPaletteRgb(role, r, g, b) {
   customPaletteHex[role] = rgb2hex(r, g, b);
   if (currentPaletteName === CUSTOM_PALETTE_NAME) {
-    palette[role] = [r, g, b];
+    _applyPalette();
   }
   if (_onSave) _onSave("customPalette", customPaletteHex);
 }

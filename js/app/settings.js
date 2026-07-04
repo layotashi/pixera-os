@@ -68,6 +68,7 @@ let lblContentPad, nbContentPad;
 let lblInputOverlay, tglInputOverlay;
 let lblSystemSfx, tglSystemSfx;
 let lblPalette, lbPalette;
+let lblInvert, tglInvert;
 let labelBackground, numberBoxBgRed, numberBoxBgGreen, numberBoxBgBlue;
 let labelForeground, numberBoxFgRed, numberBoxFgGreen, numberBoxFgBlue;
 let lblBackground, ddBackground;
@@ -285,6 +286,17 @@ function _initWidgets() {
     if (p.note) parts.push(p.note);
     return parts.length > 0 ? parts.join("\n") : null;
   };
+
+  // ── Invert (reverse video): 選択中パレットの FG/BG を入れ替える ──
+  lblInvert = new Label(0, 0, "Invert:");
+  tglInvert = new ToggleButton(
+    0,
+    0,
+    "ON",
+    (v) => Config.setInvert(v),
+    Config.isInvert(),
+  );
+  tglInvert.tooltip = "Reverse video: swap FG/BG";
 
   // ── Custom palette: BG / FG numberboxes ──
   const customRgb = Config.getCustomPaletteRgb();
@@ -530,6 +542,7 @@ function _initWidgets() {
     lblInputOverlay,
     lblSystemSfx,
     lblPalette,
+    lblInvert,
     labelBackground,
     labelForeground,
     lblBackground,
@@ -630,6 +643,7 @@ function _initWidgets() {
     HBox([lblPalette, lbPalette]),
     bgRow,
     fgRow,
+    HBox([lblInvert, tglInvert]),
     sep2,
     HBox([lblBackground, ddBackground]),
     bayerRow,
@@ -715,6 +729,7 @@ function syncBgWidgets() {
     0,
     allPaletteKeys.indexOf(Config.getPaletteName()),
   );
+  tglInvert.value = Config.isInvert();
   const cRgb = Config.getCustomPaletteRgb();
   numberBoxBgRed.value = cRgb.bg[0];
   numberBoxBgGreen.value = cRgb.bg[1];
