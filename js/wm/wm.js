@@ -76,6 +76,18 @@ import {
   calcWindowSize,
   recalcLayoutConstants,
 } from "./win_layout.js";
+import {
+  menuOpen,
+  openMenu,
+  openContextMenu,
+  closeMenu,
+  drawMenu,
+  hitTestMenuPanels,
+  handleMenuInput,
+  handleMenuClick,
+  menuRecalcConstants,
+  menuSetDeps,
+} from "./menu.js";
 
 // フレーム構成定数・レイアウト算出は win_layout.js が SSoT。
 // 旧来 wm.js から re-export していた公開定数/関数は互換のため再輸出する。
@@ -145,16 +157,13 @@ function hasTextInputFocus() {
 
 /**
  * パディング / フォント変更時に派生定数を再計算する。
- * レイアウト系 (HEADER_HEIGHT / CONTENT_PADDING / FOOTER_HEIGHT /
- * MIN_HEIGHT 等) は win_layout.js の recalcLayoutConstants() に委譲し、
- * ここでは menu 系と ICON_SLOT のみ更新する。
+ * レイアウト系 (HEADER_HEIGHT 等) は win_layout.js、menu 系は menu.js に
+ * 委譲し、ここでは ICON_SLOT のみ更新する。
  */
 function recalcDerivedConstants() {
   recalcLayoutConstants();
-  MENU_ITEM_HEIGHT = GLYPH_H + 6;
+  menuRecalcConstants();
   ICON_SLOT = ICON_W + ICON_GAP;
-  MENU_CHECK_WIDTH = ICON_W + 3;
-  MENU_ARROW_WIDTH = ICON_W + 3;
 }
 
 /** 全ウィンドウのレイアウトを再計算する */
@@ -468,459 +477,18 @@ function toggleRegistered(entry) {
   }
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  メニュー (タスクバー≡ / デスクトップ右クリック共用)
-//  N 階層サブメニュー対応
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/** メニューが開いているか */
-let menuOpen = false;
-/** メニューの1項目の高さ */
-let MENU_ITEM_HEIGHT = GLYPH_H + 6;
-/** メニュー左右パディング */
-const MENU_PADDING = 6;
-/** チェックアイコン幅 (ICON_W + 3px gap) */
-let MENU_CHECK_WIDTH = ICON_W + 3;
-/** サブメニュー矢印アイコン用の右マージン (ICON_W + 3px gap) */
-let MENU_ARROW_WIDTH = ICON_W + 3;
-/** メニュー内セパレーター高さ (上余白 + 線 + 下余白) */
-const MENU_SEPARATOR_HEIGHT = 3;
+// ── メニュー基盤への依存注入 ──
+// registry / toggleRegistered / システム SFX を menu.js へ渡す。
+// SFX は _sfxCallbacks が boot 後に差し替わるため、都度 deref するラッパで渡す。
+menuSetDeps({
+  registry,
+  toggleRegistered,
+  onMenu: () => _sfxCallbacks?.onMenu?.(),
+  onMenuItem: () => _sfxCallbacks?.onMenuItem?.(),
+});
 
 /** モーダルウィンドウの ID (null = モーダルなし) */
 let _modalWinId = null;
-
-// ── メニューアイテム型 ──
-// { type: 'app',    entry }                   — アプリ (リーフ)
-// { type: 'sub',    label, children[] }       — サブメニュー (ブランチ)
-// { type: 'action', label, action: () => * }  — 任意アクション (コンテキストメニュー用)
-// { type: 'sep' }                             — セパレーター
-
-/** メニューアイテムの表示ラベルを返す (sep は呼び出し側で除外しておく)。 */
-function _menuItemLabel(item) {
-  if (item.type === "app") return item.entry.name;
-  return item.label;
-}
-
-/**
- * メニュースタック。各要素は1階層分のパネル情報。
- * @type {{ items: object[], x: number, y: number, w: number, h: number,
- *          hover: number, parentIdx: number }[]}
- */
-let menuStack = [];
-
-/**
- * レジストリからメニューツリーを構築する。
- * category 文字列を ">" で分割して N 階層に対応。
- *
- * 並び順: 非階層アプリ (アルファベット順) → セパレーター →
- *           サブメニュー (アルファベット順)。
- * dev フラグ付きアプリは DEV_MODE=false 時に除外。
- * hidden フラグ付きアプリはメニューに表示しない。
- */
-function buildMenuTree() {
-  const regular = [];
-  const modal = [];
-  for (const e of registry) {
-    // dev アプリを非表示
-    if (e.dev && !Config.DEV_MODE) continue;
-    // hidden アプリをメニューから除外
-    if (e.hidden) continue;
-    if (e.modal) modal.push(e);
-    else regular.push(e);
-  }
-
-  // ── ツリーノード (中間構造) ──
-  // subMap: カテゴリ名 → { label, childMap, entries[] }
-  function ensureNode(root, parts) {
-    let node = root;
-    for (const part of parts) {
-      if (!node.childMap) node.childMap = new Map();
-      if (!node.childMap.has(part)) {
-        node.childMap.set(part, {
-          label: part,
-          childMap: new Map(),
-          entries: [],
-        });
-      }
-      node = node.childMap.get(part);
-    }
-    return node;
-  }
-
-  const root = { childMap: new Map(), entries: [] };
-
-  for (const e of regular) {
-    if (e.category) {
-      const parts = e.category.split(">");
-      const node = ensureNode(root, parts);
-      node.entries.push(e);
-    } else {
-      root.entries.push(e);
-    }
-  }
-
-  // ── ノードをメニューアイテム配列に変換 (再帰) ──
-  function nodeToItems(node) {
-    const items = [];
-
-    // サブメニュー (アルファベット順)
-    if (node.childMap && node.childMap.size > 0) {
-      const subs = [...node.childMap.entries()].sort((a, b) =>
-        a[0].localeCompare(b[0]),
-      );
-      for (const [, child] of subs) {
-        items.push({
-          type: "sub",
-          label: child.label,
-          children: nodeToItems(child),
-        });
-      }
-    }
-
-    // リーフエントリ (アルファベット順)
-    const sorted = [...node.entries].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    for (const e of sorted) {
-      items.push({ type: "app", entry: e });
-    }
-
-    // トップレベルでのみ: サブメニューとアプリをアルファベット混在ソート
-    // (深い階層はすでに分類済みなのでそのまま)
-    return items;
-  }
-
-  /**
-   * サブツリー内の全エントリが dev フラグ付きかを判定する。
-   * dev カテゴリはメニュー末尾に配置するために使用。
-   */
-  function _isAllDev(node) {
-    for (const e of node.entries) {
-      if (!e.dev) return false;
-    }
-    if (node.childMap) {
-      for (const [, child] of node.childMap) {
-        if (!_isAllDev(child)) return false;
-      }
-    }
-    return node.entries.length > 0 || (node.childMap && node.childMap.size > 0);
-  }
-
-  // トップレベル: 非階層アプリ → セパレーター → プロダクションサブメニュー
-  //              → セパレーター → dev サブメニュー → セパレーター → モーダル
-  let topItems = [];
-
-  // 1) 非階層アプリ (アルファベット順)
-  const sortedTop = [...root.entries].sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
-  for (const e of sortedTop) {
-    topItems.push({ type: "app", entry: e });
-  }
-
-  // 2) サブメニュー: プロダクション → dev の順 (各グループ内はアルファベット順)
-  if (root.childMap && root.childMap.size > 0) {
-    const prodSubs = [];
-    const devSubs = [];
-    const subs = [...root.childMap.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    );
-    for (const [, child] of subs) {
-      const item = {
-        type: "sub",
-        label: child.label,
-        children: nodeToItems(child),
-      };
-      if (_isAllDev(child)) {
-        devSubs.push(item);
-      } else {
-        prodSubs.push(item);
-      }
-    }
-    if (prodSubs.length > 0) {
-      if (topItems.length > 0) topItems.push({ type: "sep" });
-      topItems.push(...prodSubs);
-    }
-    if (devSubs.length > 0) {
-      if (topItems.length > 0) topItems.push({ type: "sep" });
-      topItems.push(...devSubs);
-    }
-  }
-
-  // モーダルをセパレーター付きで末尾に追加
-  if (topItems.length > 0 && modal.length > 0) {
-    topItems.push({ type: "sep" });
-  }
-  const sortedModal = [...modal].sort((a, b) => a.name.localeCompare(b.name));
-  for (const e of sortedModal) {
-    topItems.push({ type: "app", entry: e });
-  }
-
-  return topItems;
-}
-
-/**
- * アイテム配列からパネルの幅と高さを計算する。
- */
-function calcPanelSize(items) {
-  let maxLabelLen = 0;
-  let hasSubmenu = false;
-  let h = 4; // 上下マージン 2px ずつ
-  for (const item of items) {
-    if (item.type === "sep") {
-      h += MENU_SEPARATOR_HEIGHT;
-    } else {
-      const label = _menuItemLabel(item);
-      if (label.length > maxLabelLen) maxLabelLen = label.length;
-      if (item.type === "sub") hasSubmenu = true;
-      h += MENU_ITEM_HEIGHT;
-    }
-  }
-  const textW = maxLabelLen * (GLYPH_W + 1) - 1;
-  const arrowW = hasSubmenu ? MENU_ARROW_WIDTH : 0;
-  const w = MENU_PADDING + MENU_CHECK_WIDTH + textW + arrowW + MENU_PADDING;
-  return { w, h };
-}
-
-/**
- * アイテムリスト中の Y オフセットからアイテムインデックスを返す。
- * セパレーター上: -1。範囲外: -1。
- */
-function itemIndexFromLocalY(items, ly) {
-  let y = 2; // 上マージン
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (item.type === "sep") {
-      y += MENU_SEPARATOR_HEIGHT;
-    } else {
-      if (ly >= y && ly < y + MENU_ITEM_HEIGHT) return i;
-      y += MENU_ITEM_HEIGHT;
-    }
-  }
-  return -1;
-}
-
-/**
- * アイテムインデックスからパネルローカル Y 座標 (アイテム先頭) を返す。
- */
-function itemTopY(items, idx) {
-  let y = 2;
-  for (let i = 0; i < idx; i++) {
-    y += items[i].type === "sep" ? MENU_SEPARATOR_HEIGHT : MENU_ITEM_HEIGHT;
-  }
-  return y;
-}
-
-function openMenu(x, y) {
-  openContextMenu(buildMenuTree(), x, y);
-}
-
-/**
- * 任意のアイテム配列でコンテキストメニューを開く。
- * デスクトップ launcher (openMenu)、ウィンドウヘッダー右クリック、将来の
- * アイコン右クリック等で共通利用する基盤 API。
- */
-function openContextMenu(items, x, y) {
-  const { w, h } = calcPanelSize(items);
-  // 画面内に収まるよう補正
-  const px = Math.max(0, Math.min(x, Config.VRAM_WIDTH - w));
-  const py = Math.max(0, Math.min(y, Config.VRAM_HEIGHT - h));
-  menuStack = [{ items, x: px, y: py, w, h, hover: -1, parentIdx: -1 }];
-  menuOpen = true;
-  if (_sfxCallbacks?.onMenu) _sfxCallbacks.onMenu();
-}
-
-function closeMenu() {
-  menuOpen = false;
-  menuStack = [];
-}
-
-/**
- * 指定レベル以降のサブメニューを閉じる。
- * @param {number} keepDepth  この depth まで残す (0 = ルートのみ)
- */
-function closeSubmenusFrom(keepDepth) {
-  if (menuStack.length > keepDepth + 1) {
-    menuStack.length = keepDepth + 1;
-  }
-}
-
-/**
- * サブメニューを開く。
- * @param {number} depth       親パネルの depth
- * @param {number} parentIdx   親パネルでのアイテムインデックス
- * @param {object[]} children  サブメニューのアイテム配列
- */
-function openSubmenu(depth, parentIdx, children) {
-  // 既に同じサブメニューが開いているなら何もしない
-  if (
-    menuStack.length > depth + 1 &&
-    menuStack[depth + 1].parentIdx === parentIdx
-  ) {
-    return;
-  }
-  // depth+1 以降を閉じてから開く
-  closeSubmenusFrom(depth);
-
-  const parent = menuStack[depth];
-  const { w, h } = calcPanelSize(children);
-  const iy = parent.y + itemTopY(parent.items, parentIdx);
-
-  // X: 親の右端 + 2px 余白。画面外なら左側に出す
-  let sx = parent.x + parent.w + 1;
-  if (sx + w > Config.VRAM_WIDTH) sx = parent.x - w - 1;
-  // Y: 子パネル内の最初のアイテムが親アイテムと同じ Y になるよう
-  //    パネル上マージン (2px) 分だけ上にずらす
-  let sy = iy - 2;
-  if (sy + h > Config.VRAM_HEIGHT) sy = Math.max(0, Config.VRAM_HEIGHT - h);
-  if (sy < 0) sy = 0;
-
-  menuStack.push({ items: children, x: sx, y: sy, w, h, hover: -1, parentIdx });
-}
-
-// ── 描画 ──
-
-function drawMenuPanel(panel) {
-  const { items, x, y, w, h, hover } = panel;
-  GPU.fillRoundRect(x, y, w, h, 1, 0);
-  GPU.drawRoundRect(x, y, w, h, 1, 1);
-
-  let iy = y + 2;
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (item.type === "sep") {
-      const sepY = iy + (MENU_SEPARATOR_HEIGHT >> 1);
-      GPU.hline(x + 2, x + w - 3, sepY, 1);
-      iy += MENU_SEPARATOR_HEIGHT;
-      continue;
-    }
-
-    const label = _menuItemLabel(item);
-    const isHover = i === hover;
-    const tx = x + MENU_PADDING + MENU_CHECK_WIDTH;
-    const iconY = iy + ((MENU_ITEM_HEIGHT - ICON_H) >> 1);
-
-    if (isHover) {
-      GPU.fillRect(x + 2, iy, w - 4, MENU_ITEM_HEIGHT, 1);
-      // チェックマーク (開いているアプリ)
-      if (
-        item.type === "app" &&
-        !item.entry.modal &&
-        item.entry.winId !== null
-      ) {
-        drawIcon("check", x + MENU_PADDING, iconY, 0);
-      }
-      drawText(tx, iy + 3, label, 0);
-      // サブメニュー矢印
-      if (item.type === "sub") {
-        drawIcon("arrow-right", x + w - MENU_PADDING - ICON_W, iconY, 0);
-      }
-    } else {
-      if (
-        item.type === "app" &&
-        !item.entry.modal &&
-        item.entry.winId !== null
-      ) {
-        drawIcon("check", x + MENU_PADDING, iconY, 1);
-      }
-      drawText(tx, iy + 3, label, 1);
-      if (item.type === "sub") {
-        drawIcon("arrow-right", x + w - MENU_PADDING - ICON_W, iconY, 1);
-      }
-    }
-
-    iy += MENU_ITEM_HEIGHT;
-  }
-}
-
-function drawMenu() {
-  if (!menuOpen) return;
-  for (const panel of menuStack) {
-    drawMenuPanel(panel);
-  }
-}
-
-// ── 入力 ──
-
-/**
- * マウス座標がどのパネル上にあるかを返す (-1 = どれでもない)。
- * 最前面 (最深階層) を優先する。
- */
-function hitTestMenuPanels(mx, my) {
-  for (let d = menuStack.length - 1; d >= 0; d--) {
-    const p = menuStack[d];
-    if (mx >= p.x && mx < p.x + p.w && my >= p.y && my < p.y + p.h) return d;
-  }
-  return -1;
-}
-
-function handleMenuInput(mx, my) {
-  if (!menuOpen) return;
-
-  const hitDepth = hitTestMenuPanels(mx, my);
-
-  if (hitDepth < 0) {
-    // どのパネルにもいない → 全ホバー解除 (サブメニューは閉じない)
-    for (const p of menuStack) p.hover = -1;
-    return;
-  }
-
-  const panel = menuStack[hitDepth];
-  const localY = my - panel.y;
-  const idx = itemIndexFromLocalY(panel.items, localY);
-  panel.hover = idx;
-
-  // このパネルより深いサブメニューの処理
-  if (hitDepth < menuStack.length - 1) {
-    // 深い階層の親アイテム上に戻ってきた場合は何もしない
-    // 別のアイテムにホバーした場合はサブメニューを閉じる
-    const childPanel = menuStack[hitDepth + 1];
-    if (idx !== childPanel.parentIdx) {
-      closeSubmenusFrom(hitDepth);
-      // 新しいサブメニューを開く
-      if (idx >= 0 && panel.items[idx].type === "sub") {
-        openSubmenu(hitDepth, idx, panel.items[idx].children);
-      }
-    }
-  } else {
-    // 最深パネル上 → サブメニュー項目をホバーしたら開く
-    if (idx >= 0 && panel.items[idx].type === "sub") {
-      openSubmenu(hitDepth, idx, panel.items[idx].children);
-    }
-  }
-}
-
-function handleMenuClick(mx, my) {
-  if (!menuOpen) return;
-
-  const hitDepth = hitTestMenuPanels(mx, my);
-  if (hitDepth < 0) {
-    // メニュー外クリック
-    closeMenu();
-    return;
-  }
-
-  const panel = menuStack[hitDepth];
-  const localY = my - panel.y;
-  const idx = itemIndexFromLocalY(panel.items, localY);
-  if (idx < 0) {
-    closeMenu();
-    return;
-  }
-
-  const item = panel.items[idx];
-  if (item.type === "app") {
-    if (_sfxCallbacks?.onMenuItem) _sfxCallbacks.onMenuItem();
-    toggleRegistered(item.entry);
-    closeMenu();
-  } else if (item.type === "action") {
-    if (_sfxCallbacks?.onMenuItem) _sfxCallbacks.onMenuItem();
-    // action は別ウィンドウを開く可能性があるので、メニューを先に閉じてから実行
-    closeMenu();
-    item.action();
-  }
-  // sub / sep をクリックしても何もしない (サブメニューは hover で開く)
-}
 
 /** 操作対象のウィンドウインデックス (-1 = なし) */
 let activeIndex = -1;
