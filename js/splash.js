@@ -115,19 +115,21 @@ function gridAlignedX(cols) {
 }
 
 /**
- * Bayer 4×4 ディザトランジション。
- * 進行度 t (0.0 〜 1.0) に基づき、vram 上のピクセルを newColor で上書きする。
- * @param {number} t        進行度 (0 = 変化なし, 1 = 全置換)
- * @param {number} newColor  0 or 1
+ * Bayer 4×4 ディザで vram を進行度 t に応じて徐々に置換する共通ループ。
+ * 置換後の値は getPixel(i) で決める (単色は () => color、スナップショットは
+ * (i) => snapshot[i])。
+ * @param {number} t  進行度 (0 = 変化なし, 1 = 全置換)
+ * @param {(i:number)=>number} getPixel  VRAM インデックス i の置換後の値 (0|1)
  */
-function ditherWipe(t, newColor) {
+function ditherReveal(t, getPixel) {
   const threshold = t * 17;
   const w = Config.VRAM_WIDTH;
   const h = Config.VRAM_HEIGHT;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
+      const i = y * w + x;
       if (BAYER_4x4[y & 3][x & 3] < threshold) {
-        vram[y * w + x] = newColor;
+        vram[i] = getPixel(i);
       }
     }
   }
@@ -240,7 +242,7 @@ export async function runSplash() {
 
   for (let step = 0; step <= TRANSITION_STEPS; step++) {
     vram.set(splashSnapshot);
-    ditherWipe(step / TRANSITION_STEPS, 0);
+    ditherReveal(step / TRANSITION_STEPS, () => 0);
     await splashWait(stepMs);
   }
 
@@ -264,14 +266,7 @@ export async function fadeInDesktop(desktopVram) {
 
   for (let step = 0; step <= TRANSITION_STEPS; step++) {
     cls();
-    const threshold = (step / TRANSITION_STEPS) * 17;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (BAYER_4x4[y & 3][x & 3] < threshold) {
-          vram[y * w + x] = desktopVram[y * w + x];
-        }
-      }
-    }
+    ditherReveal(step / TRANSITION_STEPS, (i) => desktopVram[i]);
     await splashWait(stepMs);
   }
 
