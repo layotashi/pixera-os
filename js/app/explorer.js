@@ -34,8 +34,9 @@ import { paintOpenFile } from "./paint.js";
 
 const APP_NAME = "EXPLORER";
 
-// ── VFS 初期化 ──
-VFS.initVfs();
+// VFS の初期化は kernel.js の boot() が一括で行う。ここで副作用 import 的に
+// 呼ぶと初期化順序が import 順に依存するため呼ばない (規約: 副作用 import は
+// wmRegister 登録のみ)。
 
 // ── 定数 ──
 const TREE_W = 236; // ツリー幅 (px)

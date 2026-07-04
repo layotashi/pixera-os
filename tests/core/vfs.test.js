@@ -13,6 +13,7 @@ vi.mock("@/core/storage.js", () => ({
 
 import {
   initVfs,
+  _resetVfs,
   parentPath,
   basename,
   joinPath,
@@ -37,7 +38,8 @@ import {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 beforeEach(() => {
-  initVfs(); // 毎テストでクリーンなデフォルトツリーに初期化
+  _resetVfs(); // 二重初期化ガードを解除し、毎テストでクリーンな
+  initVfs(); // デフォルトツリーに初期化
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

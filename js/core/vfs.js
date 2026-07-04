@@ -126,11 +126,19 @@ let root = null;
 
 /**
  * VFS を初期化する。保存済みツリーがあれば復元、なければデフォルトを生成。
+ * 二重呼び出しは no-op (初期化順序を import 順に依存させないためのガード。
+ * 実際の初期化は kernel.js の boot() で 1 回だけ行う)。
  */
 export function initVfs() {
+  if (root) return;
   const stored = load(VFS_KEY, null);
   root = stored || createDefaultTree();
   if (!stored) persist();
+}
+
+/** @internal テスト用: ツリーを未初期化状態へ戻す (次の initVfs で再構築) */
+export function _resetVfs() {
+  root = null;
 }
 
 /** ツリーを localStorage に永続化する */
