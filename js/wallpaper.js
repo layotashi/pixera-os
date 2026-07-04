@@ -15,7 +15,7 @@ import { vram } from "./core/gpu.js";
 import { BAYER_4x4, BAYER_8x8 } from "./core/dither.js";
 import { readFile } from "./core/vfs.js";
 import { decodePBM } from "./core/pbm.js";
-import { renderField } from "./core/field_render.js";
+import { resolveTessConfig, makeFieldSurface } from "./core/tess_host.js";
 import { compile } from "../lang/runtime.js";
 
 import * as Storage from "./core/storage.js";
@@ -135,38 +135,9 @@ function loadImageFromVfs(path) {
 //  Tessera 場 live-render (VFS の .tess を背景に)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const TESS_FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
-const TESS_TAU = Math.PI * 2;
-// view: 方式 → field_render パラメータ名（dither/braille は ditherSize を使う）。
-const TESS_VIEW_PARAM = {
-  dither: "ditherSize",
-  braille: "ditherSize",
-  hatch: "hatchPitch",
-  halftone: "halftoneCell",
-};
-const TESS_MODE_PARAMS = { ditherSize: 2, hatchPitch: 4, halftoneCell: 6 };
-
-/** compile 済み config（不透明データ）を壁紙用の実効設定へ解決する。 */
-function resolveTessConfig(cfg) {
-  const seed = (cfg.seed != null ? cfg.seed : 0) | 0;
-  const period = cfg.period != null && cfg.period > 0 ? cfg.period : TESS_TAU;
-  let fps = cfg.fps != null ? cfg.fps : 20;
-  fps = TESS_FPS_OPTIONS.reduce((a, b) =>
-    Math.abs(b - fps) < Math.abs(a - fps) ? b : a,
-  );
-  const aspect = cfg.canvas && cfg.canvas.h ? cfg.canvas.w / cfg.canvas.h : 1;
-  // dither/hatch/halftone/braille は field_render。ascii 等は dither へフォールバック。
-  let viewMode = "dither";
-  let viewParams = TESS_MODE_PARAMS;
-  if (cfg.view && TESS_VIEW_PARAM[cfg.view.mode]) {
-    viewMode = cfg.view.mode;
-    viewParams = { ...TESS_MODE_PARAMS };
-    if (cfg.view.args && cfg.view.args.length) {
-      viewParams[TESS_VIEW_PARAM[viewMode]] = cfg.view.args[0];
-    }
-  }
-  return { seed, period, fps, aspect, viewMode, viewParams };
-}
+// ディレクティブ解決 (fps スナップ・view→パラメータ・既定値/クランプ) と
+// 場サーフェス生成は core/tess_host.js に一元化 (tessera プレビュー/書き出しと共有)。
+// 壁紙は結果から seed/period/fps/aspect/view のみ使う。
 
 /**
  * 場を時刻 t で 1 フレーム描く。canvas アスペクトを VRAM 内に最大内接（中央）させ、
@@ -183,14 +154,9 @@ function renderTessFrame(t) {
     rh = VRAM_HEIGHT;
     rw = Math.max(1, Math.round(rh * aspect));
   }
-  const region = new Uint8Array(rw * rh);
-  const surf = {
-    width: () => rw,
-    height: () => rh,
-    blitField: (fbuf, w, h) => renderField(fbuf, w, h, region, viewMode, viewParams),
-    present: () => {},
-  };
+  const surf = makeFieldSurface(rw, rh, viewMode, viewParams);
   tessProgram.render(surf, t, seed);
+  const region = surf.buf;
 
   const bits = new Uint8Array(VRAM_WIDTH * VRAM_HEIGHT);
   bits.fill(imageFillBit);

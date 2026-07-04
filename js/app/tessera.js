@@ -63,6 +63,13 @@ import { altShiftDown, altDown, ctrlDown, ctrlShiftDown, keyDown } from "../core
 import * as FieldRender from "../core/field_render.js";
 import * as AsciiArt from "../core/ascii_art.js";
 import * as ArtExport from "../core/art_export.js";
+import {
+  MODE_PARAMS,
+  VIEW_PARAM,
+  PERIOD_CAP_S,
+  resolveTessConfig,
+  makeFieldSurface,
+} from "../core/tess_host.js";
 import { initAudio, getAudioContext, getMasterGain, dcBlock } from "../core/audio.js";
 import { encodeWav } from "../core/wav.js";
 import { compile } from "../../lang/runtime.js";
@@ -742,65 +749,36 @@ function asciiRamp() {
   return _asciiRamp;
 }
 let asciiActive = false; // onDraw で確定（ascii モードか）
-// 方式パラメータの既定（view: で個別指定が無いとき）。
-const MODE_PARAMS = {
-  ditherSize: 2,
-  hatchPitch: 4,
-  halftoneCell: 6,
-};
+// 方式パラメータの既定 (MODE_PARAMS) と view→パラメータ表 (VIEW_PARAM) は
+// tess_host.js に集約 (壁紙と共有)。
 const DEFAULT_MODE = "dither";
 // 実効モード/パラメータ（onDraw で config.view 優先で確定し、blitField が参照）。
 let activeMode = DEFAULT_MODE;
 let activeParams = MODE_PARAMS;
 
-/** view: 引数（数値）を field_render パラメータへ写す。各モードは args[0] を使う。 */
-const VIEW_PARAM = {
-  dither: "ditherSize",
-  braille: "ditherSize",
-  hatch: "hatchPitch",
-  halftone: "halftoneCell",
-};
-
 // ── 出力サイズモデル（すべてコードの設定ディレクティブから。ウィジェットは廃止）──
-// 出力 = base ×PIXEL。base = 出力 ÷ PIXEL の解像度で描き、整数 ×PIXEL で書き出す。
-// PIXEL は **8 固定**＝1 アートドット = 8 出力px のチャンキー 1bit が Tessera の核。
-// pixel ディレクティブは廃止（理念＝低解像度の徹底・性能の予測可能性）。canvas が
-// 実質「ドット数（base = canvas/8）」を決める。額縁 pad は出力px。fps のみスナップ。
-const PIXEL = 8; // 固定。1 アートドット = 8 出力px（チャンキーさ＝Tessera の identity）
+// 出力 = base ×PIXEL（PIXEL=8 固定, tess_host.js）。base = 出力 ÷ PIXEL の解像度で
+// 描き、整数 ×PIXEL で書き出す。canvas が実質「ドット数（base = canvas/8）」を決める。
+// 額縁 pad は出力px。fps スナップ表 / period 既定(TAU) / 上限(PERIOD_CAP_S) も
+// すべて tess_host.js に集約（プレビュー・書き出し・壁紙で同一の実効設定）。
 // PERFORM は「画面を埋めるライブビュー」なので EXPORT の PIXEL とは別軸。低解像度な画面で
 // 8px/ドットだとドット数が少なく粗すぎるため、4px/ドットで細かく描く（既定キャンバス 1080→
 // 135 ドットに近い密度になる）。24px の行ピッチ（=6 チャンク）とも整数整合するので美しい。
 const PERFORM_CHUNK = 4;
-// fps は全て 100 の約数。GIF の遅延はセンチ秒(1/100s)整数なので、約数でないと
-// round(100/fps) の丸めで再生速度がズレ・ループ長も狂う（MP4 は μ秒で約数不問だが統一）。
-const FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
-const TAU = Math.PI * 2; // period 既定（t を sin/cos に通す作例の 1 周期）
-const PERIOD_CAP_S = 30; // 動画 1 本の上限秒（period をこの長さでクランプ）
 // 音の出力ゲイン。sound: の a(t) は ±1 フルスケールなので、そのまま出すと過大＝AAC で
 // 歪む/クリップする。再生（playAudio の GainNode）と書き出し（exportAudioPcm）で同じ値を
 // 掛けて音量を一致させる＝WYSIWYG（SSoT。ここだけを変えれば両方に効く）。
 const AUDIO_GAIN = 0.3;
-const DEFAULTS = { sizeW: 1080, sizeH: 1080, pad: 80, fps: 20, seed: 0, period: TAU };
-
 const clampI = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
-const clampF = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const nearest = (v, arr) => arr.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
 
-/** program.config（生の宣言値）を既定値・範囲とともに解決した実効設定にする。 */
+/**
+ * program.config（生の宣言値）を実効設定へ解決する。
+ * 既定値・クランプ・fps スナップ・view 解決の規則は tess_host.js が SSoT。
+ * 返り値は { sizeW, sizeH, pixel, pad, fps, seed, period, aspect,
+ * viewMode, viewParams }（tessera は前 7 つ、壁紙は seed/period/fps/aspect/view を使う）。
+ */
 function resolvedConfig(prog = program) {
-  const c = (prog && prog.config) || {};
-  const canvas = c.canvas || {};
-  const sizeW = clampI(canvas.w ?? DEFAULTS.sizeW, 16, 4096);
-  const sizeH = clampI(canvas.h ?? DEFAULTS.sizeH, 16, 4096);
-  const pixel = PIXEL; // 8 固定（pixel ディレクティブは無し）
-  const fps = nearest(c.fps ?? DEFAULTS.fps, FPS_OPTIONS);
-  const seed = clampI(c.seed ?? DEFAULTS.seed, 0, 999999);
-  // pad（出力px）は base 上で各辺がアート(≥4px)を潰さない範囲にクランプ。
-  const padMax = Math.max(0, Math.floor((Math.min(sizeW, sizeH) / pixel - 4) / 2) * pixel);
-  const pad = clampI(c.pad ?? DEFAULTS.pad, 0, padMax);
-  // period（秒）= プレビュー周期かつ動画長。既定 tau、上限 PERIOD_CAP_S。
-  const period = clampF(c.period ?? DEFAULTS.period, 0.1, PERIOD_CAP_S);
-  return { sizeW, sizeH, pixel, pad, fps, seed, period };
+  return resolveTessConfig((prog && prog.config) || {});
 }
 
 /** 出力寸法を実効設定から導出（base / art / pad[base上] / pixel / fps）。 */
@@ -1578,23 +1556,22 @@ function renderPreview(t, seed, mode, params, ascii) {
 
 /** 任意サイズの 1-bit バッファへ「場 → 1-bit」を描くオフスクリーン surface。 */
 function makeExportSurface(w, h, asciiOn, mode, params) {
+  // field_render 方式は tess_host の共通サーフェスを使う（壁紙と同一経路）。
+  if (!asciiOn) return makeFieldSurface(w, h, mode, params);
+  // ASCII は文字グリッド解像度で場を評価し、グリフを 1-bit へラスタライズする
+  // (font 依存の tessera 固有処理なので共通化しない)。
   const surf = makeBufferSurface(w, h);
-  if (asciiOn) {
-    const cols = Math.max(1, Math.floor(w / AsciiArt.CELL_W));
-    const rows = Math.max(1, Math.floor(h / AsciiArt.CELL_H));
-    surf.width = () => cols; // 場は文字グリッド解像度で評価（1 文字 = 1 セル）
-    surf.height = () => rows;
-    surf.blitField = (field, fw, fh) =>
-      rasterizeAsciiLinesToBuf(
-        AsciiArt.renderAsciiLines(field, fw, fh, asciiRamp()),
-        surf.buf,
-        w,
-        h,
-      );
-  } else {
-    surf.blitField = (field, fw, fh) =>
-      FieldRender.renderField(field, fw, fh, surf.buf, mode, params);
-  }
+  const cols = Math.max(1, Math.floor(w / AsciiArt.CELL_W));
+  const rows = Math.max(1, Math.floor(h / AsciiArt.CELL_H));
+  surf.width = () => cols; // 場は文字グリッド解像度で評価（1 文字 = 1 セル）
+  surf.height = () => rows;
+  surf.blitField = (field, fw, fh) =>
+    rasterizeAsciiLinesToBuf(
+      AsciiArt.renderAsciiLines(field, fw, fh, asciiRamp()),
+      surf.buf,
+      w,
+      h,
+    );
   return surf;
 }
 
