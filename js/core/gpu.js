@@ -10,7 +10,7 @@
  *   図形 (輪郭)  : drawXxx         drawRect, drawCircle, drawLine
  *   図形 (塗り)  : fillXxx         fillRect, fillCircle
  *   パターン     : 説明的名称      drawCheckerboard, bayerGradRect
- *   VRAM操作     : 説明的名称      invertRect, copyRect, setClip, resetClip, scroll
+ *   VRAM操作     : 説明的名称      invertRect, setClip, resetClip
  */
 
 import * as Config from "../config.js";
@@ -619,57 +619,8 @@ export function invertRect(x, y, w, h) {
   }
 }
 
-/**
- * VRAM内の矩形領域を別の座標へコピーする。
- * 一時バッファ経由でコピーするため、重なりがあっても正しく動作する。
- */
-export function copyRect(sx, sy, dx, dy, w, h) {
-  // 一時バッファにコピーしてから書き戻す
-  const tmp = new Uint8Array(w * h);
-  for (let row = 0; row < h; row++) {
-    for (let col = 0; col < w; col++) {
-      const rx = sx + col;
-      const ry = sy + row;
-      if (rx >= 0 && rx < activeW && ry >= 0 && ry < activeH) {
-        tmp[row * w + col] = activeBuffer[ry * activeW + rx];
-      }
-    }
-  }
-  for (let row = 0; row < h; row++) {
-    for (let col = 0; col < w; col++) {
-      pset(dx + col, dy + row, tmp[row * w + col]);
-    }
-  }
-}
-
-/**
- * 矩形領域内のピクセルを (dx, dy) だけスクロールする。
- * はみ出した部分は消え、空いた領域は 0 (背景) で埋まる。
- */
-export function scroll(x, y, w, h, dx, dy) {
-  // 現在の内容を一時バッファに退避
-  const tmp = new Uint8Array(w * h);
-  for (let row = 0; row < h; row++) {
-    for (let col = 0; col < w; col++) {
-      const rx = x + col;
-      const ry = y + row;
-      if (rx >= 0 && rx < activeW && ry >= 0 && ry < activeH) {
-        tmp[row * w + col] = activeBuffer[ry * activeW + rx];
-      }
-    }
-  }
-  // クリアしてからシフト位置に書き戻す
-  fillRect(x, y, w, h, 0);
-  for (let row = 0; row < h; row++) {
-    for (let col = 0; col < w; col++) {
-      const destCol = col + dx;
-      const destRow = row + dy;
-      if (destCol >= 0 && destCol < w && destRow >= 0 && destRow < h) {
-        pset(x + destCol, y + destRow, tmp[row * w + col]);
-      }
-    }
-  }
-}
+// copyRect / scroll は参照ゼロのため削除 (使われていない描画プリミティブを
+// 予約として持たない方針)。必要になれば git 履歴から復元する。
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ビットマップ転写
@@ -752,6 +703,14 @@ export function beginCapture(w, h) {
   clipY1 = h;
 }
 
+/** レンダーターゲットを通常の vram に戻す (各 endCapture* 共通)。 */
+function _restoreRenderTarget() {
+  activeBuffer = vram;
+  activeW = Config.VRAM_WIDTH;
+  activeH = Config.VRAM_HEIGHT;
+  resetClip();
+}
+
 /**
  * キャプチャを終了し、結果をキャンバスとして返す。
  * VRAM を 1:1 で RGBA 化 + Diagonal + Vignette を適用した出力。
@@ -781,11 +740,7 @@ export function endCapture(scale = 1) {
   const ctx1 = c1.getContext("2d");
   ctx1.putImageData(img, 0, 0);
 
-  // 復元
-  activeBuffer = vram;
-  activeW = Config.VRAM_WIDTH;
-  activeH = Config.VRAM_HEIGHT;
-  resetClip();
+  _restoreRenderTarget();
 
   // 追加スケーリング (整数倍ニアレストネイバー)
   if (scale <= 1) return c1;
@@ -807,11 +762,7 @@ export function endCaptureRaw() {
   const buf = new Uint8Array(activeW * activeH);
   buf.set(activeBuffer);
 
-  // 復元
-  activeBuffer = vram;
-  activeW = Config.VRAM_WIDTH;
-  activeH = Config.VRAM_HEIGHT;
-  resetClip();
+  _restoreRenderTarget();
 
   return buf;
 }
@@ -828,11 +779,7 @@ export function endCaptureIndexed() {
 
   const result = applyVramIndexed(buf, w, h, getDiagOffset());
 
-  // 復元
-  activeBuffer = vram;
-  activeW = Config.VRAM_WIDTH;
-  activeH = Config.VRAM_HEIGHT;
-  resetClip();
+  _restoreRenderTarget();
 
   return result;
 }
