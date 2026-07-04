@@ -513,22 +513,23 @@ describe("desktopDraw", () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  gridRowSpan — 常に 1
+//  1 アイコン = 1 セル
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-describe("gridRowSpan — 常に 1", () => {
-  it("すべてのアイコンは gridRowSpan=1", () => {
+describe("1 アイコン = 1 セル", () => {
+  it("各アイコンは 1 セルを占め、次のアイコンは隣接セルに置かれる", () => {
     desktopSetIcons(makeEntries(3));
-    for (const entry of _testing.iconEntries) {
-      expect(entry.gridRowSpan).toBe(1);
-    }
+    const e = _testing.iconEntries;
+    // 列優先配置: 2 番目は 1 番目の同列・次行
+    expect(e[1].gridCol).toBe(e[0].gridCol);
+    expect(e[1].gridRow).toBe(e[0].gridRow + 1);
   });
 
-  it("ラベルに改行文字が含まれていても gridRowSpan=1", () => {
-    desktopSetIcons([
-      { name: "test", label: "DOLPHIN", icon: "test" },
-    ]);
-    expect(_testing.iconEntries[0].gridRowSpan).toBe(1);
+  it("ラベル長に関わらず単一セル (gridRowSpan は廃止)", () => {
+    desktopSetIcons([{ name: "test", label: "VERYLONGLABEL", icon: "test" }]);
+    const e = _testing.iconEntries[0];
+    expect(e.gridRowSpan).toBeUndefined();
+    expect(typeof e.gridRow).toBe("number");
   });
 });
 

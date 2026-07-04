@@ -98,9 +98,8 @@ let _desktopFocused = true;
 /**
  * デスクトップに表示するアイコンエントリ。
  * wmRegister されたアプリから自動生成される。
- * gridCol / gridRow はグリッド上の配置座標。
- * gridRowSpan は常に 1 (ラベルは単一行のみ)。
- * @type {{ name: string, label: string, icon: string, tooltip?: string, gridCol: number, gridRow: number, gridRowSpan: number }[]}
+ * gridCol / gridRow はグリッド上の配置座標 (1 アイコン = 1 セル)。
+ * @type {{ name: string, label: string, icon: string, tooltip?: string, gridCol: number, gridRow: number }[]}
  */
 let iconEntries = [];
 
@@ -177,36 +176,19 @@ export function desktopSetIcons(entries) {
   let curRow = 0;
 
   for (const e of entries) {
-    const span = calcRowSpan(e.label);
-    // 現在のカーソル位置に span 分のスペースがあるか探索
-    while (curCol < cols) {
-      if (curRow + span > rows) {
-        curCol++;
-        curRow = 0;
-        continue;
-      }
-      let fits = true;
-      for (let r = 0; r < span; r++) {
-        if (occupied.has(ck(curCol, curRow + r))) {
-          fits = false;
-          break;
-        }
-      }
-      if (fits) break;
+    // 次の空きセルを列優先 (上→下) で探す
+    while (curCol < cols && occupied.has(ck(curCol, curRow))) {
       curRow++;
+      if (curRow >= rows) {
+        curRow = 0;
+        curCol++;
+      }
     }
     if (curCol >= cols) break; // グリッドが満杯
 
-    iconEntries.push({
-      ...e,
-      gridCol: curCol,
-      gridRow: curRow,
-      gridRowSpan: span,
-    });
-    for (let r = 0; r < span; r++) {
-      occupied.add(ck(curCol, curRow + r));
-    }
-    curRow += span;
+    iconEntries.push({ ...e, gridCol: curCol, gridRow: curRow });
+    occupied.add(ck(curCol, curRow));
+    curRow++;
     if (curRow >= rows) {
       curRow = 0;
       curCol++;
@@ -448,10 +430,9 @@ export function desktopDraw() {
     const raw = pixelToCell(ghostX + (CELL_W >> 1), ghostY + (CELL_H >> 1));
     const anchor = clampAnchor(raw.col, raw.row);
 
-    for (const [idx, off] of _dragGroupOffsets) {
+    for (const [, off] of _dragGroupOffsets) {
       const snapPos = cellToPixel(anchor.col + off.dCol, anchor.row + off.dRow);
-      const span = iconEntries[idx].gridRowSpan || 1;
-      GPU.drawRect(snapPos.x, snapPos.y, CELL_W, span * CELL_H, 1);
+      GPU.drawRect(snapPos.x, snapPos.y, CELL_W, CELL_H, 1);
     }
   }
 
@@ -499,10 +480,9 @@ function updateLassoSelection() {
   for (let i = 0; i < iconEntries.length; i++) {
     const entry = iconEntries[i];
     const pos = cellToPixel(entry.gridCol, entry.gridRow);
-    const span = entry.gridRowSpan || 1;
-    // セル中心 (span 考慮) で判定
+    // セル中心で判定
     const cx = pos.x + (CELL_W >> 1);
-    const cy = pos.y + ((span * CELL_H) >> 1);
+    const cy = pos.y + (CELL_H >> 1);
     if (cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h) {
       selectedSet.add(i);
     }
@@ -606,13 +586,11 @@ function clampAnchor(rawCol, rawRow) {
   let maxDC = 0;
   let minDR = 0;
   let maxDR = 0;
-  for (const [idx, off] of _dragGroupOffsets) {
-    const span = iconEntries[idx].gridRowSpan || 1;
+  for (const [, off] of _dragGroupOffsets) {
     if (off.dCol < minDC) minDC = off.dCol;
     if (off.dCol > maxDC) maxDC = off.dCol;
     if (off.dRow < minDR) minDR = off.dRow;
-    const bottom = off.dRow + span - 1;
-    if (bottom > maxDR) maxDR = bottom;
+    if (off.dRow > maxDR) maxDR = off.dRow;
   }
   return {
     col: Math.max(-minDC, Math.min(maxCols() - 1 - maxDC, clampCol(rawCol))),
@@ -630,8 +608,7 @@ function hitTestIcon(mx, my) {
   for (let i = 0; i < iconEntries.length; i++) {
     const entry = iconEntries[i];
     const pos = cellToPixel(entry.gridCol, entry.gridRow);
-    const h = (entry.gridRowSpan || 1) * CELL_H;
-    if (mx >= pos.x && mx < pos.x + CELL_W && my >= pos.y && my < pos.y + h) {
+    if (mx >= pos.x && mx < pos.x + CELL_W && my >= pos.y && my < pos.y + CELL_H) {
       return i;
     }
   }
@@ -687,39 +664,27 @@ function dropIcons(mx, my) {
   // 空きセル (ドラッグ元セルのうち、目標セットに含まれないもの)
   const cellKey = (c, r) => c * 10000 + r;
   const targetCellSet = new Set();
-  for (const [idx, t] of targets) {
-    const span = iconEntries[idx].gridRowSpan || 1;
-    for (let r = 0; r < span; r++) {
-      targetCellSet.add(cellKey(t.col, t.row + r));
-    }
+  for (const [, t] of targets) {
+    targetCellSet.add(cellKey(t.col, t.row));
   }
 
   const freeSources = [];
   for (const idx of selectedSet) {
     const e = iconEntries[idx];
-    const span = e.gridRowSpan || 1;
-    for (let r = 0; r < span; r++) {
-      if (!targetCellSet.has(cellKey(e.gridCol, e.gridRow + r))) {
-        freeSources.push({ col: e.gridCol, row: e.gridRow + r });
-      }
+    if (!targetCellSet.has(cellKey(e.gridCol, e.gridRow))) {
+      freeSources.push({ col: e.gridCol, row: e.gridRow });
     }
   }
 
   // 目標セルに居る非選択アイコンを空きセルへ退避
   const draggedSet = new Set(selectedSet);
   const displaced = new Set();
-  for (const [idx, t] of targets) {
-    const span = iconEntries[idx].gridRowSpan || 1;
+  for (const [, t] of targets) {
     for (let i = 0; i < iconEntries.length; i++) {
       if (draggedSet.has(i) || displaced.has(i)) continue;
       const e = iconEntries[i];
-      const eSpan = e.gridRowSpan || 1;
-      // 同一列で行範囲が重複するか
-      if (
-        e.gridCol === t.col &&
-        e.gridRow < t.row + span &&
-        t.row < e.gridRow + eSpan
-      ) {
+      // 同一セルに居る非選択アイコンを退避
+      if (e.gridCol === t.col && e.gridRow === t.row) {
         if (freeSources.length > 0) {
           const dest = freeSources.pop();
           e.gridCol = dest.col;
@@ -757,37 +722,27 @@ function drawDesktopIcon(entry, cx, cy, selected) {
     GPU.invertRect(iconX - 1, iconY - 1, APP_ICON_W + 2, APP_ICON_H + 2);
   }
 
-  // ── ラベル描画 (複数行対応・アイコン下部中央寄せ) ──
-  const lines = splitLabel(entry.label);
-  let ly = cy + ICON_PAD_TOP + APP_ICON_H + ICON_LABEL_GAP;
-  for (const line of lines) {
-    const labelW = line.length * FONT_STEP - 1;
-    const labelX = cx + ((CELL_W - labelW) >> 1);
-    GPU.fillRect(labelX - 1, ly - 1, labelW + 2, GLYPH_H + 2, 0);
-    drawText(labelX, ly, line, 1);
-    if (selected) {
-      GPU.invertRect(labelX - 1, ly - 1, labelW + 2, GLYPH_H + 2);
-    }
-    ly += LABEL_LINE_H;
+  // ── ラベル描画 (単一行・アイコン下部中央寄せ) ──
+  const line = truncateLabel(entry.label);
+  const ly = cy + ICON_PAD_TOP + APP_ICON_H + ICON_LABEL_GAP;
+  const labelW = line.length * FONT_STEP - 1;
+  const labelX = cx + ((CELL_W - labelW) >> 1);
+  GPU.fillRect(labelX - 1, ly - 1, labelW + 2, GLYPH_H + 2, 0);
+  drawText(labelX, ly, line, 1);
+  if (selected) {
+    GPU.invertRect(labelX - 1, ly - 1, labelW + 2, GLYPH_H + 2);
   }
 }
 
 /**
- * ラベル文字列を描画用の行配列に変換する。
- * 常に単一行。MAX_LABEL_CHARS を超える場合は切り捨てる。
+ * ラベル文字列を単一行に切り詰める (MAX_LABEL_CHARS を超えたら切り捨て)。
  * @param {string} label
- * @returns {string[]}
+ * @returns {string}
  */
-function splitLabel(label) {
-  return [label.length > MAX_LABEL_CHARS ? label.slice(0, MAX_LABEL_CHARS) : label];
-}
-
-/**
- * gridRowSpan を返す。ラベルは常に単一行のため常に 1。
- * @returns {number}
- */
-function calcRowSpan() {
-  return 1;
+function truncateLabel(label) {
+  return label.length > MAX_LABEL_CHARS
+    ? label.slice(0, MAX_LABEL_CHARS)
+    : label;
 }
 
 // ── テスト用内部アクセス ──
