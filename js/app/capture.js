@@ -29,6 +29,7 @@ import {
   applyVramIndexed,
   getDisplayPalette,
 } from "../core/display_fx.js";
+import { triggerDownload } from "../core/art_export.js";
 
 const APP_NAME = "CAPTURE";
 
@@ -164,16 +165,9 @@ function doScreenshotDownload() {
 
   resultCanvas.toBlob((blob) => {
     if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
     screenshotCount++;
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `screenshot_${ts}_${screenshotCount}.png`;
-    a.href = url;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    triggerDownload(blob, `screenshot_${ts}_${screenshotCount}.png`);
   }, "image/png");
 }
 
@@ -325,15 +319,8 @@ function stopRecording() {
 function doRecordingDownload() {
   const ext = recordMimeType.startsWith("video/mp4") ? "mp4" : "webm";
   const blob = new Blob(recordChunks, { type: recordMimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  a.download = `recording_${ts}.${ext}`;
-  a.href = url;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  triggerDownload(blob, `recording_${ts}.${ext}`);
   recordChunks = [];
   recordCanvas = null;
   recordCtx = null;
@@ -424,15 +411,8 @@ function stopGifRecording() {
     );
 
     // ダウンロード
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `loop_${ts}.gif`;
-    a.href = url;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    triggerDownload(blob, `loop_${ts}.gif`);
 
     gifFrames = [];
     gifEncoding = false;

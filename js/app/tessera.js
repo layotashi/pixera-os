@@ -914,16 +914,6 @@ function makeExportSurface(w, h, asciiOn, mode, params) {
   return surf;
 }
 
-/** Blob をファイルとしてダウンロードする（WAV 等）。 */
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 /** 書き出しファイル名 tessera_<name>_<seed>_<ts>.<ext>。 */
 function exportName(ext) {
   const base = currentFilePath
@@ -985,7 +975,10 @@ function exportArt() {
     }
     const sr = 44100;
     const data = exportAudioPcm(prog, sr, period, seed); // 再生と同じ音・音量（WYSIWYG）
-    downloadBlob(new Blob([encodeWav(data, sr)], { type: "audio/wav" }), exportName("wav"));
+    ArtExport.triggerDownload(
+      new Blob([encodeWav(data, sr)], { type: "audio/wav" }),
+      exportName("wav"),
+    );
     return;
   }
   // MP4 は sound: があれば音声入り（1 周期を決定論レンダ → AAC 多重化 = ループ一致）。

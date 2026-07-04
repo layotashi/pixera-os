@@ -36,8 +36,11 @@ export function composeMatte(artBuf, artW, artH, baseW, baseH) {
   return out;
 }
 
-/** Blob をファイル名付きでダウンロードさせる（<a download> クリック）。 */
-function triggerDownload(blob, filename) {
+/**
+ * Blob をファイル名付きでダウンロードさせる（<a download> クリック）。
+ * js/ 全体でこの 1 実装のみが URL.createObjectURL を使う (SSoT)。
+ */
+export function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.download = filename;
