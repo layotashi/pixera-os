@@ -49,7 +49,7 @@ import { tracks, setPlayheadPos } from "./app/studio/piano_roll.js";
 import * as Storage from "./core/storage.js";
 import * as Config from "./config.js";
 import { runSplash, fadeInDesktop } from "./splash.js";
-import { initSystemSfxHooks } from "./core/sfx.js";
+import { initSystemSfxHooks } from "./system_sfx.js";
 
 // ── メインループ ──
 

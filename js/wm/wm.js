@@ -93,7 +93,7 @@ export function wmSetUiCallbacks(cbs) {
 let _sfxCallbacks = null;
 
 /**
- * SFX コールバックを注入する。sfx.js が initSystemSfxHooks() で呼ぶ。
+ * SFX コールバックを注入する。system_sfx.js が initSystemSfxHooks() で呼ぶ。
  * @param {{ onOpen?:function, onClose?:function, onMaximize?:function, onMenu?:function, onMenuItem?:function }} cbs
  */
 export function wmSetSfxCallbacks(cbs) {

@@ -44,7 +44,8 @@
 
 - `audio.js` — Web Audio 基盤
   (AudioContext / SynthChannel / SamplePlayer / SFX / 音楽ユーティリティ)
-- `sfx.js` — システム効果音マネージャ (ウィンドウ開閉・クリック等のフック)
+- `sfx.js` — システム効果音の再生層 (playSystemSfx。フック配線は
+  ルートの `system_sfx.js` が担い、この層は wm/ui に依存しない)
 - `gif.js` — GIF89a エンコーダ (1-bit 特化、LZW)
 - `mp4.js` — MP4 (H.264) エンコーダ (WebCodecs + 自前 ISO BMFF コンテナ)
 - `wav.js` — WAV (RIFF) コーデック

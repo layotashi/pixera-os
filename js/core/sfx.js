@@ -1,15 +1,17 @@
 /**
  * @module core/sfx
- * sfx.js — システム効果音 (SFX) マネージャ
+ * sfx.js — システム効果音 (SFX) の再生層
  *
  * OS のシステム操作（ウィンドウ開閉・ボタンクリック・ダイアログ表示等）に
- * 紐づく効果音を一元管理する。
+ * 紐づく効果音を「鳴らす」責務だけを持つ純粋な core レイヤ。
+ * どのイベントで鳴らすか (wm / ui へのフック配線) は上位の
+ * `js/system_sfx.js` が担い、この層は playSystemSfx(name) を提供する。
+ * これにより core/ → wm/ ui/ の逆方向 import を持たない。
  *
  * ── 設計方針 ──
  *   - 既存の createSfxChannels / playSfx インフラ (core/audio.js) を再利用
  *   - 遅延初期化: 最初の playSystemSfx() 呼び出し時にチャンネルを作成
  *   - 有効/無効切替: setSystemSfxEnabled(bool) で全 SFX を ON/OFF
- *   - 各サブシステムへのフック注入は initSystemSfxHooks() で一括実行
  *
  * ── SFX イベント一覧 ──
  *   winOpen      ウィンドウオープン
@@ -21,21 +23,9 @@
  *   toggle       トグルボタン状態変更
  *   menuOpen     メニュー表示
  *   menuSelect   メニュー項目選択
- *
- * ── 使用例 (kernel.js) ──
- *   import { initSystemSfxHooks } from "./core/sfx.js";
- *   initSystemSfxHooks();
  */
 
 import { createSfxChannels, playSfx } from "./audio.js";
-import { wmSetSfxCallbacks } from "../wm/index.js";
-import { dialogSetSfxOnOpen } from "../ui/Dialog.js";
-import { buttonSetSfxOnClick } from "../ui/widgets/PushButton.js";
-import { toggleSetSfxOnChange } from "../ui/widgets/ToggleButton.js";
-import { listboxSetSfxOnSelect } from "../ui/widgets/ListBox.js";
-import { dropdownSetSfxOnSelect } from "../ui/widgets/DropDown.js";
-import { radioSetSfxOnChange } from "../ui/widgets/RadioButton.js";
-import { isSystemSfxOn } from "../config.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  SFX プリセット定義
@@ -175,42 +165,4 @@ export function _resetSfx() {
 
 /** @internal テスト用: pending SFX を即座にフラッシュ */
 export { _flushPendingSfx };
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  フック注入
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/**
- * WM・Dialog・UI ウィジェットに SFX コールバックを一括注入する。
- * kernel.js のブートシーケンスで 1 回呼ぶ。
- */
-export function initSystemSfxHooks() {
-  // ── config.js の永続値で初期状態を同期 ──
-  _enabled = isSystemSfxOn();
-
-  // ── WM フック ──
-  wmSetSfxCallbacks({
-    onOpen: () => playSystemSfx("winOpen"),
-    onClose: () => playSystemSfx("winClose"),
-    onMaximize: () => playSystemSfx("maximize"),
-    onMenu: () => playSystemSfx("menuOpen"),
-    onMenuItem: () => playSystemSfx("menuSelect"),
-  });
-
-  // ── Dialog フック ──
-  dialogSetSfxOnOpen((variant) => {
-    if (variant === "danger") {
-      playSystemSfx("dialogDanger");
-    } else {
-      playSystemSfx("dialogOpen");
-    }
-  });
-
-  // ── UI ウィジェットフック ──
-  buttonSetSfxOnClick(() => playSystemSfx("btnClick"));
-  toggleSetSfxOnChange(() => playSystemSfx("toggle"));
-  radioSetSfxOnChange(() => playSystemSfx("toggle"));
-  listboxSetSfxOnSelect(() => playSystemSfx("listSelect"));
-  dropdownSetSfxOnSelect(() => playSystemSfx("listSelect"));
-}
 

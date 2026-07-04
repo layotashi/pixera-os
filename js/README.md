@@ -27,7 +27,8 @@ app/  →  wm/  →  ui/  →  core/
 - `ui/` — OS 風ウィジェットライブラリ (DI で `core` から切り離し、再利用可能)
 - `wm/` — OS 風ウィンドウマネージャ・デスクトップ
 - `app/` — 各アプリケーションウィンドウ
-- ルート — `kernel` (配線) / `config` (定数) / `splash` / `wallpaper`
+- ルート — `kernel` (配線) / `config` (定数) / `splash` / `wallpaper` /
+  `system_sfx` (システム SFX のフック配線)
 
 各レイヤのファイル一覧・規約は配下の `README.md` を参照。
 
