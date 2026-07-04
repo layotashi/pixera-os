@@ -16,10 +16,11 @@ SYNESTA (1-bit の空想レトロ・クリエイティブ OS) を構成する全
 依存は **上→下** の一方向のみ。循環依存はゼロ。
 
 ```
-app/  →  wm/  →  ui/  →  core/
-  │        │       │        ↑
-  └────────┴───────┴── config.js
-                        audio/  →  core/   (UI なし)
+app/  →  wm/  →  ui/  →  core/  →  lang/
+  │        │       │        ↑         ↑
+  └────────┴───────┴── config.js      │
+   │                    audio/ → core/ (UI なし)
+   └──────────────── ルート ──────────┘
 ```
 
 - `core/` — 描画・入力・フォント・音声・ストレージ等のプラットフォーム基盤
@@ -29,6 +30,10 @@ app/  →  wm/  →  ui/  →  core/
 - `app/` — 各アプリケーションウィンドウ
 - ルート — `kernel` (配線) / `config` (定数) / `splash` / `wallpaper` /
   `system_sfx` (システム SFX のフック配線)
+- `lang/` — Tessera 生成アート言語 (compile / runtime / surface / format)。
+  `app/tessera` `wallpaper` `core/tess_host` が利用する。
+  **`lang/` は js/ に依存しない (逆方向 import は禁止)** — 媒体非依存の
+  純粋な言語コアとして独立させ、ホスト側 (js/) が解決・描画を担う。
 
 各レイヤのファイル一覧・規約は配下の `README.md` を参照。
 
