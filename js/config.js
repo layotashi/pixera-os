@@ -50,16 +50,19 @@ export function configSetSaveCallback(cb) {
 
 /**
  * 選択可能な画面解像度プリセット。
- * 16:9 をメイン、4:3 をレトロ志向ユーザー向けに併設。
+ * 16:9 = 横長 / デスクトップ用。1:1・4:3 = SNS 共有向け。
+ * SNS 最適枠は書き出し幅を 1080px(SNS 再エンコードの安全幅)に当てる:
+ * 幅 540 は CAPTURE X2、幅 360 は X3 で 1080(540x540 / 360x360 / 360x270)。
+ * 480x360 は汎用 4:3 兼デフォルト。全寸を偶数に統一(MP4/GIF は偶数寸前提)。
  * 表示スケールはブラウザウィンドウに収まる最大整数倍を自動算出する。
  */
 export const RESOLUTIONS = [
-  { label: "480x270 (16:9)", w: 480, h: 270 },
-  { label: "640x360 (16:9)", w: 640, h: 360 },
   { label: "960x540 (16:9)", w: 960, h: 540 },
-  { label: "400x300 (4:3)", w: 400, h: 300 },
+  { label: "640x360 (16:9)", w: 640, h: 360 },
+  { label: "540x540 (1:1)", w: 540, h: 540 },
+  { label: "360x360 (1:1)", w: 360, h: 360 },
   { label: "480x360 (4:3)", w: 480, h: 360 },
-  { label: "800x600 (4:3)", w: 800, h: 600 },
+  { label: "360x270 (4:3)", w: 360, h: 270 },
 ];
 
 /** サポートする最大解像度 (vram 事前確保用) */
@@ -217,6 +220,37 @@ export const APP_NAME = "SYNESTA";
 
 /** バージョン番号 (semver) */
 export const APP_VERSION = "0.2.2";
+
+// ── アセットのキャッシュバスティング ──
+
+/** キャッシュバスト用トークン (初回 assetUrl 呼び出し時に一度だけ確定) */
+let _assetToken = null;
+
+/**
+ * アセット URL にキャッシュバスト用のクエリを付与する。
+ * 全アセットローダ (app_icon / icon / text_icon / cursor …) の実読み込み点
+ * (img.src / fetch) で通し、サーバのキャッシュ設定に依存せず更新を保証する。
+ *
+ *   - 開発時 (localhost / file://): ブート毎のトークンで毎回フレッシュに再取得
+ *     → 編集した PNG 等がリロードで確実に反映される
+ *   - 本番: APP_VERSION で版ごとにキャッシュを分離
+ *     → キャッシュを効かせつつ、リリース (版更新) で確実に更新される
+ *
+ * @param {string} url  アセット URL
+ * @returns {string} クエリ付き URL
+ */
+export function assetUrl(url) {
+  if (_assetToken === null) {
+    const host = typeof location !== "undefined" ? location.hostname : "";
+    const isDev =
+      host === "" ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "[::1]";
+    _assetToken = isDev ? `dev${Date.now()}` : APP_VERSION;
+  }
+  return url + (url.includes("?") ? "&" : "?") + "v=" + _assetToken;
+}
 
 /** ビルド / リリース日 */
 export const APP_DATE = "2026-04-24";
@@ -532,13 +566,6 @@ export const PALETTES = {
     label: "Blueprint",
     origin: "Cyanotype reprography\n19th century",
     note: "Prussian-blue ground, white lines.\nSymbol of engineering drawings.",
-  },
-  darkroom: {
-    bg: "#0A0000",
-    fg: "#AA2020",
-    label: "Darkroom",
-    origin: "Photographic darkroom safelight",
-    note: "Deep red illumination preserving\nscotopic adaptation during\nfilm development.",
   },
 
   // ── 追加候補 (評価中) ──
