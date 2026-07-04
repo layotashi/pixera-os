@@ -6,9 +6,9 @@
  * kernel.js から毎フレーム呼ばれる update() / draw() を export する。
  */
 
-import { VRAM_WIDTH, VRAM_HEIGHT, DEV_MODE } from "../config.js";
+import { DEV_MODE } from "../config.js";
 import { flush } from "../core/gpu.js";
-import { keyHeld, mouseX, mouseY, isMouseInside } from "../core/input.js";
+import { mouseX, mouseY, isMouseInside } from "../core/input.js";
 import { drawCursor } from "../core/cursor.js";
 import { wmDraw, wmGetRegistry, desktopSetIcons } from "../wm/index.js";
 import { drawWallpaper } from "../wallpaper.js";
@@ -72,23 +72,12 @@ import { DOLPHIN_TOOLTIP } from "./dolphin.js";
   desktopSetIcons(entries);
 }
 
-// ── サンプル用の状態 ──
-let cursorX = (VRAM_WIDTH / 2) | 0;
-let cursorY = (VRAM_HEIGHT / 2) | 0;
-
 /**
  * 毎フレーム呼ばれるロジック更新。
  */
 export function update() {
   // ── 再生エンジン更新 (Space キーなど、マウス位置に依存しない処理) ──
   updateTransport();
-
-  if (keyHeld("ArrowUp")) cursorY--;
-  if (keyHeld("ArrowDown")) cursorY++;
-  if (keyHeld("ArrowLeft")) cursorX--;
-  if (keyHeld("ArrowRight")) cursorX++;
-  cursorX = ((cursorX % VRAM_WIDTH) + VRAM_WIDTH) % VRAM_WIDTH;
-  cursorY = ((cursorY % VRAM_HEIGHT) + VRAM_HEIGHT) % VRAM_HEIGHT;
 
   // ── 入力オーバーレイ更新 ──
   updateInputOverlay();
@@ -112,10 +101,8 @@ export function draw() {
   // ── ウィンドウ描画 ──
   wmDraw();
 
-  // ── カーソル: マウスが領域内ならマウス座標、そうでなければキーボード座標 ──
-  const cx = isMouseInside() ? mouseX() : cursorX;
-  const cy = isMouseInside() ? mouseY() : cursorY;
-  drawCursor(cx, cy);
+  // ── カーソル: マウスが canvas 領域内のときだけ表示 ──
+  if (isMouseInside()) drawCursor(mouseX(), mouseY());
 
   // ── 入力オーバーレイ (カーソルの上に表示) ──
   drawInputOverlay();
