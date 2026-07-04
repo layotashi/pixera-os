@@ -56,8 +56,7 @@ import * as GPU from "../core/gpu.js";
 import * as Input from "../core/input.js";
 import { setCursor } from "../core/cursor.js";
 import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
-import { drawText, GLYPH_W, GLYPH_H, textWidth } from "../core/font.js";
-import { BAYER_4x4 } from "../core/dither.js";
+import { drawText, GLYPH_H, textWidth } from "../core/font.js";
 import { FOCUS_MARGIN } from "../ui/ui_constants.js";
 import * as Scroll from "../ui/scrollbar.js";
 import * as Desktop from "./desktop.js";
@@ -88,10 +87,19 @@ import {
   menuRecalcConstants,
   menuSetDeps,
 } from "./menu.js";
+import { wmSetTooltip, tooltipBeginFrame, drawTooltip } from "./tooltip.js";
+import {
+  drawAboutPanel,
+  startAboutTransition,
+  drawAboutTransition,
+  aboutSetDeps,
+} from "./about.js";
 
 // フレーム構成定数・レイアウト算出は win_layout.js が SSoT。
 // 旧来 wm.js から re-export していた公開定数/関数は互換のため再輸出する。
 export { HEADER_HEIGHT, CONTENT_PADDING, FOOTER_HEIGHT, calcWindowSize };
+// wmSetTooltip は tooltip.js が実体。index.js / kernel が参照するため再輸出。
+export { wmSetTooltip };
 
 // ── デスクトップ → WM コールバック注入 ──
 Desktop.desktopSetTooltipCallback(wmSetTooltip);
@@ -486,6 +494,10 @@ menuSetDeps({
   onMenu: () => _sfxCallbacks?.onMenu?.(),
   onMenuItem: () => _sfxCallbacks?.onMenuItem?.(),
 });
+
+// ── ABOUT パネルへの依存注入 ──
+// ディゾルブ遷移中に「ボディ面」を描くため safeOnDraw を渡す。
+aboutSetDeps({ drawContent: safeOnDraw });
 
 /** モーダルウィンドウの ID (null = モーダルなし) */
 let _modalWinId = null;
@@ -977,7 +989,7 @@ function buildWindowContextMenu(win) {
     items.push({
       type: "action",
       label: win._aboutMode ? "HIDE ABOUT" : "ABOUT",
-      action: () => _startAboutTransition(win, !win._aboutMode),
+      action: () => startAboutTransition(win, !win._aboutMode),
     });
   }
   if (items.length > 0) items.push({ type: "sep" });
@@ -1214,8 +1226,7 @@ export function wmUpdate() {
   const my = Input.mouseY();
 
   // ── ツールチップ: 前フレームのテキストを保持してリセット ──
-  tooltipPrevText = tooltipText;
-  tooltipText = null;
+  tooltipBeginFrame();
 
   // ── F11: 最前面ウィンドウのフルスクリーン切替 (OS ショートカット) ──
   // モーダル表示中は無効。解除も F11 (アプリが Esc 等を独自に割り当ててもよい)。
@@ -1329,7 +1340,7 @@ function handleRightClick(mx, my) {
       const target = windows[newIdx];
       // ABOUT パネル表示中はボディ右クリックでも戻る (左右どちらでも復帰)
       if (target._aboutMode && !target._aboutAnim) {
-        _startAboutTransition(target, false);
+        startAboutTransition(target, false);
         return;
       }
       if (target.onInput) {
@@ -1552,7 +1563,7 @@ function handleBodyClick(i, mx, my) {
   // ABOUT パネル表示中にボディをクリック → アプリへ戻る (ディゾルブ)。
   // 「CLICK TO RETURN」ヒントの通りの直感的な復帰。遷移中は無視。
   if (target._aboutMode && !target._aboutAnim) {
-    _startAboutTransition(target, false);
+    startAboutTransition(target, false);
     return;
   }
 
@@ -1988,35 +1999,9 @@ export function wmRequestCursor(name) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  ツールチップ
+//  カーソル形状
+//  (ツールチップは tooltip.js、ABOUT パネルは about.js へ分離)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/** ツールチップテキスト (null = 非表示, '\n' で複数行) */
-let tooltipText = null;
-
-/** ツールチップ表示ディレイ (同じテキストがセットされ続けたフレーム数) */
-let tooltipFrames = 0;
-let tooltipPrevText = null;
-
-/** ツールチップ表示までのディレイフレーム数 */
-const TOOLTIP_DELAY = 20;
-
-/** ツールチップのパディング (px) */
-const TOOLTIP_PADDING = 4;
-
-/** ツールチップのカーソルからのオフセット (px) */
-const TOOLTIP_OFFSET_X = 12;
-const TOOLTIP_OFFSET_Y = 12;
-
-/**
- * ツールチップテキストをセットする。
- * hover ハンドラ内で毎フレーム呼ぶ。呼ばなければ自動消去。
- * '\n' で改行可能。
- * @param {string} text  ツールチップテキスト
- */
-export function wmSetTooltip(text) {
-  tooltipText = text;
-}
 
 /** カーソル種別をドラッグモード / ホバー状態に応じて更新 */
 function updateCursorShape(mx, my) {
@@ -2070,87 +2055,6 @@ function updateCursorShape(mx, my) {
   contentCursorOverride = null;
 }
 
-/** ツールチップ 1 行の最大文字数 (これを超える行は折り返す) */
-const TOOLTIP_MAX_CHARS = 38;
-
-/**
- * ツールチップ文字列を読みやすい複数行に折り返す。
- * 明示的な \n は尊重し、長すぎる行は語境界 (スペース) で max 文字以内に畳む。
- * 1 語が max を超える場合は強制分割する。狭い VRAM ではさらに詰める。
- * @param {string} text
- * @returns {string[]} 折り返し済みの行配列
- */
-function wrapTooltip(text) {
-  const vramCap = Math.floor(
-    (Config.VRAM_WIDTH - TOOLTIP_PADDING * 2 - 8) / (GLYPH_W + 1),
-  );
-  const max = Math.max(8, Math.min(TOOLTIP_MAX_CHARS, vramCap));
-  const out = [];
-  for (const seg of text.split("\n")) {
-    let line = "";
-    for (let word of seg.split(" ")) {
-      // 1 語が長すぎる場合は強制分割
-      while (word.length > max) {
-        if (line) {
-          out.push(line);
-          line = "";
-        }
-        out.push(word.slice(0, max));
-        word = word.slice(max);
-      }
-      if (!line) line = word;
-      else if (line.length + 1 + word.length <= max) line += " " + word;
-      else {
-        out.push(line);
-        line = word;
-      }
-    }
-    out.push(line);
-  }
-  return out;
-}
-
-/** ツールチップを描画する。ディレイ後にカーソル付近にボックスを表示。 */
-function drawTooltip() {
-  // ディレイカウンタ更新
-  if (tooltipText !== null && tooltipText === tooltipPrevText) {
-    tooltipFrames++;
-  } else {
-    tooltipFrames = 0;
-  }
-  if (tooltipText === null || tooltipFrames < TOOLTIP_DELAY) return;
-  if (_modalWinId !== null) return;
-
-  const mx = Input.mouseX();
-  const my = Input.mouseY();
-  const lines = wrapTooltip(tooltipText);
-  const maxChars = Math.max(...lines.map((l) => l.length));
-  const tw = maxChars * (GLYPH_W + 1) - 1;
-  const lineH = GLYPH_H + 2;
-  const th = lines.length * lineH - 2;
-  const boxW = tw + TOOLTIP_PADDING * 2;
-  const boxH = th + TOOLTIP_PADDING * 2;
-
-  // 位置: カーソル右下、画面外にはみ出さないよう補正
-  let tx = mx + TOOLTIP_OFFSET_X;
-  let ty = my + TOOLTIP_OFFSET_Y;
-  if (tx + boxW >= Config.VRAM_WIDTH) tx = mx - boxW - 4;
-  if (ty + boxH >= Config.VRAM_HEIGHT) ty = my - boxH - 4;
-  tx = Math.max(0, tx);
-  ty = Math.max(0, ty);
-
-  // 描画 (GPU.fillRoundRect で四隅を透過)
-  GPU.fillRoundRect(tx, ty, boxW, boxH, 1, 0);
-  GPU.drawRoundRect(tx, ty, boxW, boxH, 1, 1);
-  for (let i = 0; i < lines.length; i++) {
-    drawText(
-      tx + TOOLTIP_PADDING,
-      ty + TOOLTIP_PADDING + i * lineH,
-      lines[i],
-      1,
-    );
-  }
-}
 
 /**
  * 全ウィンドウを描画する。背面 (配列先頭) から前面 (末尾) へ順に描く。
@@ -2189,7 +2093,7 @@ export function wmDraw() {
   flushPopups();
 
   // ── ツールチップ (最前面) ──
-  drawTooltip();
+  drawTooltip(_modalWinId !== null);
 }
 
 /**
@@ -2224,139 +2128,6 @@ export function wmDrawSingleWindow(id) {
  * 前提: win._layout が recalcLayout() で最新に更新済みであること。
  * レイアウトの再計算は w/h/x/y 変更時のみ行う。
  */
-/**
- * テキストを最大文字数で折り返す。明示的な改行 (\n) は段落区切りとして尊重し、
- * 各段落を単語境界で wrap する。maxChars を超える単語はハード分割する。
- * @returns {string[]} 行の配列
- */
-function _wrapText(text, maxChars) {
-  const out = [];
-  for (const para of String(text).split("\n")) {
-    if (para === "") {
-      out.push("");
-      continue;
-    }
-    let line = "";
-    for (const word of para.split(/\s+/)) {
-      if (line === "") {
-        line = word;
-      } else if ((line + " " + word).length <= maxChars) {
-        line += " " + word;
-      } else {
-        out.push(line);
-        line = word;
-      }
-      while (line.length > maxChars) {
-        out.push(line.slice(0, maxChars));
-        line = line.slice(maxChars);
-      }
-    }
-    if (line) out.push(line);
-  }
-  return out;
-}
-
-/**
- * ABOUT パネルを描画する。ボディ背景は drawWindowFrame 冒頭で塗り済み。
- * 「ABOUT」見出し + 区切り線 + 折り返した説明 + 下部に復帰ヒント。
- */
-function drawAboutPanel(win, cr) {
-  const pad = 5;
-  const x = cr.x + pad;
-  const lineH = GLYPH_H + 3;
-  let y = cr.y + pad;
-
-  drawText(x, y, "ABOUT", 1);
-  y += GLYPH_H + 2;
-  GPU.hline(cr.x + 2, cr.x + cr.w - 3, y, 1);
-  y += 4;
-
-  const maxChars = Math.max(1, Math.floor((cr.w - pad * 2) / (GLYPH_W + 1)));
-  for (const line of _wrapText(win.about, maxChars)) {
-    drawText(x, y, line, 1);
-    y += lineH;
-  }
-
-  // 下部の復帰ヒント (ボディをクリックで戻る)
-  const hint = "CLICK TO RETURN";
-  drawText(x, cr.y + cr.h - GLYPH_H - 1, hint, 1);
-}
-
-// ── ABOUT ⇄ ボディの dither ディゾルブ遷移 ──
-
-/** ディゾルブのフレーム数 (60fps で約 0.2 秒。ディザの texture が見える程度) */
-const ABOUT_ANIM_FRAMES = 12;
-
-/** ディゾルブ遷移を開始する (既に遷移中なら無視) */
-function _startAboutTransition(win, toMode) {
-  if (win._aboutAnim) return;
-  win._aboutAnim = { to: toMode, t: 0, cw: 0, ch: 0, from: null, toBuf: null };
-}
-
-/** content rect の現在のピクセルをバッファにコピーする */
-function _snapshotRect(cr) {
-  const buf = new Uint8Array(cr.w * cr.h);
-  for (let yy = 0; yy < cr.h; yy++) {
-    for (let xx = 0; xx < cr.w; xx++) {
-      buf[yy * cr.w + xx] = GPU.pget(cr.x + xx, cr.y + yy);
-    }
-  }
-  return buf;
-}
-
-/** 指定した面 (about or ボディ) を content rect に描画する (スナップショット用) */
-function _renderAboutFace(win, cr, aboutMode) {
-  GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0);
-  GPU.setClip(cr.x, cr.y, cr.w, cr.h);
-  if (aboutMode) {
-    drawAboutPanel(win, cr);
-  } else if (win.onDraw) {
-    const scrollY = win._scrollable && win._vScroll ? win._vScroll.offset : 0;
-    const drawCr = scrollY
-      ? { x: cr.x, y: cr.y - scrollY, w: cr.w, h: cr.h }
-      : cr;
-    safeOnDraw(win, drawCr);
-  }
-  GPU.resetClip();
-}
-
-/**
- * ABOUT ⇄ ボディのディゾルブを 1 フレーム描画する。
- * 初回に from/to 両面をスナップショットし、以降は Bayer 閾値を進めて合成する。
- */
-function _drawAboutTransition(win, cr) {
-  const anim = win._aboutAnim;
-  // content rect サイズが遷移中に変わったら (リサイズ等) 即座に確定する
-  if (anim.from && (cr.w !== anim.cw || cr.h !== anim.ch)) {
-    win._aboutMode = anim.to;
-    win._aboutAnim = null;
-    return;
-  }
-  if (!anim.from) {
-    anim.cw = cr.w;
-    anim.ch = cr.h;
-    _renderAboutFace(win, cr, win._aboutMode); // FROM = 現在の面
-    anim.from = _snapshotRect(cr);
-    _renderAboutFace(win, cr, anim.to); // TO = 遷移先の面
-    anim.toBuf = _snapshotRect(cr);
-  }
-  // Bayer 4x4 (0..15) を閾値に、t に応じて from→to を ordered dither で混ぜる
-  const thr = Math.round(anim.t * 17); // 0 → 全 from, 17 → 全 to
-  for (let yy = 0; yy < cr.h; yy++) {
-    const brow = BAYER_4x4[yy & 3]; // BAYER_4x4 は [row][col] の 2 次元配列
-    for (let xx = 0; xx < cr.w; xx++) {
-      const idx = yy * cr.w + xx;
-      const v = brow[xx & 3] < thr ? anim.toBuf[idx] : anim.from[idx];
-      GPU.pset(cr.x + xx, cr.y + yy, v);
-    }
-  }
-  anim.t += 1 / ABOUT_ANIM_FRAMES;
-  if (anim.t >= 1) {
-    win._aboutMode = anim.to;
-    win._aboutAnim = null;
-  }
-}
-
 function drawWindowFrame(win) {
   // ── フルスクリーン: chrome 無し。全面を下地色で塗り、コンテンツのみ描く ──
   if (win.fullscreen) {
@@ -2404,7 +2175,7 @@ function drawWindowFrame(win) {
   // ── コンテンツ描画: ディゾルブ遷移 > ABOUT パネル > アプリ ──
   const cr = L.contentRect;
   if (win._aboutAnim) {
-    if (cr.w > 0 && cr.h > 0) _drawAboutTransition(win, cr);
+    if (cr.w > 0 && cr.h > 0) drawAboutTransition(win, cr);
   } else if (win._aboutMode && win.about) {
     if (cr.w > 0 && cr.h > 0) {
       GPU.setClip(cr.x, cr.y, cr.w, cr.h);
