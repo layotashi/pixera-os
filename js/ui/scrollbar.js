@@ -475,6 +475,24 @@ export function vScrollbarSlotThumbArea(slotX, slotY, slotH) {
   };
 }
 
+/**
+ * drawHScrollbarSlot のスロット内側 (スロット全幅 × sep を除いた 9px 高) を返す。
+ * 入力処理はこの矩形で当たり判定し、trackX=x / trackW=w を handleHScrollInput へ渡す。
+ *
+ * @param {number} slotX  スロット左端 X
+ * @param {number} slotY  スロット上端 Y (sep の Y)
+ * @param {number} slotW  スロット幅
+ * @returns {{ x:number, y:number, w:number, h:number }}
+ */
+export function hScrollbarSlotThumbArea(slotX, slotY, slotW) {
+  return {
+    x: slotX,
+    y: slotY + 1, // sep の下 = 内側領域の上端
+    w: Math.max(0, slotW),
+    h: SCROLLBAR_SLOT_WIDTH - 1, // 内側 9px
+  };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  入力処理
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

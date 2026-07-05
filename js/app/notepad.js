@@ -18,14 +18,8 @@
  */
 
 import * as WM from "../wm/index.js";
-import {
-  TextArea,
-  WidgetGroup,
-  VBox,
-  FOCUS_MARGIN,
-  openFileDialog,
-  openConfirmDialog,
-} from "../ui/index.js";
+import { WidgetGroup, openFileDialog, openConfirmDialog } from "../ui/index.js";
+import { NotepadEditor } from "./notepad_editor.js";
 import { drawText, textWidth } from "../core/font.js";
 import { ctrlDown, ctrlShiftDown, altDown } from "../core/input.js";
 import * as VFS from "../core/vfs.js";
@@ -33,9 +27,11 @@ import * as VFS from "../core/vfs.js";
 const APP_NAME = "NOTEPAD";
 
 // ── 定数 ──
-const COLS = 40; // 横幅 (文字数)
-const ROWS = 20; // 表示行数
 const MAX_LINES = 9999; // 最大行数
+// editor-as-body ウィンドウの既定外寸 (px)。ボディいっぱいにエディタがフィルするので
+// これは「開いたときの初期サイズ」の意味。Maximize/リサイズには自動追従する。
+const NOTEPAD_W = 272;
+const NOTEPAD_H = 240;
 
 // ── Welcome テキスト ──
 const WELCOME_TEXT = `\
@@ -110,27 +106,19 @@ let winId = null;
 
 // ── ウィジェット (遅延初期化) ──
 let textAreaEditor;
-let root;
 let group;
 let _ready = false;
 
 function _initWidgets() {
   if (_ready) return;
   _ready = true;
-  textAreaEditor = new TextArea(
-    0,
-    0,
-    COLS,
-    ROWS,
-    MAX_LINES,
-    WELCOME_TEXT,
-    () => {
-      isDirty = true;
-      refreshTitle();
-    },
-  );
-  root = VBox([textAreaEditor]);
-  group = new WidgetGroup(root);
+  textAreaEditor = new NotepadEditor(MAX_LINES, WELCOME_TEXT, () => {
+    isDirty = true;
+    refreshTitle();
+  });
+  // 配列形式の WidgetGroup（自動レイアウト無し）。フォーカス/キーボード配信のみ担い、
+  // 位置・サイズは onDraw でボディ矩形に合わせる（editor-as-body）。
+  group = new WidgetGroup([textAreaEditor]);
 }
 
 // ── タイトル更新 ──
@@ -256,7 +244,12 @@ function onDraw(contentRect) {
     }
   }
 
-  group.draw(contentRect);
+  // editor-as-body: エディタをボディいっぱいにフィルさせて直接描画（枠・ブラケット無し）。
+  textAreaEditor.x = 0;
+  textAreaEditor.y = 0;
+  textAreaEditor.w = contentRect.w;
+  textAreaEditor.h = contentRect.h;
+  textAreaEditor.draw(contentRect);
 }
 
 // ── footer 描画 ──
@@ -285,11 +278,6 @@ function onInput(ev) {
   group.update(ev);
 }
 
-// ── サイズ計測 ──
-function onMeasure() {
-  return root.measure();
-}
-
 // ── ウィンドウを閉じる前の未保存確認 ──
 function onBeforeClose() {
   if (isDirty) {
@@ -309,17 +297,14 @@ function onBeforeClose() {
 // ── 登録 ──
 WM.wmRegister(APP_NAME, () => {
   _initWidgets();
-  winId = WM.wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
+  // 既定外寸で開く（onMeasure 無し＝内容に合わせず自由にリサイズ可能）。
+  // ボディはエディタが毎フレームフィルするので、Maximize でも余白が残らない。
+  winId = WM.wmOpen(-1, -1, NOTEPAD_W, NOTEPAD_H, APP_NAME, onDraw, onInput, null, {
     footer: true,
     onDrawFooter,
     onBeforeClose,
     about:
-      "A plain text editor. Type to write, and save notes to the " +
-      "filesystem. Use the toolbar to open, save, and clear.",
-    onRelayout: () => {
-      group.remeasureAll();
-      root.layout(FOCUS_MARGIN, FOCUS_MARGIN);
-    },
+      "A plain text editor. Type to write, and save notes to the filesystem.",
   });
   return winId;
 });
