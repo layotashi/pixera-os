@@ -50,27 +50,34 @@ import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 // icon フィールドは name を小文字化して設定する。
 // 対応する PNG が無い場合は app_icon.js が "default" にフォールバックする。
 
-{
-  const entries = wmGetRegistry()
-    .filter((e) => !e.modal)
-    .filter((e) => !e.dev || DEV_MODE)
-    .map((e) => ({
-      name: e.name,
-      label: e.shortName || e.name,
-      icon: e.name.toLowerCase(),
-      tooltip: e.name,
-    }));
+const desktopIconEntries = wmGetRegistry()
+  .filter((e) => !e.modal)
+  .filter((e) => !e.dev || DEV_MODE)
+  .map((e) => ({
+    name: e.name,
+    label: e.shortName || e.name,
+    icon: e.name.toLowerCase(),
+    tooltip: e.name,
+  }));
 
-  // ── イースターエッグ: "Totally not a virus" イルカアイコン ──
-  entries.push({
-    name: "DOLPHIN",
-    label: "DOLPHIN",
-    icon: "dolphin",
-    tooltip: DOLPHIN_TOOLTIP,
-  });
+// ── イースターエッグ: "Totally not a virus" イルカアイコン ──
+desktopIconEntries.push({
+  name: "DOLPHIN",
+  label: "DOLPHIN",
+  icon: "dolphin",
+  tooltip: DOLPHIN_TOOLTIP,
+});
 
-  desktopSetIcons(entries);
-}
+desktopSetIcons(desktopIconEntries);
+
+/**
+ * デスクトップアイコンが必要とするアイコン名 (重複排除)。
+ * kernel.js が initAppIcon へ渡し、規約ベース (<name>.png) で読み込む。
+ * @type {string[]}
+ */
+export const appIconNames = [
+  ...new Set(desktopIconEntries.map((e) => e.icon)),
+];
 
 /**
  * 毎フレーム呼ばれるロジック更新。

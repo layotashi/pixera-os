@@ -35,7 +35,7 @@ import * as inputModule from "./core/input.js";
 import * as textIconModule from "./core/text_icon.js";
 import * as ditherModule from "./core/dither.js";
 import { initWallpaper } from "./wallpaper.js";
-import { update, draw } from "./app/app.js";
+import { update, draw, appIconNames } from "./app/app.js";
 import { updateVramDump } from "./app/vram_dump.js";
 // input_overlay.js は app.js 内で named import — initInputOverlay は不要
 // (セマンティックイベントログは input.js が生成する)
@@ -193,7 +193,7 @@ async function boot() {
       (async () => {
         await initCursor(); // カーソルPNGの読み込み
         await initIcon(`./assets/${initialFont.iconDir}/manifest.json`); // アイコンPNGの読み込み
-        await initAppIcon(); // アプリアイコンPNGの読み込み
+        await initAppIcon(appIconNames); // アプリアイコンPNGの読み込み (規約ベース)
         await initTextIcon(`./assets/${initialFont.textIconDir}/manifest.json`); // テキストアイコンPNGの読み込み
         await initWallpaper(); // 壁紙の読み込み
       })(),

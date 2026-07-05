@@ -2,8 +2,7 @@
  * @module core/app_icon
  * app_icon.js — デスクトップ用アプリアイコン管理・描画
  *
- * assets/app-icons/manifest.json に基づき個別 PNG からアプリアイコンを
- * 読み込み、名前で引ける描画 API を提供する。
+ * 個別 PNG からアプリアイコンを読み込み、名前で引ける描画 API を提供する。
  *
  * icon.js (小さな UI 部品用アイコン) とは独立した、デスクトップアイコン向けの
  * スプライトシステム (寸法は manifest の format が正)。
@@ -16,17 +15,18 @@
  * アウトライン → 前景の 2 パス描画により、
  * どんな背景でも視認可能なアイコンを実現する。
  *
- * フォールバック: 要求されたアイコン名が存在しない場合、
- * "default" アイコンが自動的に使用される。
+ * ── アイコン解決 (規約ベース) ──
+ * アイコン名 <name> は "<name>.png" というファイル名で解決する
+ * (SSoT はファイル名そのもの。手動の索引を持たず乖離を防ぐ)。
+ *   - 例: アプリ名 FOO → icon="foo" → foo.png を自動読み込み
+ *   - <name>.png が無いアプリは自動的に "default" (default.png) へフォールバック
+ * → 新規アプリのアイコンは、規約名の PNG を app-icons/ に置くだけで有効になる。
  *
- * マニフェスト仕様:
- *   - format.width / format.height: アイコンサイズ (既定 18×18)
- *   - format.encoding: "3level"
- *   - icons[name].file: PNG ファイル名 (manifest.json と同階層)
- *   - icons[name].description: アイコンの説明文
+ * manifest.json は format (寸法・エンコーディング) の SSoT としてのみ使う。
  */
 
 import { blit } from "./gpu.js";
+import { assetUrl } from "../config.js";
 
 // ── マニフェスト URL ──
 
@@ -90,25 +90,31 @@ function loadAppIconPng(url, w, h) {
       resolve({ fgBuf, bgBuf });
     };
     img.onerror = () => reject(new Error(`Failed to load app icon: ${url}`));
-    img.src = url;
+    img.src = assetUrl(url);
   });
 }
 
 // ── 初期化 ──
 
+/** フォールバック用アイコンのファイル名 (規約: 名前 "default")。 */
+const DEFAULT_ICON_FILE = "default.png";
+
 /**
- * マニフェストを読み込み、個別 PNG から前景/背景バッファテーブルを構築する。
+ * manifest から寸法を取得し、規約ベースで各アプリアイコンを読み込む。
+ * "default" は必須。各 <name>.png は存在すれば読み込み、無ければ静かにスキップ
+ * (描画時に default へフォールバックする)。
  * Promise を返すため、kernel.js で await して起動シーケンスに組み込む。
  *
+ * @param {string[]} [iconNames]  読み込むアイコン名 (アプリ由来)。既定 [].
  * @returns {Promise<void>}
  */
-export async function initAppIcon() {
-  const res = await fetch(MANIFEST_URL);
+export async function initAppIcon(iconNames = []) {
+  const res = await fetch(assetUrl(MANIFEST_URL));
   if (!res.ok)
     throw new Error(`Failed to load app-icon manifest: ${res.status}`);
   const manifest = await res.json();
 
-  // マニフェストからサイズを取得
+  // マニフェストからサイズを取得 (format が SSoT)
   const fmt = manifest.format;
   APP_ICON_W = fmt.width;
   APP_ICON_H = fmt.height;
@@ -116,16 +122,27 @@ export async function initAppIcon() {
   // マニフェストのベース URL (manifest.json と同階層)
   const baseUrl = MANIFEST_URL.replace(/manifest\.json$/, "");
 
-  // 全アイコンを並行読み込み
-  const entries = Object.entries(manifest.icons);
+  // フォールバックの default は必須 (失敗すれば throw)
+  appIcons["default"] = await loadAppIconPng(
+    baseUrl + DEFAULT_ICON_FILE,
+    APP_ICON_W,
+    APP_ICON_H,
+  );
+
+  // 規約ベース解決: <name>.png を並行読み込み。未提供 (404) は正常系として
+  // スキップし、描画時に default へフォールバックする。
+  const names = [...new Set(iconNames)].filter((n) => n && n !== "default");
   await Promise.all(
-    entries.map(async ([name, def]) => {
-      const { fgBuf, bgBuf } = await loadAppIconPng(
-        baseUrl + def.file,
-        APP_ICON_W,
-        APP_ICON_H,
-      );
-      appIcons[name] = { fgBuf, bgBuf };
+    names.map(async (name) => {
+      try {
+        appIcons[name] = await loadAppIconPng(
+          baseUrl + `${name}.png`,
+          APP_ICON_W,
+          APP_ICON_H,
+        );
+      } catch {
+        // アイコン未提供のアプリ: default にフォールバック (正常系)
+      }
     }),
   );
 
@@ -139,15 +156,22 @@ export async function initAppIcon() {
  * アウトライン (背景色 c=0) → 前景 (c=1) の 2 パス描画。
  * 指定名が未登録の場合は "default" アイコンにフォールバックする。
  *
+ * selected=true のときは 2 パスの色を入れ替えてアイコン自身を反転描画する
+ * (アウトライン=1・前景=0)。透過画素はそのまま残るため、外周に矩形の箱を
+ * 作らず「アイコンそのものが反転した」見た目になる (ラベルチップの反転と対).
+ *
  * @param {string} name  アイコン名 ("dolphin", "notepad", ...)
  * @param {number} x     描画先 X (左上)
  * @param {number} y     描画先 Y (左上)
+ * @param {boolean} [selected]  選択状態 (前景/背景色を反転)
  */
-export function drawAppIcon(name, x, y) {
+export function drawAppIcon(name, x, y, selected = false) {
   if (!ready) return;
   const icon = appIcons[name] || appIcons["default"];
   if (!icon) return;
-  blit(icon.bgBuf, APP_ICON_W, APP_ICON_H, x, y, 0);
-  blit(icon.fgBuf, APP_ICON_W, APP_ICON_H, x, y, 1);
+  const bgColor = selected ? 1 : 0;
+  const fgColor = selected ? 0 : 1;
+  blit(icon.bgBuf, APP_ICON_W, APP_ICON_H, x, y, bgColor);
+  blit(icon.fgBuf, APP_ICON_W, APP_ICON_H, x, y, fgColor);
 }
 
