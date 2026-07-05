@@ -95,3 +95,35 @@ describe("calcWindowSize ⇄ recalcLayout の逆演算", () => {
     expect(withFooter.w).toBe(plain.w);
   });
 });
+
+describe("padding:none (win._noPad)", () => {
+  it("contentRect が内側パディング無しでボディ端まで広がる", () => {
+    const padded = contentOf(200, 150, false, false); // 既定 (CONTENT_PADDING=6)
+    const noPadWin = {
+      x: 0,
+      y: 0,
+      w: 200,
+      h: 150,
+      footer: false,
+      _scrollable: false,
+      _vScroll: null,
+      fullscreen: false,
+      _noPad: true,
+    };
+    recalcLayout(noPadWin);
+    const none = noPadWin._layout.contentRect;
+    // CONTENT_PADDING(=6) ぶん、左右・上下で 12px 広い
+    expect(none.w - padded.w).toBe(12);
+    expect(none.h - padded.h).toBe(12);
+    // 左上も padding ぶん外側 (原点が枠寄り)
+    expect(padded.x - none.x).toBe(6);
+    expect(padded.y - none.y).toBe(6);
+  });
+
+  it("calcWindowSize は contentPad=0 で padding ぶん小さくなる", () => {
+    const def = calcWindowSize(200, 150, false, false);
+    const none = calcWindowSize(200, 150, false, false, 0);
+    expect(def.w - none.w).toBe(12);
+    expect(def.h - none.h).toBe(12);
+  });
+});

@@ -181,7 +181,13 @@ function recalcAllWindows() {
     if (win.snapState === "none" && !win.fullscreen && win.onMeasure) {
       const size = win.onMeasure();
       if (size) {
-        const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
+        const fit = calcWindowSize(
+          size.w,
+          size.h,
+          win.footer,
+          win._scrollable,
+          win._noPad ? 0 : CONTENT_PADDING,
+        );
         // scrollable ウィンドウはユーザーが選んだサイズを維持する。
         // 自然サイズに勝手に戻すと、フォント切替・パディング変更のたびに
         // 窓が拡大してしまい UX として違和感が大きい。
@@ -332,6 +338,9 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     modal: o.modal || false,
     noResize: o.noResize || false,
     noMaximize: o.noMaximize || false,
+    // ボディ内側パディング: padding:"none" で contentRect の内側余白を 0 にする
+    // (NOTEPAD/AQUARIUM 等の画面端まで描く/配置するアプリ用)。既定は CONTENT_PADDING。
+    _noPad: o.padding === "none",
     onBeforeClose: o.onBeforeClose || null,
     // ── ABOUT パネル (opt-in) ──
     // about 文字列を持つウィンドウはヘッダ右クリックメニューに ABOUT が出て、
@@ -1039,11 +1048,12 @@ export function wmOpen(
 ) {
   const footer = !!(opts && opts.footer);
   const scrollable = !!(opts && opts.scrollable);
+  const contentPad = opts && opts.padding === "none" ? 0 : CONTENT_PADDING;
   // w=0 or h=0 なら onMeasure で自動算出
   let scrollableClamped = false;
   if (onMeasure && (w === 0 || h === 0)) {
     const size = onMeasure();
-    const fit = calcWindowSize(size.w, size.h, footer, scrollable);
+    const fit = calcWindowSize(size.w, size.h, footer, scrollable, contentPad);
     if (w === 0) w = fit.w;
     if (h === 0) h = fit.h;
     if (scrollable) {

@@ -162,6 +162,9 @@ export function recalcLayout(win) {
   const fw = win.w;
   const fh = win.h;
   const footerH = win.footer ? FOOTER_HEIGHT : 0;
+  // ボディ内側パディング: padding:"none" のウィンドウ (NOTEPAD/AQUARIUM 等の
+  // 画面端まで描くアプリ) は 0、それ以外は config の CONTENT_PADDING。
+  const pad = win._noPad ? 0 : CONTENT_PADDING;
 
   // ── header ──
   const headerX = fx + BORDER;
@@ -197,17 +200,14 @@ export function recalcLayout(win) {
   //
   // contentTop / contentBottom / contentH は calcWindowSize の逆演算。
   const sbReserve = win._scrollable ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
-  const contentTop = sepY + SEPARATOR_HEIGHT + CONTENT_PADDING;
+  const contentTop = sepY + SEPARATOR_HEIGHT + pad;
   const contentBottom =
     footerH > 0
-      ? fy + fh - BORDER - footerH - CONTENT_PADDING
-      : fy + fh - BORDER - CONTENT_PADDING;
-  const contentX = fx + BORDER + CONTENT_PADDING;
+      ? fy + fh - BORDER - footerH - pad
+      : fy + fh - BORDER - pad;
+  const contentX = fx + BORDER + pad;
   const contentY = contentTop;
-  const contentW = Math.max(
-    0,
-    fw - BORDER * 2 - CONTENT_PADDING * 2 - sbReserve,
-  );
+  const contentW = Math.max(0, fw - BORDER * 2 - pad * 2 - sbReserve);
   const contentH = Math.max(0, contentBottom - contentTop);
 
   // ── スクロールバー・スロット矩形 (scrollable=true) ──
@@ -287,19 +287,23 @@ export function recalcLayout(win) {
  * @param {number} ch  コンテンツ高さ
  * @param {boolean} [footer=false] footer 有効フラグ
  * @param {boolean} [scrollable=false] スクロール可能ウィンドウか
+ * @param {number} [contentPad=CONTENT_PADDING] ボディ内側パディング (padding:none は 0)
  * @returns {{ w:number, h:number }}
  */
-export function calcWindowSize(cw, ch, footer = false, scrollable = false) {
+export function calcWindowSize(
+  cw,
+  ch,
+  footer = false,
+  scrollable = false,
+  contentPad = CONTENT_PADDING,
+) {
   const sbReserve = scrollable ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
   const footerH = footer ? FOOTER_HEIGHT : 0;
   return {
-    w: Math.max(
-      MIN_WIDTH,
-      cw + FRAME_EXTRA_W + CONTENT_PADDING * 2 + sbReserve,
-    ),
+    w: Math.max(MIN_WIDTH, cw + FRAME_EXTRA_W + contentPad * 2 + sbReserve),
     h: Math.max(
       MIN_HEIGHT,
-      ch + FRAME_EXTRA_H + HEADER_HEIGHT + CONTENT_PADDING * 2 + footerH,
+      ch + FRAME_EXTRA_H + HEADER_HEIGHT + contentPad * 2 + footerH,
     ),
   };
 }

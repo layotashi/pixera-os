@@ -301,6 +301,7 @@ WM.wmRegister(APP_NAME, () => {
   // ボディはエディタが毎フレームフィルするので、Maximize でも余白が残らない。
   winId = WM.wmOpen(-1, -1, NOTEPAD_W, NOTEPAD_H, APP_NAME, onDraw, onInput, null, {
     footer: true,
+    padding: "none", // editor-as-body: ボディ端まで使う（枠内側の余白を消す）
     onDrawFooter,
     onBeforeClose,
     about:

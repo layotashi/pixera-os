@@ -302,6 +302,7 @@ wmRegister(
         "Click in the tank to drop food, and the fish will come to eat it.",
       noResize: true,
       noMaximize: true,
+      padding: "none", // 水面・水草を枠端まで描く（ボディ内側の余白を消す）
     });
   },
   { category: "EXPERIMENT" },
