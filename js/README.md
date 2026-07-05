@@ -1,6 +1,6 @@
 # js/ — アーキテクチャ
 
-SYNESTA (1-bit の空想レトロ・クリエイティブ OS) を構成する全 JavaScript モジュール。
+PIXERA OS (1-bit の空想レトロ・クリエイティブ OS) を構成する全 JavaScript モジュール。
 ビルドツールなしの ES Modules で、`index.html` が `js/kernel.js` を読み込む。
 
 ## ドキュメント方針 (SSoT)
@@ -24,7 +24,7 @@ app/  →  wm/  →  ui/  →  core/  →  lang/
 ```
 
 - `core/` — 描画・入力・フォント・音声・ストレージ等のプラットフォーム基盤
-- `audio/` — STUDIO 専用の再生エンジンとトランスポート UI
+- `audio/` — SYNESTA 専用の再生エンジンとトランスポート UI
 - `ui/` — OS 風ウィジェットライブラリ (DI で `core` から切り離し、再利用可能)
 - `wm/` — OS 風ウィンドウマネージャ・デスクトップ
 - `app/` — 各アプリケーションウィンドウ
@@ -51,7 +51,7 @@ app/  →  wm/  →  ui/  →  core/  →  lang/
 - `transportSetPianoRollCallbacks(...)` (app → audio)
   — getTracks / setPlayheadPos
 - `transportSetIsHostFocused(...)` (wm → audio)
-  — STUDIO フォーカス判定 (Space キー制御用)
+  — SYNESTA フォーカス判定 (Space キー制御用)
 - `configSetSaveCallback(...)` (core → config)
   — 設定保存ディスパッチャ (storage へ)
 - `configSetFontSwitchCallback(...)` (core → config)

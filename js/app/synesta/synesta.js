@@ -1,6 +1,6 @@
 /**
- * @module app/studio/studio
- * studio.js — STUDIO ウィンドウ
+ * @module app/synesta/synesta
+ * synesta.js — SYNESTA ウィンドウ
  *
  * 音楽制作関連機能を統合した単一ウィンドウ。
  * Transport (常時表示) + タブ切替 (INST / PIANO_ROLL) で構成される。
@@ -56,7 +56,7 @@ import {
 //  定数
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-export const APP_NAME = "STUDIO";
+export const APP_NAME = "SYNESTA";
 const PADDING = 5;
 const SEPARATOR_HEIGHT = 1;
 
@@ -128,7 +128,7 @@ let lastContentWidth = 0;
 //  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function drawStudio(contentRect) {
+function drawSynesta(contentRect) {
   _initWidgets();
   lastContentWidth = contentRect.w;
 
@@ -189,7 +189,7 @@ function drawStudio(contentRect) {
 //  入力
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function onStudioInput(ev) {
+function onSynestaInput(ev) {
   _initWidgets();
   if (ev.localY < transportHeight) {
     // ── Transport へルーティング (中央揃えオフセット) ──
@@ -225,7 +225,7 @@ function onStudioInput(ev) {
 //  測定
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function measureStudio() {
+function measureSynesta() {
   _initWidgets();
   const synthSize = measureSynth();
   const prSize = measurePianoRoll();
@@ -279,8 +279,8 @@ function exportWav() {
 //  閉じる・リセット
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** STUDIO ウィンドウ ID */
-let studioWinId = -1;
+/** SYNESTA ウィンドウ ID */
+let synestaWinId = -1;
 
 /** 未保存データがあるか判定 */
 function hasUnsavedWork() {
@@ -288,7 +288,7 @@ function hasUnsavedWork() {
 }
 
 /** 全サブシステムの状態を初期値にリセット */
-function resetAllStudioState() {
+function resetAllSynestaState() {
   // オーディオエンジン (音を止める)
   resetDefaultChannel();
   resetPlaybackEngine();
@@ -307,7 +307,7 @@ function resetAllStudioState() {
  * onBeforeClose コールバック。
  * false を返すと閉じをキャンセルする。
  */
-function onStudioBeforeClose() {
+function onSynestaBeforeClose() {
   // 再生中なら即停止
   stopPlayback();
 
@@ -315,14 +315,14 @@ function onStudioBeforeClose() {
     openConfirmDialog("DISCARD UNSAVED CHANGES?", {
       variant: "danger",
       onOk: () => {
-        resetAllStudioState();
-        wmClose(studioWinId);
+        resetAllSynestaState();
+        wmClose(synestaWinId);
       },
     });
     return false;
   }
 
-  resetAllStudioState();
+  resetAllSynestaState();
   return true;
 }
 
@@ -334,20 +334,20 @@ wmRegister(
   APP_NAME,
   () => {
     _initWidgets();
-    studioWinId = wmOpen(
+    synestaWinId = wmOpen(
       -1,
       -1,
       0,
       0,
       APP_NAME,
-      drawStudio,
-      onStudioInput,
-      measureStudio,
+      drawSynesta,
+      onSynestaInput,
+      measureSynesta,
       {
         about:
           "A music workstation. Use the transport to play and record, and " +
           "switch between the instrument and piano-roll tabs to build a track.",
-        onBeforeClose: onStudioBeforeClose,
+        onBeforeClose: onSynestaBeforeClose,
         onRelayout: () => {
           tabBar.remeasure();
           btnExport.remeasure();
@@ -364,7 +364,7 @@ wmRegister(
         },
       },
     );
-    return studioWinId;
+    return synestaWinId;
   },
   { category: "CREATIVE", dev: true },
 );

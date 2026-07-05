@@ -3,7 +3,7 @@
  * band.js — BAND (1-bit 音声反応ビジュアル) のプロトタイプ
  *
  * Web Audio の AnalyserNode で master gain から FFT / 波形を取得し、
- * 1-bit でリアルタイム可視化する。STUDIO の再生と同期して
+ * 1-bit でリアルタイム可視化する。SYNESTA の再生と同期して
  * 「画が音に踊る」体験を提供する。
  *
  * プロトタイプ仕様:
@@ -236,7 +236,7 @@ wmRegister(
   () => {
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
       about:
-        "Visualizes audio from STUDIO playback in 1-bit. Press the > " +
+        "Visualizes audio from SYNESTA playback in 1-bit. Press the > " +
         "button in the header to cycle through visualizer modes.",
       noResize: true,
       noMaximize: true,

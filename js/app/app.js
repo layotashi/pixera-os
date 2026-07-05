@@ -21,8 +21,8 @@ import { updateTransport } from "../audio/transport.js";
 import "./settings.js"; // TUNING を統合 (DISPLAY/EFFECTS/THEME/SYSTEM タブ)
 import "./notepad.js";
 // capture.js は上で named import 済み
-import "./studio/studio.js";
-// studio/synth_panel.js, studio/piano_roll.js は studio.js 経由で読み込まれる
+import "./synesta/synesta.js";
+// synesta/synth_panel.js, synesta/piano_roll.js は synesta.js 経由で読み込まれる
 import "./about.js";
 import "./lifegame.js";
 import "./explorer.js";

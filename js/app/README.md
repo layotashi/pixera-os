@@ -6,7 +6,7 @@
 ## 構成ルール
 
 - `app/` 直下のファイル = 独立アプリ (`wmRegister` で自己登録し、個別ウィンドウを持つ)。
-- `app/studio/` = STUDIO アプリの内部モジュール (ウィンドウ内タブとして動作)。
+- `app/synesta/` = SYNESTA アプリの内部モジュール (ウィンドウ内タブとして動作)。
 - 単一ファイルのアプリは直下、複数ファイル構成はサブディレクトリに分離。
 
 ## 登録とカテゴリ (SSoT = コード)
@@ -24,7 +24,7 @@
 - `about` — ヘッダ右クリック → ABOUT パネルの説明文 (宣言したアプリのみ)。
 
 - **CREATIVE**
-  - `studio/` — 音楽 DAW (dev)
+  - `synesta/` — 音楽 DAW (dev)
   - `tessera` — 生成的アート言語 Tessera のエディタ + 出力
   - `paint` — 1-bit ピクセルペイント
 - **トップレベル** (カテゴリ無し = OS ユーティリティ)
@@ -59,6 +59,6 @@
 - **登録パターン**: 各ウィンドウは `wmRegister()` で自己登録し、
   `app.js` が副作用 import で読み込む。
 - **WM お任せ配置**: `wmOpen(-1, -1, ...)` で座標を指定せず、WM のカスケード配置に委譲する。
-- **統合ウィンドウ**: 音楽制作機能は `studio/` に統合し、タブ (INST / PIANO_ROLL) で切替。
-- **DI データ提供**: `studio/piano_roll.js` の `tracks` / `setPlayheadPos` は
+- **統合ウィンドウ**: 音楽制作機能は `synesta/` に統合し、タブ (INST / PIANO_ROLL) で切替。
+- **DI データ提供**: `synesta/piano_roll.js` の `tracks` / `setPlayheadPos` は
   `kernel.js` から再生エンジンへ注入される。

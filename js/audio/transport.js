@@ -6,7 +6,7 @@
  * 再生エンジンの実体は playback_engine.js に分離されている。
  *
  * 描画・入力・測定関数をエクスポートし、
- * app_studio.js が STUDIO ウィンドウ内に配置する。
+ * synesta.js が SYNESTA ウィンドウ内に配置する。
  */
 
 import * as Config from "../config.js";

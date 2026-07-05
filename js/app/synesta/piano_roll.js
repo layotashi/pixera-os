@@ -1,6 +1,6 @@
 /**
- * @module app/studio/piano_roll
- * piano_roll.js — PIANO_ROLL タブ (STUDIO ウィンドウ内)
+ * @module app/synesta/piano_roll
+ * piano_roll.js — PIANO_ROLL タブ (SYNESTA ウィンドウ内)
  *
  * ピアノロールエディタの全ロジック: グリッド描画、ノート編集、選択、
  * ドラッグ、クリップボード、Undo/Redo、再生ヘッド連動。
@@ -24,7 +24,7 @@ import {
   FOCUS_MARGIN,
   buttonAutoWidth,
 } from "../../ui/index.js";
-import { APP_NAME } from "./studio.js";
+import { APP_NAME } from "./synesta.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  グリッド定数・ズーム
@@ -1164,7 +1164,7 @@ export function onPianoRollInput(ev) {
 
 /**
  * ピアノロールの全状態を初期値にリセットする。
- * STUDIO ウィンドウを閉じるときに呼ばれる。
+ * SYNESTA ウィンドウを閉じるときに呼ばれる。
  */
 export function resetPianoRoll() {
   // ノートデータ + オーディオ停止

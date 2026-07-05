@@ -459,7 +459,7 @@ export function togglePlayPause() {
 
 /**
  * 再生エンジンの全状態を初期値にリセットする。
- * STUDIO ウィンドウを閉じるときに呼ばれる。
+ * SYNESTA ウィンドウを閉じるときに呼ばれる。
  */
 export function resetPlaybackEngine() {
   stopPlayback();

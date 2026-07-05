@@ -1,6 +1,6 @@
 /**
- * @module app/studio/synth_panel
- * synth_panel.js — INST タブ (STUDIO ウィンドウ内)
+ * @module app/synesta/synth_panel
+ * synth_panel.js — INST タブ (SYNESTA ウィンドウ内)
  *
  * チップチューン風モノフォニックシンセサイザの UI。
  * PCキーボードで演奏、波形選択・ADSR・音量をコントロールする。
@@ -14,7 +14,7 @@ import * as Audio from "../../core/audio.js";
 import * as UI from "../../ui/index.js";
 import { isTransportPlaying } from "../../audio/transport.js";
 import { getActiveTrackChannel, getActiveTrackIndex } from "./piano_roll.js";
-import { APP_NAME } from "./studio.js";
+import { APP_NAME } from "./synesta.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -556,7 +556,7 @@ export function remeasureSynth() {
 
 /**
  * シンセ UI の全状態を初期値にリセットする。
- * STUDIO ウィンドウを閉じるときに呼ばれる。
+ * SYNESTA ウィンドウを閉じるときに呼ばれる。
  */
 export function resetSynth() {
   // キーボード入力

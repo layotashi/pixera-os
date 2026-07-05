@@ -2,14 +2,14 @@
  * @module core/audio
  * audio.js — オーディオ基盤 (OS レベル)
  *
- * SYNESTA の全アプリが共有するオーディオインフラストラクチャ。
+ * PIXERA OS の全アプリが共有するオーディオインフラストラクチャ。
  * Web Audio API の AudioContext・マスター信号チェーン・録画用ストリームを
  * 一元管理し、SynthChannel クラスで per-channel 音声合成を提供する。
  *
  * 位置づけ:
  *   gpu.js が描画基盤であるように、audio.js は音声基盤である。
  *   Windows の WASAPI / Mac の CoreAudio に相当するレイヤー。
- *   STUDIO (DAW) 固有のスケジューラ・UI は audio/ に残る。
+ *   SYNESTA (DAW) 固有のスケジューラ・UI は audio/ に残る。
  *
  * ── 音声合成 (SynthChannel) ──
  *   波形: SAW, TRI, SQ50, SQ25, SQ12, SINE, NOISE
@@ -18,7 +18,7 @@
  *
  * ── サンプル再生 (SamplePlayer) ──
  *   AudioBuffer (PCM データ) のワンショット再生。
- *   システム SFX や STUDIO Sampler デバイスの基盤。
+ *   システム SFX や SYNESTA Sampler デバイスの基盤。
  *   decodeAudioBuffer() で ArrayBuffer → AudioBuffer に変換し、
  *   SamplePlayer で再生する。
  *
@@ -854,7 +854,7 @@ export function playSfx(ch, midiNote, duration) {
  *
  * 用途:
  *   - システム SFX (WAV ファイルベースの効果音)
- *   - STUDIO Sampler デバイス
+ *   - SYNESTA Sampler デバイス
  *   - ユーザーカスタム SFX (VFS 上の WAV を再生)
  *
  * 信号チェーン: source → gainNode → masterGain → ... → destination

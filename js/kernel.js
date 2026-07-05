@@ -45,7 +45,7 @@ import {
   transportSetPianoRollCallbacks,
   transportSetIsHostFocused,
 } from "./audio/transport.js";
-import { tracks, setPlayheadPos } from "./app/studio/piano_roll.js";
+import { tracks, setPlayheadPos } from "./app/synesta/piano_roll.js";
 import * as Storage from "./core/storage.js";
 import * as Config from "./config.js";
 import { runSplash, fadeInDesktop } from "./splash.js";
@@ -113,8 +113,8 @@ async function boot() {
       setPlayheadPos,
     });
 
-    // ── transport ホストフォーカス判定 (STUDIO ウィンドウ依存) ──
-    transportSetIsHostFocused(() => WM.wmIsFocused("STUDIO"));
+    // ── transport ホストフォーカス判定 (SYNESTA ウィンドウ依存) ──
+    transportSetIsHostFocused(() => WM.wmIsFocused("SYNESTA"));
 
     // ── システム SFX フック注入 ──
     initSystemSfxHooks();
@@ -235,10 +235,10 @@ async function boot() {
     window.addEventListener("focus", () => Config.autoScale());
 
     // ── テストフック (visual review harness 用) ──
-    // tools/capture.mjs などのオフブラウザツールが SYNESTA の起動完了を
+    // tools/capture.mjs などのオフブラウザツールが PIXERA OS の起動完了を
     // 検知し、ウィンドウを開いて canvas をスクリーンショットするためのフック。
     // 通常運用には影響しない (= 単なる名前空間注入)。
-    /** @type {any} */ (window).__synesta = {
+    /** @type {any} */ (window).__pixera = {
       booted: true,
       wmOpenByName: WM.wmOpenByName,
       wmGetRegistry: WM.wmGetRegistry,
@@ -257,12 +257,12 @@ async function boot() {
 
     mainLoop();
   } catch (e) {
-    console.error("[SYNESTA] Boot failed:", e);
+    console.error("[PIXERA] Boot failed:", e);
     document.body.style.background = "#000";
     document.body.style.color = "#f00";
     document.body.style.fontFamily = "monospace";
     document.body.style.padding = "20px";
-    document.body.textContent = `SYNESTA boot failed: ${e.message}`;
+    document.body.textContent = `PIXERA OS boot failed: ${e.message}`;
   }
 }
 

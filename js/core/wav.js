@@ -6,7 +6,7 @@
  * gif.js が 1-bit 画像の GIF エンコードを担うように、
  * wav.js は音声データの WAV 入出力を担う。
  *
- * STUDIO の WAV エクスポート、VFS 上の WAV ファイル読み込み、
+ * SYNESTA の WAV エクスポート、VFS 上の WAV ファイル読み込み、
  * システム SFX のカスタムサウンド等で使用される。
  *
  * WAV (RIFF) フォーマット概要:
