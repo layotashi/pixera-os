@@ -313,23 +313,9 @@ export function ctrlHeld() {
 }
 
 // ── 文字カテゴリ & 単語境界ヘルパー ──
-
-export const CAT_WORD = 0;
-export const CAT_SPACE = 1;
-export const CAT_PUNCT = 2;
-
-/** 文字のカテゴリを返す (word / space / punctuation) */
-export function charCat(ch) {
-  if (ch === " " || ch === "\t") return CAT_SPACE;
-  if (
-    (ch >= "a" && ch <= "z") ||
-    (ch >= "A" && ch <= "Z") ||
-    (ch >= "0" && ch <= "9") ||
-    ch === "_"
-  )
-    return CAT_WORD;
-  return CAT_PUNCT;
-}
+// 定義は純粋モジュール char_category.js に置き、ここは互換のため再 export する
+// (TextEditModel など Ports 非依存で使いたい側が直接 import できるように)。
+export { CAT_WORD, CAT_SPACE, CAT_PUNCT, charCat } from "./char_category.js";
 
 /** クリップボードにテキストを書き込む (非同期, fire-and-forget) */
 export function clipboardWrite(text) {

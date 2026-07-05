@@ -10,11 +10,7 @@ import { FocusableWidget } from "../FocusableWidget.js";
 import * as Ports from "../ports.js";
 import * as Helpers from "../ui_helpers.js";
 import * as Scroll from "../scrollbar.js";
-
-/** Undo 履歴の最大段数 */
-const UNDO_MAX = 200;
-/** 連続入力を 1 undo にまとめる時間窓 (ms) */
-const UNDO_COALESCE_MS = 600;
+import { TextEditModel } from "../text_edit_model.js";
 
 export class TextArea extends FocusableWidget {
   /**
@@ -35,25 +31,17 @@ export class TextArea extends FocusableWidget {
       innerW + Helpers.BUTTON_PADDING * 2 + Scroll.SCROLLBAR_SLOT_WIDTH + 4;
     const h = innerH + Helpers.BUTTON_PADDING * 2 + 4;
     super(x, y, w, h);
-    const initLines = String(text || "")
-      .split("\n")
-      .slice(0, maxLines);
-    this.lines = initLines;
-    this.maxLines = maxLines;
+    /** 文書 + カーソル + 選択 + Undo の純粋モデル。このウィジェットは枠と表示を担う。 */
+    this.model = new TextEditModel(text, maxLines);
     this.widthChars = widthChars;
     this.visibleRows = visibleRows;
-    this.cursorRow = 0;
-    this.cursorCol = initLines[0] ? initLines[0].length : 0;
     /** 横スクロールオフセット (全行共通, 文字数) */
     this.scrollX = 0;
     /** @private 縦スクロール */
-    this._vScroll = Scroll.createScrollState(visibleRows, initLines.length);
-    /** 選択アンカー行 (null=選択なし) */
-    this.selectionAnchorRow = null;
-    /** 選択アンカー列 */
-    this.selectionAnchorCol = null;
-    /** 矩形選択 {anchorRow, anchorCol, cursorRow, cursorCol} or null */
-    this.boxSelection = null;
+    this._vScroll = Scroll.createScrollState(
+      visibleRows,
+      this.model.lines.length,
+    );
     /** @private 中ボタンドラッグ中 */
     this._middleButtonDragging = false;
     /** @private マウスドラッグ中 */
@@ -61,19 +49,8 @@ export class TextArea extends FocusableWidget {
     this.onChange = onChange || null;
     /** @private */
     this._blinkTimer = 0;
-    // ── Undo / Redo（行スナップショット方式。連続入力はコアレスして 1 ステップに） ──
-    /** @private @type {Array<{lines:string[],cursorRow:number,cursorCol:number}>} */
-    this._undoStack = [];
-    /** @private */
-    this._redoStack = [];
-    /** @private 直近編集の種別（"type" は連続入力をまとめる） */
-    this._undoKind = null;
-    /** @private 直近編集の時刻（コアレス判定用） */
-    this._undoTime = 0;
     /** 空白/改行マーカー（・/↓）を表示するか。コード編集では消すと読みやすい。 */
     this.showWhitespace = true;
-    /** 入力を大文字へ畳むか（SYNESTA は大文字表示が前提。表示＝保存を一致させる）。 */
-    this.uppercaseInput = true;
     /**
      * 桁ガイド列（null=無効）。設定すると、その列に点線の縦ガイドを描き、その列を超える
      * 行は右端を実線ティックで強調する（TESS の 40桁制約を可視化＝折り返しの目安）。
@@ -81,79 +58,70 @@ export class TextArea extends FocusableWidget {
     this.guideCol = null;
   }
 
-  /** @private 現在状態のスナップショット */
-  _snapshot() {
-    return {
-      lines: this.lines.slice(),
-      cursorRow: this.cursorRow,
-      cursorCol: this.cursorCol,
-    };
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  //  文書状態 / 編集エンジンは TextEditModel へ委譲
+  //  handleKey / update / draw / 外部 API から従来名で読み書きできるよう proxy する。
+  //  （B3 でビュー抽出時にこの proxy 群は解消予定）
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  get lines() { return this.model.lines; }
+  set lines(v) { this.model.lines = v; }
+  get maxLines() { return this.model.maxLines; }
+  set maxLines(v) { this.model.maxLines = v; }
+  get cursorRow() { return this.model.cursorRow; }
+  set cursorRow(v) { this.model.cursorRow = v; }
+  get cursorCol() { return this.model.cursorCol; }
+  set cursorCol(v) { this.model.cursorCol = v; }
+  get selectionAnchorRow() { return this.model.selectionAnchorRow; }
+  set selectionAnchorRow(v) { this.model.selectionAnchorRow = v; }
+  get selectionAnchorCol() { return this.model.selectionAnchorCol; }
+  set selectionAnchorCol(v) { this.model.selectionAnchorCol = v; }
+  get boxSelection() { return this.model.boxSelection; }
+  set boxSelection(v) { this.model.boxSelection = v; }
+  get uppercaseInput() { return this.model.uppercaseInput; }
+  set uppercaseInput(v) { this.model.uppercaseInput = v; }
+
+  _currentLine() { return this.model._currentLine(); }
+  _clearSelection() { return this.model._clearSelection(); }
+  _setSelectionAnchor() { return this.model._setSelectionAnchor(); }
+  _getSelectionRange() { return this.model._getSelectionRange(); }
+  _deleteSelection() { return this.model._deleteSelection(); }
+  _getSelectedText(sel) { return this.model._getSelectedText(sel); }
+  _normalizeBoxSelection() { return this.model._normalizeBoxSelection(); }
+  _getBoxSelectionText() { return this.model._getBoxSelectionText(); }
+  _deleteBoxSelection() { return this.model._deleteBoxSelection(); }
+  _findWordBoundaryLeft(row, col) {
+    return this.model._findWordBoundaryLeft(row, col);
+  }
+  _findWordBoundaryRight(row, col) {
+    return this.model._findWordBoundaryRight(row, col);
+  }
+  _snapshot() { return this.model._snapshot(); }
+  _recordEdit(before, kind) { return this.model._recordEdit(before, kind); }
+  /** テキスト内容を返す */
+  getText() { return this.model.getText(); }
+  /** 選択中の文字数を返す (選択なし → 0)。 */
+  selectedCharCount() { return this.model.selectedCharCount(); }
+  /** 履歴をクリアする（ファイルを開く/新規など、編集の連続性が切れるとき）。 */
+  clearHistory() { return this.model.clearHistory(); }
+  /** 外部からの一括変更を 1 ステップとして undo 可能にする（lines 書き換えの前に呼ぶ）。 */
+  snapshotForUndo() { return this.model.snapshotForUndo(); }
+
+  /** Undo（直前の編集を取り消す）。model が状態を復元、ビューはスクロール等を同期。 */
+  _undo() {
+    if (this.model.applyUndo()) this._afterRestore();
   }
 
-  /** @private スナップショットを復元（範囲はクランプ）して onChange を発火 */
-  _applySnapshot(s) {
-    this.lines = s.lines.slice();
-    this.cursorRow = Math.max(0, Math.min(s.cursorRow, this.lines.length - 1));
-    this.cursorCol = Math.max(
-      0,
-      Math.min(s.cursorCol, this.lines[this.cursorRow].length),
-    );
-    this._clearSelection();
-    this.boxSelection = null;
+  /** Redo（取り消した編集をやり直す）。 */
+  _redo() {
+    if (this.model.applyRedo()) this._afterRestore();
+  }
+
+  /** @private undo/redo 後のビュー同期（スクロール範囲・カーソル可視化・onChange）。 */
+  _afterRestore() {
     Scroll.scrollSetContent(this._vScroll, this.lines.length);
     this._ensureCursorVisible();
     this._blinkTimer = 0;
     if (this.onChange) this.onChange(this.getText());
-  }
-
-  /** @private Undo（直前の編集を取り消す） */
-  _undo() {
-    if (!this._undoStack.length) return;
-    this._redoStack.push(this._snapshot());
-    this._applySnapshot(this._undoStack.pop());
-    this._undoKind = null; // 次の編集は必ず新規エントリ
-  }
-
-  /** @private Redo（取り消した編集をやり直す） */
-  _redo() {
-    if (!this._redoStack.length) return;
-    this._undoStack.push(this._snapshot());
-    this._applySnapshot(this._redoStack.pop());
-    this._undoKind = null;
-  }
-
-  /** 履歴をクリアする（ファイルを開く/新規など、編集の連続性が切れるとき）。 */
-  clearHistory() {
-    this._undoStack.length = 0;
-    this._redoStack.length = 0;
-    this._undoKind = null;
-  }
-
-  /**
-   * 外部からの一括変更（整形・seed 振り直し等）を 1 ステップとして undo 可能にする。
-   * lines を書き換える「前」に呼ぶと、その直前状態が undo に積まれる。
-   */
-  snapshotForUndo() {
-    this._undoStack.push(this._snapshot());
-    if (this._undoStack.length > UNDO_MAX) this._undoStack.shift();
-    this._redoStack.length = 0;
-    this._undoKind = null;
-  }
-
-  /** @private 編集後に呼び、undo に積む（"type" は時間窓内でコアレス）。 */
-  _recordEdit(before, kind) {
-    const now = Ports.now ? Ports.now() : Date.now();
-    const coalesce =
-      kind === "type" &&
-      this._undoKind === "type" &&
-      now - this._undoTime < UNDO_COALESCE_MS;
-    if (!coalesce) {
-      this._undoStack.push(before);
-      if (this._undoStack.length > UNDO_MAX) this._undoStack.shift();
-      this._redoStack.length = 0; // 新規編集で redo を破棄
-    }
-    this._undoKind = kind;
-    this._undoTime = now;
   }
 
   /** @override */
@@ -187,167 +155,8 @@ export class TextArea extends FocusableWidget {
     this._middleButtonDragging = false;
   }
 
-  /** テキスト内容を返す */
-  getText() {
-    return this.lines.join("\n");
-  }
-
-  /**
-   * 選択中の文字数を返す (選択なし → 0)。
-   * @returns {number}
-   */
-  selectedCharCount() {
-    if (this.boxSelection) {
-      const normalizedBox = this._normalizeBoxSelection();
-      if (!normalizedBox) return 0;
-      let n = 0;
-      for (let r = normalizedBox.r0; r <= normalizedBox.r1; r++) {
-        const len = this.lines[r].length;
-        n += Math.min(normalizedBox.c1, len) - Math.min(normalizedBox.c0, len);
-      }
-      return n;
-    }
-    const selection = this._getSelectionRange();
-    if (!selection) return 0;
-    return this._getSelectedText(selection).length;
-  }
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  //  Private helpers
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  /** 現在のカーソル行テキスト */
-  _currentLine() {
-    return this.lines[this.cursorRow];
-  }
-
-  _clearSelection() {
-    this.selectionAnchorRow = null;
-    this.selectionAnchorCol = null;
-  }
-
-  _setSelectionAnchor() {
-    if (this.selectionAnchorRow === null) {
-      this.selectionAnchorRow = this.cursorRow;
-      this.selectionAnchorCol = this.cursorCol;
-    }
-  }
-
-  // ── 選択範囲 ──
-
-  /** 正規化された選択範囲 [sr, sc, er, ec] を返す。選択なしは null */
-  _getSelectionRange() {
-    if (this.selectionAnchorRow === null) return null;
-    const anchorRow = this.selectionAnchorRow,
-      anchorCol = this.selectionAnchorCol;
-    const curRow = this.cursorRow,
-      curCol = this.cursorCol;
-    if (anchorRow === curRow && anchorCol === curCol) return null;
-    if (anchorRow < curRow || (anchorRow === curRow && anchorCol < curCol))
-      return [anchorRow, anchorCol, curRow, curCol];
-    return [curRow, curCol, anchorRow, anchorCol];
-  }
-
-  /** 選択範囲を削除 */
-  _deleteSelection() {
-    const selection = this._getSelectionRange();
-    if (!selection) return false;
-    const [startRow, startCol, endRow, endCol] = selection;
-    if (startRow === endRow) {
-      this.lines[startRow] =
-        this.lines[startRow].slice(0, startCol) +
-        this.lines[startRow].slice(endCol);
-    } else {
-      this.lines[startRow] =
-        this.lines[startRow].slice(0, startCol) +
-        this.lines[endRow].slice(endCol);
-      this.lines.splice(startRow + 1, endRow - startRow);
-    }
-    this.cursorRow = startRow;
-    this.cursorCol = startCol;
-    this.selectionAnchorRow = null;
-    this.selectionAnchorCol = null;
-    return true;
-  }
-
-  /** 選択範囲のテキストを返す */
-  _getSelectedText(selection) {
-    const [startRow, startCol, endRow, endCol] = selection;
-    if (startRow === endRow)
-      return this.lines[startRow].slice(startCol, endCol);
-    const parts = [this.lines[startRow].slice(startCol)];
-    for (let i = startRow + 1; i < endRow; i++) parts.push(this.lines[i]);
-    parts.push(this.lines[endRow].slice(0, endCol));
-    return parts.join("\n");
-  }
-
-  // ── 矩形選択 ──
-
-  /** 矩形選択の正規化 */
-  _normalizeBoxSelection() {
-    const box = this.boxSelection;
-    if (!box) return null;
-    const minRow = Math.min(box.anchorRow, box.cursorRow);
-    const maxRow = Math.max(box.anchorRow, box.cursorRow);
-    const minCol = Math.min(box.anchorCol, box.cursorCol);
-    const maxCol = Math.max(box.anchorCol, box.cursorCol);
-    if (minRow === maxRow && minCol === maxCol) return null;
-    return { r0: minRow, c0: minCol, r1: maxRow, c1: maxCol };
-  }
-
-  /** 矩形選択テキスト */
-  _getBoxSelectionText() {
-    const box = this._normalizeBoxSelection();
-    if (!box) return "";
-    const parts = [];
-    for (let r = box.r0; r <= box.r1; r++) {
-      const line = r < this.lines.length ? this.lines[r] : "";
-      parts.push(line.slice(box.c0, Math.min(box.c1, line.length)));
-    }
-    return parts.join("\n");
-  }
-
-  /** 矩形選択を削除 */
-  _deleteBoxSelection() {
-    const box = this._normalizeBoxSelection();
-    if (!box) return false;
-    for (let r = box.r0; r <= Math.min(box.r1, this.lines.length - 1); r++) {
-      const line = this.lines[r];
-      const start = Math.min(box.c0, line.length);
-      const end = Math.min(box.c1, line.length);
-      this.lines[r] = line.slice(0, start) + line.slice(end);
-    }
-    this.cursorRow = box.r0;
-    this.cursorCol = box.c0;
-    this.boxSelection = null;
-    return true;
-  }
-
-  // ── 単語境界 ──
-
-  _findWordBoundaryLeft(row, col) {
-    if (col === 0) {
-      if (row > 0) return { row: row - 1, col: this.lines[row - 1].length };
-      return { row: 0, col: 0 };
-    }
-    const line = this.lines[row];
-    let pos = col;
-    const cat = Helpers.charCat(line[pos - 1]);
-    while (pos > 0 && Helpers.charCat(line[pos - 1]) === cat) pos--;
-    return { row, col: pos };
-  }
-
-  _findWordBoundaryRight(row, col) {
-    const line = this.lines[row];
-    if (col >= line.length) {
-      if (row < this.lines.length - 1) return { row: row + 1, col: 0 };
-      return { row, col: line.length };
-    }
-    let pos = col;
-    const cat = Helpers.charCat(line[pos]);
-    while (pos < line.length && Helpers.charCat(line[pos]) === cat) pos++;
-    return { row, col: pos };
-  }
+  // getText / selectedCharCount / 選択・矩形選択・単語境界の各ヘルパーは
+  // TextEditModel へ移動済み（上部で model に委譲）。
 
   // ── カーソル可視化 ──
 
