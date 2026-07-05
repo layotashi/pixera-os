@@ -1,7 +1,7 @@
 /**
  * tools/capture.mjs — visual review harness
  *
- * SYNESTA を headless Chromium で起動し、指定したアプリウィンドウを開いて
+ * PIXERA OS を headless Chromium で起動し、指定したアプリウィンドウを開いて
  * canvas をスクリーンショット PNG として保存する。
  *
  * 用途:
@@ -124,12 +124,12 @@ async function main() {
       console.error(`  [browser PAGE ERROR] ${err.message}`);
     });
 
-    console.log(`[capture] loading SYNESTA`);
+    console.log(`[capture] loading PIXERA OS`);
     await page.goto(`http://localhost:${PORT}/`);
 
-    console.log(`[capture] waiting for boot (window.__synesta.booted)`);
+    console.log(`[capture] waiting for boot (window.__pixera.booted)`);
     await page.waitForFunction(
-      () => window.__synesta && window.__synesta.booted === true,
+      () => window.__pixera && window.__pixera.booted === true,
       { timeout: BOOT_TIMEOUT_MS },
     );
 
@@ -140,17 +140,17 @@ async function main() {
     //   - 背景を単色 Solid (level 0) にしてディザ模様のノイズを除去
     console.log(`[capture] applying review-clarity settings`);
     await page.evaluate(async () => {
-      window.__synesta.setEffect("diagEnabled", false);
-      window.__synesta.setEffect("vignetteEnabled", false);
-      window.__synesta.setCursorHidden(true);
+      window.__pixera.setEffect("diagEnabled", false);
+      window.__pixera.setEffect("vignetteEnabled", false);
+      window.__pixera.setCursorHidden(true);
       const Wallpaper = await import("/js/wallpaper.js");
       Wallpaper.setBackgroundMode("solid");
       Wallpaper.setSolidLevel(0);
     });
 
-    // 環境変数 SYNESTA_FONT で起動時のシステムフォントを切替えられる
-    // (デバッグ用。例: SYNESTA_FONT=<フォントID> npm run capture SETTINGS)
-    const fontOverride = process.env.SYNESTA_FONT;
+    // 環境変数 PIXERA_FONT で起動時のシステムフォントを切替えられる
+    // (デバッグ用。例: PIXERA_FONT=<フォントID> npm run capture SETTINGS)
+    const fontOverride = process.env.PIXERA_FONT;
     if (fontOverride) {
       console.log(`[capture] switching font to: ${fontOverride}`);
       await page.evaluate(async (id) => {
@@ -162,9 +162,9 @@ async function main() {
       await page.waitForTimeout(300);
     }
 
-    // 環境変数 SYNESTA_PALETTE で起動時のパレットを切替えられる
-    // (デバッグ用。例: SYNESTA_PALETTE=<パレットキー> npm run capture desktop)
-    const paletteOverride = process.env.SYNESTA_PALETTE;
+    // 環境変数 PIXERA_PALETTE で起動時のパレットを切替えられる
+    // (デバッグ用。例: PIXERA_PALETTE=<パレットキー> npm run capture desktop)
+    const paletteOverride = process.env.PIXERA_PALETTE;
     if (paletteOverride) {
       console.log(`[capture] switching palette to: ${paletteOverride}`);
       await page.evaluate(async (name) => {
@@ -174,8 +174,8 @@ async function main() {
       await page.waitForTimeout(300);
     }
 
-    // 環境変数 SYNESTA_INVERT=1 で反転表示 (reverse video) を ON にできる
-    if (process.env.SYNESTA_INVERT) {
+    // 環境変数 PIXERA_INVERT=1 で反転表示 (reverse video) を ON にできる
+    if (process.env.PIXERA_INVERT) {
       console.log(`[capture] enabling invert (reverse video)`);
       await page.evaluate(async () => {
         const Config = await import("/js/config.js");
@@ -189,7 +189,7 @@ async function main() {
       console.log(`[capture] opening window: ${windowName}`);
       const opened = await page.evaluate((name) => {
         try {
-          window.__synesta.wmOpenByName(name);
+          window.__pixera.wmOpenByName(name);
           return true;
         } catch (e) {
           return String(e);

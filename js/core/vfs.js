@@ -12,7 +12,7 @@
  *
  * ── ストレージ ──
  *   ファイルツリー全体を 1 つの JSON として保存する。
- *   キー: "synesta.vfs"
+ *   キー: "pixera.vfs"
  *
  * ── ノード構造 ──
  *   ディレクトリ: { type: "dir",  name, children: [], createdAt, modifiedAt }
@@ -85,7 +85,7 @@ function createDefaultTree() {
           {
             type: "file",
             name: "readme.txt",
-            content: "Welcome to SYNESTA!\nThis is your virtual filesystem.",
+            content: "Welcome to PIXERA!\nThis is your virtual filesystem.",
             createdAt: now,
             modifiedAt: now,
           },

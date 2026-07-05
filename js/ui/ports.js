@@ -6,7 +6,7 @@
  * ウィジェットはコアモジュール (gpu, font, icon, input 等) を直接 import せず、
  * このモジュールの export を使用する。
  *
- * ホスト側 (例: SYNESTA の kernel.js) は起動時に initPorts() を呼び、
+ * ホスト側 (例: PIXERA OS の kernel.js) は起動時に initPorts() を呼び、
  * 実際のモジュール実装を注入する。
  * これにより UI ウィジェットライブラリを他のプロジェクトでも再利用できる。
  *

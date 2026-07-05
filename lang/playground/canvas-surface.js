@@ -3,7 +3,7 @@
  * canvas-surface.js — surface 契約の canvas2D 実装（開発ハーネス用シム）。
  *
  * 低解像度の 1-bit フレームバッファ (W×H) を持ち、整数倍に拡大して描く。
- * SYNESTA 統合時はこのシムを本物 GPU に差し替えるだけ（言語本体は無改変）。
+ * PIXERA 統合時はこのシムを本物 GPU に差し替えるだけ（言語本体は無改変）。
  */
 import { ditherField } from "../surface.js";
 

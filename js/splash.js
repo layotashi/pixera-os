@@ -34,7 +34,7 @@ import * as Config from "./config.js";
 /** 文字ピッチ (グリフ幅 + 字間 1px) */
 const CHAR_PITCH = GLYPH_W + 1;
 
-/** SYNESTA ASCII ロゴの文字幅 (APP_ASCII_LOGO から自動算出) */
+/** PIXERA OS ASCII ロゴの文字幅 (APP_ASCII_LOGO から自動算出) */
 const APP_LOGO_COLS = Config.APP_ASCII_LOGO[0].length;
 
 /** ブートメッセージ一覧 */
@@ -44,7 +44,7 @@ const BOOT_MESSAGES = [
   "LOADING ICONS...",
   "LOADING CURSORS...",
   "LOADING WALLPAPER...",
-  "STARTING SYNESTA...",
+  "STARTING PIXERA...",
 ];
 
 // ── タイミング (ms) ──

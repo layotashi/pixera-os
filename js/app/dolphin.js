@@ -3,7 +3,7 @@
  * dolphin.js — "Totally not a virus" イースターエッグ
  *
  * インターネットミーム「totally not a virus. trust me... im a dolphin」の
- * SYNESTA 版イースターエッグ。デスクトップアイコンをダブルクリックすると
+ * PIXERA OS 版イースターエッグ。デスクトップアイコンをダブルクリックすると
  * 確認ダイアログで「Do you like dolphins?」と問いかけ、応答に応じた
  * イルカからのメッセージが表示される。
  *

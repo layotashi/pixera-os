@@ -203,7 +203,7 @@ function buildVideoTrak(sizes, keyframes, avcC, w, h, fps, movieDur, stcoOffset)
 
   const stbl = box("stbl", stsd, stts, stsc, stsz, stco, stss);
   const minf = box("minf", vmhd, buildDinf(), stbl);
-  const mdia = box("mdia", mdhd, buildHdlr("vide", "SYNESTA"), minf);
+  const mdia = box("mdia", mdhd, buildHdlr("vide", "PIXERA"), minf);
   return box("trak", tkhd, mdia);
 }
 
@@ -290,7 +290,7 @@ function buildAudioTrak(audio, movieDur, stcoOffset) {
 
   const stbl = box("stbl", stsd, stts, stsc, stsz, stco); // 音声は全サンプルが sync (stss 不要)
   const minf = box("minf", smhd, buildDinf(), stbl);
-  const mdia = box("mdia", mdhd, buildHdlr("soun", "SYNESTA"), minf);
+  const mdia = box("mdia", mdhd, buildHdlr("soun", "PIXERA"), minf);
   return box("trak", tkhd, mdia);
 }
 

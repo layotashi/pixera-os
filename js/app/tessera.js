@@ -2,13 +2,13 @@
  * @module app/tessera
  * tessera.js — TESSERA — ライブコーディング環境（Tessera 言語）
  *
- * lang/（SYNESTA とは独立した generative-art の小言語 "Tessera"）を SYNESTA に統合した
+ * lang/（PIXERA OS とは独立した generative-art の小言語 "Tessera"）を PIXERA OS に統合した
  * creative-coding ウィンドウ。左でコードを書き、右でライブプレビュー。拡張子は `.tess`。
  *
  * 名前: tessera = モザイクの一片（タイル）。1-bit のセル/ピクセルを敷き詰めて絵にする
  * この言語の本質。tessellation（平面充填）と同語源。
  *
- * 立ち位置: SYNESTA 唯一の generative-art アプリ。プリセットやノブは持たず「書いて創る」
+ * 立ち位置: PIXERA OS 唯一の generative-art アプリ。プリセットやノブは持たず「書いて創る」
  * コード一本。学習用 `/Sketches/Learn` と作例 `/Sketches/Gallery` の `.tess` サンプルを備える。
  *
  * 統合の要: 言語は抽象 surface 契約だけに依存。lang/surface.js の純粋な
@@ -41,7 +41,7 @@
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
  *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。MP4 は sound: があれば
  *     音声入り（1 周期を AAC 化して多重化＝ループ一致。AAC 非対応環境は映像のみ + footer で明示）。
- *     WAV は sound: の 1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして
+ *     WAV は sound: の 1 周期を音声書き出し。CODE はソースを 1080² の PIXERA OS カードとして
  *     書き出す。Ctrl+R で seed: 振り直し。
  *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
  *   - PERFORM（ライブ演奏ビュー）: Alt+Enter / F11 でフルスクリーン化し、画面そのものが
@@ -387,7 +387,7 @@ function ovLayout(cr) {
   return { x0, y0, maxCols, maxRows };
 }
 
-/** グリフを 2x で描く (5x5 → 10x10)。SYNESTA の表示は常に大文字 (drawText と同じ規約)。 */
+/** グリフを 2x で描く (5x5 → 10x10)。PIXERA OS の表示は常に大文字 (drawText と同じ規約)。 */
 function drawGlyph2x(ch, x, y, c) {
   const g = getGlyph(ch.toUpperCase());
   if (!g) return;

@@ -36,7 +36,7 @@ const NOTEPAD_H = 240;
 // ── Welcome テキスト ──
 const WELCOME_TEXT = `\
 ========================================
-  SYNESTA NOTEPAD
+  PIXERA NOTEPAD
 ========================================
 
   Welcome!

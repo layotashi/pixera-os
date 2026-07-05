@@ -216,7 +216,7 @@ export function onScaleChange(cb) {
 // ── 製品情報 ──
 
 /** 製品名 */
-export const APP_NAME = "SYNESTA";
+export const APP_NAME = "PIXERA OS";
 
 /** バージョン番号 (semver) */
 export const APP_VERSION = "0.2.2";
@@ -266,12 +266,12 @@ export const APP_AUTHOR = "Layotashi";
 /** 公開 URL */
 export const APP_URL = "x.com/layotashi_";
 
-/** SYNESTA の ASCII アートロゴ (splash / about 共通) */
+/** PIXERA OS の ASCII アートロゴ (splash / about 共通) */
 export const APP_ASCII_LOGO = [
-  "._______._______._______._______._______._______._______.",
-  "|     __|   |   |    |  |    ___|     __|_     _|   _   |",
-  "|__     |\\     /|       |    ___|__     | |   | |       |",
-  "|_______| |___| |__|____|_______|_______| |___| |___|___|",
+  " _____ _                    _____ _____ ",
+  "|  _  |_|_ _ ___ ___ ___   |     |   __|",
+  "|   __| |_'_| -_|  _| .'|  |  |  |__   |",
+  "|__|  |_|_,_|___|_| |__,|  |_____|_____|",
 ];
 
 /**
@@ -301,10 +301,10 @@ export function setTextTransform(mode) {
 /**
  * システムフォントプリセット定義。
  *
- * SYNESTA のシステムフォントは 5x5 の単一寸法に統一されている。
+ * PIXERA OS のシステムフォントは 5x5 の単一寸法に統一されている。
  * 複数の寸法を持たないことで、フォント切替が「グリフ内容の差し替えだけ」に
  * なり、寸法依存のメトリクス・アイコン・レイアウト再計算が一切不要になる
- * (シンプルさ = SYNESTA の美学)。
+ * (シンプルさ = PIXERA OS の美学)。
  * FONTSMITH が作るユーザーフォントも同じ 5x5 でこの配列に登録される。
  *
  *   id     : 内部識別子 (localStorage 保存用)
@@ -538,7 +538,8 @@ export const PALETTES = {
     bg: "#0D0D0D",
     fg: "#FFDD2E",
     label: "Flip-Dot",
-    origin: "Flip-disc electromechanical display\nStation & bus destination signs",
+    origin:
+      "Flip-disc electromechanical display\nStation & bus destination signs",
     note: "Physical discs flip to a bright\nface. A display you can hear\nclatter as it updates.",
   },
 

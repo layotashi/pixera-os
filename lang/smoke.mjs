@@ -242,7 +242,7 @@ function check(name, cond) {
   check("nl: value block 維持", Number.isFinite(ev("s = 0\nrepeat 3 as k {\n s = s + k\n}\ns")));
 }
 
-// 8e) 大小文字を区別しない（SYNESTA は大文字表示前提。CANVAS と canvas が同じ見た目）
+// 8e) 大小文字を区別しない（PIXERA は大文字表示前提。CANVAS と canvas が同じ見た目）
 {
   // 関数 / 定数 / 変数を大文字で書いても通る
   check("ci: SIN(X*TAU) == sin(x*tau)", approx(compile("SIN(X * TAU)").sample(0.25, 0, 0), 1, 1e-9));
@@ -252,7 +252,7 @@ function check(name, cond) {
   check("ci: VIEW DITHER mode folded", c.view && c.view.mode === "dither");
 }
 
-// 9) makeBufferSurface: 場を 1-bit バッファで受ける（SYNESTA 統合の土台）
+// 9) makeBufferSurface: 場を 1-bit バッファで受ける（PIXERA 統合の土台）
 {
   // 場: level 1 → 全 on / level 0 → 全 off
   {

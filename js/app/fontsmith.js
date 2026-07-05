@@ -5,7 +5,7 @@
  * システムフォント (5x5) の全 ASCII グリフ (0x20–0x7E) を 1 文字ずつ
  * デザインし、APPLY で OS 全体のフォントに即時適用する。
  * 「ユーザーが作ったフォントが OS の chrome そのものになる」という
- * SYNESTA の個人化体験の中核。
+ * PIXERA OS の個人化体験の中核。
  *
  * 仕様:
  *   - 起動時に現在のシステムフォントを取り込んで編集対象にする
@@ -94,7 +94,7 @@ function _copyBuf(b) {
 function _seedFromSystem() {
   metrics = getFontMetrics();
   // 編集対象 = 小文字 a-z (0x61-0x7A) を除く全 ASCII。
-  // SYNESTA は全テキストを大文字化するため小文字は表示されず、5x5 フォントでも
+  // PIXERA OS は全テキストを大文字化するため小文字は表示されず、5x5 フォントでも
   // プレースホルダ (塗りつぶしブロック) のまま。UI に出しても無意味なので除外。
   EDITABLE = [];
   for (let i = 0; i < metrics.charCount; i++) {

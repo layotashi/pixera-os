@@ -3,7 +3,7 @@
  * aquarium.js — AQUARIUM (1-bit 水槽)
  *
  * 1-bit ピクセルアートの魚が群れで泳ぐ「映える画面」専用ウィンドウ。
- * After Dark の水槽スクリーンセーバーの SYNESTA 的再解釈。
+ * After Dark の水槽スクリーンセーバーの PIXERA OS 的再解釈。
  *
  * 仕様:
  *   - 5 匹の魚が boids 風の単純規則で泳ぐ (中央引力 + 個体反発 + 壁反発 + 餌追従)

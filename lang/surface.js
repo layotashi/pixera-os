@@ -4,7 +4,7 @@
  *
  * 言語本体はこの契約だけに依存し、実装は注入される:
  *   - playground: canvas2D の薄いシム
- *   - SYNESTA 統合: 本物の GPU (js/ui/ports の gpu 相当)
+ *   - PIXERA 統合: 本物の GPU (js/ui/ports の gpu 相当)
  * これにより font/theme/GPU をコピーせず共有でき、統合時のドリフトを防ぐ。
  *
  * すべて 1-bit。色は「インク level ∈ [0,1]」のみ（テーマが level→色を解決）。
@@ -45,7 +45,7 @@ export function ditherField(buf, w, h) {
  *
  * blitField で 0..1 の場を 4x4 Bayer でディザして全面に書く。`present()` は no-op。
  * ホストは `.buf`（Uint8Array, 0|1, 長さ W*H）を読んで画面へ blit するだけでよい
- * （SYNESTA は GPU.blit、playground は canvas など）。SYNESTA を一切 import しないので、
+ * （PIXERA は GPU.blit、playground は canvas など）。PIXERA を一切 import しないので、
  * node テストでも playground でも再利用できる。
  *
  * @param {number} W

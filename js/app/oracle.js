@@ -2,7 +2,7 @@
  * @module app/oracle
  * oracle.js — ORACLE (隠しテキストアドベンチャー) のプロトタイプ
  *
- * SYNESTA の中にひっそり住まう小さなテキストアドベンチャー。Zork / Colossal
+ * PIXERA OS の中にひっそり住まう小さなテキストアドベンチャー。Zork / Colossal
  * Cave の 1-bit 再解釈。コマンド入力で 3 つの部屋を探索し、最終的に
  * 「マシンの本当の名前」を聞き出すと終わり。
  *

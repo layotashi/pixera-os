@@ -188,7 +188,7 @@ describe("readDir", () => {
 describe("readFile / writeFile", () => {
   it("既存ファイルの内容を読める", () => {
     const content = readFile("/Documents/readme.txt");
-    expect(content).toContain("Welcome to SYNESTA!");
+    expect(content).toContain("Welcome to PIXERA!");
   });
 
   it("新規ファイルを書き込んで読み出す", () => {

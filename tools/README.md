@@ -2,7 +2,7 @@
 
 ## capture.mjs — visual review harness
 
-SYNESTA を headless Chromium で起動し、指定したアプリウィンドウを開いて
+PIXERA OS を headless Chromium で起動し、指定したアプリウィンドウを開いて
 `canvas#screen` を PNG に保存するスクリプト。
 
 ### 目的
@@ -24,7 +24,7 @@ npx playwright install chromium   # 初回のみ (~150MB)
 npm run capture <WINDOW_NAME>
 # 例:
 npm run capture AQUARIUM
-npm run capture STUDIO
+npm run capture SYNESTA
 npm run capture desktop          # ウィンドウを開かず、デスクトップ全体のみ
 ```
 
@@ -34,9 +34,9 @@ npm run capture desktop          # ウィンドウを開かず、デスクトッ
 
 1. 軽量な静的ファイルサーバーを `http://localhost:8765` で起動
 2. Playwright で headless Chromium 起動 (viewport 1280×720)
-3. SYNESTA ロード → `window.__synesta.booted` が `true` になるのを待つ
+3. PIXERA OS ロード → `window.__pixera.booted` が `true` になるのを待つ
 4. **レビュー精度向上の調整** を適用 (下記)
-5. `window.__synesta.wmOpenByName(name)` でアプリを起動
+5. `window.__pixera.wmOpenByName(name)` でアプリを起動
 6. 待機してレイアウトが落ち着いた後、canvas#screen を screenshot
 7. PNG を `screenshots/` に保存
 
@@ -51,13 +51,13 @@ npm run capture desktop          # ウィンドウを開かず、デスクトッ
 
 いずれも capture 専用の一時設定で、page を閉じれば消える (production 不変)。
 
-### SYNESTA 側のテストフック
+### PIXERA OS 側のテストフック
 
 `js/kernel.js` のブート完了時に以下を露出している (名前空間の追加のみ、
 通常運用には影響しない):
 
 ```js
-window.__synesta = {
+window.__pixera = {
   booted: true,
   wmOpenByName, wmGetRegistry, wmGetWindowList,
   wmGetWindowRect, wmGetContentRect, // ウィンドウ矩形取得 (スクリプト操作用)
@@ -124,7 +124,7 @@ PNG 全体を眺めて、**1 つは違和感のある箇所を探す**。
 
 #### 5. よくあるバグパターン
 
-過去の SYNESTA 開発で発生したもの (再発防止):
+過去の PIXERA OS 開発で発生したもの (再発防止):
 - カスタム描画で `WIN_W / WIN_H` を contentRect 寸法と取り違えてはみ出す
 - 罫線などの装飾が text の Y 座標と被って読めない
 - `setLabel` などの helper を忘れて Label の幅が古いまま
@@ -135,7 +135,7 @@ PNG 全体を眺めて、**1 つは違和感のある箇所を探す**。
 - ボタン内テキストの padding が math 上 `(BTN_H - GLYPH_H) / 2` で
   非整数になる組み合わせを選び、上下非対称になる
 
-#### 6. 1 ピクセル単位の対称性 (SYNESTA 哲学の核)
+#### 6. 1 ピクセル単位の対称性 (PIXERA OS 哲学の核)
 
 PRODUCT_BRIEF §5.3「美しさの妥協なし」「1 ピクセルのズレも許容しない」は
 文字通りに適用する。「美しい」=「自動的に対称になる構造」であって、

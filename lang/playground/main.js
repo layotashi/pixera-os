@@ -11,7 +11,7 @@ import { makeCanvasSurface } from "./canvas-surface.js";
 const W = 160,
   H = 160,
   SCALE = 4;
-const FG = [255, 122, 0]; // SYNESTA オレンジ
+const FG = [255, 122, 0]; // PIXERA オレンジ
 const BG = [10, 6, 0];
 
 const canvas = document.getElementById("screen");

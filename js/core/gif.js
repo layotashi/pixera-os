@@ -2,7 +2,7 @@
  * @module core/gif
  * gif.js — GIF89a エンコーダ (1-bit / 2色パレット特化)
  *
- * SYNESTA の 1-bit VRAM データから GIF89a アニメーションを生成する。
+ * PIXERA OS の 1-bit VRAM データから GIF89a アニメーションを生成する。
  * 2 色固定パレットに特化しているため、汎用 GIF エンコーダよりも
  * はるかにシンプルかつ高速に動作する。
  *

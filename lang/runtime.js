@@ -6,7 +6,7 @@
  *   座標は x,y ∈ [0,1]（アスペクトは将来対応）。t は時間（秒相当）。
  *   返り値はインク level として扱う（ディザが [0,1] にクランプ）。
  *
- * 設計: 言語本体は surface 契約だけに依存。SYNESTA でも playground でも同一。
+ * 設計: 言語本体は surface 契約だけに依存。PIXERA でも playground でも同一。
  */
 
 import { parse, parseProgram } from "./core/parser.js";

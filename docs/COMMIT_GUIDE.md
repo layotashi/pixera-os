@@ -1,10 +1,10 @@
-# SYNESTA — コミットメッセージ規約
+# PIXERA OS — コミットメッセージ規約
 
-> このドキュメントは SYNESTA のコミットメッセージの書き方を定める **living document** です。
+> このドキュメントは PIXERA OS のコミットメッセージの書き方を定める **living document** です。
 > ルールは強制ではなくガイドラインであり、`git log` を将来読み返したときに
 > 「何が」「なぜ」変わったかが追えることを目的とします。
 >
-> Conventional Commits をベースに、SYNESTA に必要な要素だけ残した軽量版です。
+> Conventional Commits をベースに、PIXERA OS に必要な要素だけ残した軽量版です。
 
 ---
 
@@ -48,7 +48,7 @@
 
 ### 意図的に採用しなかった Type
 
-- `build` / `ci` — SYNESTA はビルドレス・CI 未設定のため不要。将来必要なら `chore` に吸収。
+- `build` / `ci` — PIXERA OS はビルドレス・CI 未設定のため不要。将来必要なら `chore` に吸収。
 - 独自の `visual` / `aesthetic` — アイコン追加・配色微調整等は `feat` / `chore` で十分。
   Type を増やすほど分類で迷うため、最小数に保つ。
 
@@ -62,7 +62,7 @@
 | ------------------------------------------------------------------------------------- | --------------------------- |
 | `(wm)` `(ui)` `(audio)` `(kernel)` `(config)` `(wallpaper)` `(splash)`                | レイヤー / 単一ファイル     |
 | `(core/gpu)` `(core/display_fx)` `(core/vfs)` `(core/audio)`                          | `core/` 内の特定モジュール  |
-| `(settings)` `(studio)` `(paint)` `(notepad)` `(explorer)` `(capture)` `(tessera)` 等 | 特定アプリ                  |
+| `(settings)` `(synesta)` `(paint)` `(notepad)` `(explorer)` `(capture)` `(tessera)` 等 | 特定アプリ                  |
 | `(docs)` `(backlog)` `(brief)` `(humor)`                                              | docs 配下の特定ドキュメント |
 | `(test)`                                                                              | テスト全般                  |
 

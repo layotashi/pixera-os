@@ -55,7 +55,7 @@ export function exportDefaultsText() {
 export async function copyDefaultsToClipboard() {
   const text = exportDefaultsText();
   // どの経路でも開発者が拾えるよう、まず console にも出す
-  console.log("[SYNESTA] current config snapshot:\n" + text);
+  console.log("[PIXERA] current config snapshot:\n" + text);
   try {
     await navigator.clipboard.writeText(text);
     return true;

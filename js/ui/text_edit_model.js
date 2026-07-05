@@ -43,7 +43,7 @@ export class TextEditModel {
     this.selectionAnchorCol = null;
     /** 矩形選択 {anchorRow, anchorCol, cursorRow, cursorCol} or null */
     this.boxSelection = null;
-    /** 入力を大文字へ畳むか（SYNESTA は大文字表示が前提。表示＝保存を一致させる）。 */
+    /** 入力を大文字へ畳むか（PIXERA OS は大文字表示が前提。表示＝保存を一致させる）。 */
     this.uppercaseInput = uppercaseInput;
     // ── Undo / Redo（行スナップショット方式。連続入力はコアレスして 1 ステップに） ──
     /** @private @type {Array<{lines:string[],cursorRow:number,cursorCol:number}>} */

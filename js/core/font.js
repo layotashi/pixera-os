@@ -19,7 +19,7 @@ import { blit } from "./gpu.js";
 import { getTextTransform, assetUrl } from "../config.js";
 
 // ── フォントパラメータ ──
-// SYNESTA のシステムフォントは 5x5 単一寸法。initFont で実フォントから確定する。
+// PIXERA OS のシステムフォントは 5x5 単一寸法。initFont で実フォントから確定する。
 // (初期値もその寸法に合わせておき、ブート前の派生定数計算がブレないようにする)
 
 /** グリフ幅 (px) */
