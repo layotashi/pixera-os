@@ -376,14 +376,14 @@ describe("TextArea.remeasure", () => {
     const innerW = 20 * charW + 5; // 125
     const expectedW = innerW + BUTTON_PADDING * 2 + SCROLLBAR_SLOT_WIDTH + 4; // 125+8+10+4 = 147
     const innerH_7 = 5 * 10 - 1; // TEXTAREA_LINE_HEIGHT=10 → 49
-    const expectedH_7 = innerH_7 + BUTTON_PADDING * 2 + 4; // 49+8+4 = 61
+    const expectedH_7 = innerH_7 + BUTTON_PADDING * 2 + SCROLLBAR_SLOT_WIDTH + 4; // 49+8+10+4 = 71
     expect(ta.w).toBe(expectedW);
     expect(ta.h).toBe(expectedH_7);
 
     setFont(5, 5);
     ta.remeasure();
     const innerH_5 = 5 * 8 - 1; // TEXTAREA_LINE_HEIGHT=8 → 39
-    const expectedH_5 = innerH_5 + BUTTON_PADDING * 2 + 4; // 39+8+4 = 51
+    const expectedH_5 = innerH_5 + BUTTON_PADDING * 2 + SCROLLBAR_SLOT_WIDTH + 4; // 39+8+10+4 = 61
     expect(ta.w).toBe(expectedW);
     expect(ta.h).toBe(expectedH_5);
   });
