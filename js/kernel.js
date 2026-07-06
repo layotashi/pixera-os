@@ -24,6 +24,7 @@ import { initCursor, setCursorHidden } from "./core/cursor.js";
 import { initIcon } from "./core/icon.js";
 import { initTextIcon } from "./core/text_icon.js";
 import { initAppIcon } from "./core/app_icon.js";
+import { initFish } from "./core/fish.js";
 import * as VFS from "./core/vfs.js";
 import { loadUserFonts } from "./core/user_fonts.js";
 
@@ -195,6 +196,7 @@ async function boot() {
         await initIcon(`./assets/${initialFont.iconDir}/manifest.json`); // アイコンPNGの読み込み
         await initAppIcon(appIconNames); // アプリアイコンPNGの読み込み (規約ベース)
         await initTextIcon(`./assets/${initialFont.textIconDir}/manifest.json`); // テキストアイコンPNGの読み込み
+        await initFish(); // AQUARIUM用エンゼルフィッシュPNGの読み込み
         await initWallpaper(); // 壁紙の読み込み
       })(),
     ]);
