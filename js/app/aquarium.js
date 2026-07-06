@@ -6,14 +6,18 @@
  * After Dark の水槽スクリーンセーバーの PIXERA OS 的再解釈。
  *
  * 仕様:
- *   - 5 匹の魚が boids 風の単純規則で泳ぐ (中央引力 + 個体反発 + 壁反発 + 餌追従)
- *   - 各魚は 2 フレームの尾びれアニメ (個体ごとに位相をずらして泳ぐ)
- *   - 魚はサイズ違い 2 種 (ぷっくり胴 + 目 + 尾びれ)
+ *   - 5 匹のエンゼルフィッシュが boids 風の単純規則で泳ぐ
+ *     (中央引力 + 個体反発 + 壁反発 + 餌追従)
+ *   - 各魚は 2 フレームの尾びれアニメ (assets/fish/ の PNG、個体ごとに
+ *     位相をずらして泳ぐ)。スプライトは左向きが基準で、右へ泳ぐ時のみ反転する。
  *   - クリックで餌を落とすと、近くの魚が寄ってきて食べる
  *   - 葉のある水草 + 上昇する気泡で水槽を演出
+ *   - 水は前景色で塗りつぶし、魚・水草・気泡・餌は背景色でコントラストさせる
+ *     (OS 標準の配色とは反転させ、水槽らしい濃色の水を表現)
  */
 
-import { pset, hline } from "../core/gpu.js";
+import { pset, fillRect } from "../core/gpu.js";
+import { getFishFrame, FISH_W, FISH_H } from "../core/fish.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
 const APP_NAME = "AQUARIUM";
@@ -21,76 +25,39 @@ const APP_NAME = "AQUARIUM";
 const WIN_W = 200;
 const WIN_H = 140;
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  魚スプライト (1-bit ピクセル、右向き)
-//  '#' = ピクセル, ' ' = 透過。目は胴体内の空白 (背景が透ける) で表現。
-//  各サイズ 2 フレーム: [0]=尾を下げた姿 / [1]=尾を上げた姿 → 交互で泳ぎの躍動感。
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 水面をボディ上端から少し下げる (ヘッダー/ボディ区切り線との重なり回避)
+const WATER_TOP = 3;
 
-// 大魚 (13×7)。ぷっくり楕円胴 + 左の尾びれ + 右の頭に目と口先。
-const FISH_LARGE_A = [
-  "     ####    ",
-  "   ########  ",
-  " ######## ## ",
-  "############ ",
-  " ########### ",
-  "   ########  ",
-  "     ####    ",
-];
-const FISH_LARGE_B = [
-  "     ####    ",
-  " # ########  ",
-  "######### ## ",
-  " ########### ",
-  " ########### ",
-  "   ########  ",
-  "     ####    ",
-];
+// 水 = 前景色、魚・水草・気泡・餌 = 背景色 (OS 標準配色の反転)
+const WATER_COLOR = 1;
+const DECOR_COLOR = 0;
 
-// 小魚 (9×5)。ぷっくり胴 + 目 + 小さな尾。
-const FISH_SMALL_A = [
-  "   ###   ",
-  " ##### # ",
-  "#########",
-  "######## ",
-  "   ###   ",
-];
-const FISH_SMALL_B = [
-  "   ###   ",
-  "###### # ",
-  "#########",
-  " ####### ",
-  "   ###   ",
-];
-
-const FISH_LARGE = [FISH_LARGE_A, FISH_LARGE_B];
-const FISH_SMALL = [FISH_SMALL_A, FISH_SMALL_B];
-
-function drawSprite(sprite, x, y, flipX) {
-  const h = sprite.length;
-  const w = sprite[0].length;
-  for (let dy = 0; dy < h; dy++) {
-    for (let dx = 0; dx < w; dx++) {
-      if (sprite[dy][dx] === "#") {
-        const px = flipX ? x + (w - 1 - dx) : x + dx;
-        pset(px, y + dy, 1);
-      }
+/**
+ * エンゼルフィッシュの 1 フレームを描画する。
+ * スプライトは左向きが基準の絵 (口先が左、尾びれが右) のため、
+ * flipX=true で右向きに反転する。
+ * アウトライン画素は水色 (WATER_COLOR) で塗って水になじませ、
+ * 本体画素のみ DECOR_COLOR で視認できるようにする。
+ */
+function drawFishSprite(frameIdx, x, y, flipX) {
+  const frame = getFishFrame(frameIdx);
+  if (!frame) return;
+  const { fgBuf, bgBuf } = frame;
+  for (let dy = 0; dy < FISH_H; dy++) {
+    for (let dx = 0; dx < FISH_W; dx++) {
+      const idx = dy * FISH_W + dx;
+      if (!fgBuf[idx] && !bgBuf[idx]) continue; // 透過
+      const px = flipX ? x + (FISH_W - 1 - dx) : x + dx;
+      pset(px, y + dy, fgBuf[idx] ? DECOR_COLOR : WATER_COLOR);
     }
   }
-}
-
-function spriteW(frames) {
-  return frames[0][0].length;
-}
-function spriteH(frames) {
-  return frames[0].length;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  魚 / 餌
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** @type {{x:number,y:number,vx:number,vy:number,frames:string[][],phase:number}[]} */
+/** @type {{x:number,y:number,vx:number,vy:number,phase:number}[]} */
 let fish = [];
 /** @type {{x:number,y:number}[]} 餌ペレット (上から沈む) */
 let food = [];
@@ -103,14 +70,11 @@ function _initFish() {
   fish = [];
   food = [];
   for (let i = 0; i < 5; i++) {
-    const large = i < 2;
-    const frames = large ? FISH_LARGE : FISH_SMALL;
     fish.push({
-      x: Math.random() * (_crW - spriteW(frames) - 4) + 2,
-      y: Math.random() * (_crH - spriteH(frames) - 4) + 2,
+      x: Math.random() * (_crW - FISH_W - 4) + 2,
+      y: Math.random() * (_crH - FISH_H - WATER_TOP - 5) + WATER_TOP + 1,
       vx: (Math.random() - 0.5) * 1.5,
       vy: (Math.random() - 0.5) * 0.5,
-      frames,
       phase: (Math.random() * 8) | 0, // 尾びれアニメの位相 (群れを desync)
     });
   }
@@ -128,10 +92,8 @@ function _tickFish() {
   const cy = _crH / 2;
   for (let i = 0; i < fish.length; i++) {
     const f = fish[i];
-    const sw = spriteW(f.frames);
-    const sh = spriteH(f.frames);
-    const fcx = f.x + sw / 2;
-    const fcy = f.y + sh / 2;
+    const fcx = f.x + FISH_W / 2;
+    const fcy = f.y + FISH_H / 2;
 
     // 中央への引力 (弱い)
     f.vx += (cx - f.x) * 0.0002;
@@ -174,9 +136,9 @@ function _tickFish() {
 
     // 壁反発
     if (f.x < 2) f.vx += 0.1;
-    if (f.x > _crW - sw - 2) f.vx -= 0.1;
-    if (f.y < 4) f.vy += 0.1;
-    if (f.y > _crH - sh - 12) f.vy -= 0.1; // 下端は水草分の余裕
+    if (f.x > _crW - FISH_W - 2) f.vx -= 0.1;
+    if (f.y < WATER_TOP + 1) f.vy += 0.1;
+    if (f.y > _crH - FISH_H - 12) f.vy -= 0.1; // 下端は水草分の余裕
 
     // 速度上限 + 摩擦
     const sp = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
@@ -217,10 +179,10 @@ function drawSeaweed(cr) {
       const sway = Math.sin(frame * 0.03 + w.xRatio * 20 + dy * 0.4) * 2.2 * t;
       const sx = wx + Math.round(sway);
       const y = baseY - dy;
-      pset(sx, y, 1); // 主茎
+      pset(sx, y, DECOR_COLOR); // 主茎
       // 葉: 数 px おきに左右交互に張り出す
       if (dy > 1 && dy % 4 === 0) {
-        pset(sx + (dy % 8 === 0 ? 1 : -1), y, 1);
+        pset(sx + (dy % 8 === 0 ? 1 : -1), y, DECOR_COLOR);
       }
     }
   }
@@ -234,16 +196,16 @@ function drawBubbles(cr) {
     const baseX = cr.x + Math.floor(cr.w * (0.12 + i * 0.14));
     const x = baseX + Math.round(Math.sin(t * 0.06 + i) * 3);
     const y = cr.y + cr.h - 3 - t;
-    if (y > cr.y + 2 && y < cr.y + cr.h - 2) {
-      pset(x | 0, y | 0, 1);
-      if (i % 3 === 0) pset((x | 0) + 1, y | 0, 1); // 大きめの泡
+    if (y > cr.y + WATER_TOP + 1 && y < cr.y + cr.h - 2) {
+      pset(x | 0, y | 0, DECOR_COLOR);
+      if (i % 3 === 0) pset((x | 0) + 1, y | 0, DECOR_COLOR); // 大きめの泡
     }
   }
 }
 
 function drawFood(cr) {
   for (const p of food) {
-    pset(cr.x + (p.x | 0), cr.y + (p.y | 0), 1);
+    pset(cr.x + (p.x | 0), cr.y + (p.y | 0), DECOR_COLOR);
   }
 }
 
@@ -259,6 +221,9 @@ function onDraw(cr) {
   _tickFood();
   _tickFish();
 
+  // 水面 (ボディ上端から少し下げて塗る。塗りの上端がそのまま水面線になる)
+  fillRect(cr.x, cr.y + WATER_TOP, cr.w, cr.h - WATER_TOP, WATER_COLOR);
+
   drawSeaweed(cr);
   drawFood(cr);
   drawBubbles(cr);
@@ -266,11 +231,9 @@ function onDraw(cr) {
   for (const f of fish) {
     // 尾びれアニメ: 8 フレームごとにフレーム切替 (位相をずらして個体差)
     const wf = ((frame + f.phase * 4) >> 3) & 1;
-    drawSprite(f.frames[wf], cr.x + (f.x | 0), cr.y + (f.y | 0), f.vx < 0);
+    // スプライトは左向き基準 → 右へ泳ぐ時のみ反転
+    drawFishSprite(wf, cr.x + (f.x | 0), cr.y + (f.y | 0), f.vx >= 0);
   }
-
-  // 水槽の枠 (上端の水面)
-  hline(cr.x, cr.x + cr.w - 1, cr.y, 1);
 }
 
 function onInput(ev) {
@@ -279,7 +242,7 @@ function onInput(ev) {
     if (
       ev.localX >= 0 &&
       ev.localX < _crW &&
-      ev.localY >= 2 &&
+      ev.localY >= WATER_TOP &&
       ev.localY < _crH
     ) {
       food.push({ x: ev.localX, y: ev.localY });
