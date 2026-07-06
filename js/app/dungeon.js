@@ -1,6 +1,6 @@
 /**
- * @module app/delve
- * delve.js — DELVE: 1-bit ローグライク（潜行）
+ * @module app/dungeon
+ * dungeon.js — DUNGEON: 1-bit ローグライク（潜行）
  *
  * 手続き生成されたダンジョンを潜り、モンスターを倒しながら
  * 階層を降りていくターン制ローグライク。
@@ -24,7 +24,7 @@ import { drawText, GLYPH_H } from "../core/font.js";
 import { keyDown } from "../core/input.js";
 import * as GameUtils from "./game_utils.js";
 
-const APP_NAME = "DELVE";
+const APP_NAME = "DUNGEON";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  寸法
@@ -570,7 +570,7 @@ function onDraw(contentRect) {
       "",
       `Depth ${player.depth}   Gold ${player.gold}`,
       "",
-      "Press R to delve again",
+      "Press R to descend again",
     ]);
   }
 }

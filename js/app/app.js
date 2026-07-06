@@ -24,22 +24,22 @@ import "./notepad.js";
 import "./synesta/synesta.js";
 // synesta/synth_panel.js, synesta/piano_roll.js は synesta.js 経由で読み込まれる
 import "./about.js";
-import "./lifegame.js";
-import "./explorer.js";
+import "./life.js";
+import "./files.js";
 import "./paint.js";
 import "./gradient_demo.js";
 import "./easing_demo.js";
 import "./ascii_art_demo.js";
-import "./breakout.js";
+import "./bricker.js";
 import "./graze.js";
-import "./delve.js";
+import "./dungeon.js";
 import "./tessera.js";
 import "./telex.js";
-import "./aquarium.js";
-import "./observatory.js";
-import "./band.js";
+import "./aquaria.js";
+import "./astral.js";
+import "./oscillo.js";
 import "./oracle.js";
-import "./fontsmith.js";
+import "./glypher.js";
 import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 
 // ── デスクトップアイコン初期化 ──

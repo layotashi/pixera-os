@@ -1,6 +1,6 @@
 /**
- * @module app/band
- * band.js — BAND (1-bit 音声反応ビジュアル) のプロトタイプ
+ * @module app/oscillo
+ * oscillo.js — OSCILLO (1-bit 音声反応ビジュアル) のプロトタイプ
  *
  * Web Audio の AnalyserNode で master gain から FFT / 波形を取得し、
  * 1-bit でリアルタイム可視化する。SYNESTA の再生と同期して
@@ -26,7 +26,7 @@ import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { getAudioContext, getMasterGain, initAudio } from "../core/audio.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
-const APP_NAME = "BAND";
+const APP_NAME = "OSCILLO";
 
 const WIN_W = 240;
 const WIN_H = 160;

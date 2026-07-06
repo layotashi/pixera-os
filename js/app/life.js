@@ -1,6 +1,6 @@
 /**
- * @module app/lifegame
- * lifegame.js — Conway's Game of Life ウィンドウ
+ * @module app/life
+ * life.js — Conway's Game of Life ウィンドウ
  *
  * 可変サイズのグリッド上で Conway's Game of Life を実行する。
  *
@@ -16,7 +16,7 @@ import { ICON_W, ICON_H } from "../core/icon.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 import * as UI from "../ui/index.js";
 
-const APP_NAME = "LIFE_GAME";
+const APP_NAME = "LIFE";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -273,7 +273,7 @@ function _initWidgets() {
 /**
  * シミュレーション更新。描画と同タイミングで毎フレーム呼ばれる。
  */
-function updateLifeGame() {
+function updateLife() {
   if (running) {
     frameTick++;
     if (frameTick >= STEP_INTERVAL) {
@@ -293,7 +293,7 @@ function onDraw(contentRect) {
   const oy = contentRect.y;
 
   // ── シミュレーション更新 ──
-  updateLifeGame();
+  updateLife();
 
   // ── ツールバー描画 ──
   toolbar.draw(contentRect);
@@ -465,6 +465,6 @@ wmRegister(
       },
     });
   },
-  { category: "GAMES", shortName: "LIFE" },
+  { category: "GAMES" },
 );
 

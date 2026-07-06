@@ -1,6 +1,6 @@
 /**
- * @module app/explorer
- * explorer.js — FILE EXPLORER ウィンドウ
+ * @module app/files
+ * files.js — FILES ウィンドウ
  *
  * 仮想ファイルシステム (VFS) の内容をツリー表示し、
  * ファイル / フォルダの基本操作を提供するファイルマネージャ。
@@ -32,7 +32,7 @@ import { notepadOpenFile } from "./notepad.js";
 import { tesseraOpenFile } from "./tessera.js";
 import { paintOpenFile } from "./paint.js";
 
-const APP_NAME = "EXPLORER";
+const APP_NAME = "FILES";
 
 // VFS の初期化は kernel.js の boot() が一括で行う。ここで副作用 import 的に
 // 呼ぶと初期化順序が import 順に依存するため呼ばない (規約: 副作用 import は
@@ -287,5 +287,5 @@ wmRegister(APP_NAME, () => {
       root.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
     },
   });
-}, { shortName: "EXPLOR" });
+});
 

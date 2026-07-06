@@ -1,6 +1,6 @@
 /**
- * @module app/fontsmith
- * fontsmith.js — FONTSMITH (1-bit ビットマップフォントエディタ)
+ * @module app/glypher
+ * glypher.js — GLYPHER (1-bit ビットマップフォントエディタ)
  *
  * システムフォント (5x5) の全 ASCII グリフ (0x20–0x7E) を 1 文字ずつ
  * デザインし、APPLY で OS 全体のフォントに即時適用する。
@@ -38,7 +38,7 @@ import { setSystemFont } from "../config.js";
 import { saveUserFont } from "../core/user_fonts.js";
 import * as UI from "../ui/index.js";
 
-const APP_NAME = "FONTSMITH";
+const APP_NAME = "GLYPHER";
 
 const WIN_W = 172;
 const WIN_H = 244;

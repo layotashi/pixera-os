@@ -1,6 +1,6 @@
 /**
- * @module app/observatory
- * observatory.js — OBSERVATORY (1-bit 星空観測所) のプロトタイプ
+ * @module app/astral
+ * astral.js — ASTRAL (1-bit 星空観測所) のプロトタイプ
  *
  * 動く 1-bit 星空を窓に表示する「映える画面」専用アプリ。
  * クリックすると星に名前を付けられる (フッターに表示)。
@@ -14,7 +14,7 @@
  * 未実装 (本格化時の検討事項):
  *   - 本物の星カタログ (Yale Bright Star) を JSON で同梱
  *   - 緯度経度 + 日時から実際の天体位置を計算
- *   - 命名済み星の VFS 保存 (/.observatory/log.txt)
+ *   - 命名済み星の VFS 保存 (/.astral/log.txt)
  *   - 星座線描画 (実在 or 空想)
  *   - 流れ星のランダム演出
  */
@@ -23,7 +23,7 @@ import { pset, fillRect, hline, vline } from "../core/gpu.js";
 import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
-const APP_NAME = "OBSERVATORY";
+const APP_NAME = "ASTRAL";
 
 const WIN_W = 220;
 const WIN_H = 160;

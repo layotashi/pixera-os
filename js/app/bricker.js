@@ -1,6 +1,6 @@
 /**
- * @module app/breakout
- * breakout.js — BREAKOUT: Ultimate 1-bit Edition
+ * @module app/bricker
+ * bricker.js — BRICKER: Ultimate 1-bit Edition
  *
  * 「ブロック崩し」を面白くするために考えたこと:
  *
@@ -42,7 +42,7 @@ import * as GPU from "../core/gpu.js";
 import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import * as GameUtils from "./game_utils.js";
 
-const APP_NAME = "BREAKOUT";
+const APP_NAME = "BRICKER";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -946,7 +946,7 @@ function onDraw(contentRect) {
   // ── 状態オーバーレイ ──
   if (gameState === "ready") {
     GameUtils.drawOverlay(ox, oy, W, H, [
-      "BREAKOUT",
+      "BRICKER",
       "",
       "MOUSE: MOVE",
       "CLICK: LAUNCH",
@@ -1122,7 +1122,6 @@ serveBall();
 
 const app = GameUtils.registerGameApp({
   name: APP_NAME,
-  shortName: "BREAK",
   width: W,
   height: H,
   onDraw,

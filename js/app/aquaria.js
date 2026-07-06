@@ -1,6 +1,6 @@
 /**
- * @module app/aquarium
- * aquarium.js — AQUARIUM (1-bit 水槽)
+ * @module app/aquaria
+ * aquaria.js — AQUARIA (1-bit 水槽)
  *
  * 1-bit ピクセルアートの魚が群れで泳ぐ「映える画面」専用ウィンドウ。
  * After Dark の水槽スクリーンセーバーの PIXERA OS 的再解釈。
@@ -13,7 +13,7 @@
  *   - クリックで餌を落とすと、近くの魚が寄ってきて食べる
  *   - 葉のある水草 + 上昇する気泡で水槽を演出
  *   - NOTEPAD と同じ見た目の縦横スクロールバー + ステッパーボタンをボディ右端/下端に
- *     装飾として表示する (AQUARIUM はスクロール不可のため常に 100% 表示・操作不可)
+ *     装飾として表示する (AQUARIA はスクロール不可のため常に 100% 表示・操作不可)
  *
  * 水槽の縦構成 (ボディ内枠線の内側、上から):
  *   1px 枠線 (BG) → 水上の空間 (BG, AIR_H px) → 水と魚 (FG) → 砂 (BG, 起伏あり, SAND_H px)
@@ -23,7 +23,7 @@ import { pset, fillRect, drawRect, vline } from "../core/gpu.js";
 import { getFishFrame, FISH_W, FISH_H } from "../core/fish.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
-const APP_NAME = "AQUARIUM";
+const APP_NAME = "AQUARIA";
 
 const WIN_W = 200;
 const WIN_H = 140;
@@ -332,7 +332,7 @@ wmRegister(
     _initFish();
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
       about:
-        "A 1-bit aquarium. The fish school using simple flocking rules. " +
+        "A 1-bit fish tank. The fish school using simple flocking rules. " +
         "Click in the tank to drop food, and the fish will come to eat it.",
       noResize: true,
       noMaximize: true,
