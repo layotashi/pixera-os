@@ -78,24 +78,51 @@ index.js      → wm.js, desktop.js (re-export のみ)
 
 ## ウィンドウオプション (`wmOpen` の opts)
 
-- `modal` — モーダル (他ウィンドウへの入力をブロック)
+- `modal` — モーダル (他ウィンドウへの入力をブロック)。標準 chrome は既定 OFF。
 - `noResize` — リサイズ無効
 - `noMaximize` — 最大化無効
-- `scrollable` — ウィンドウスクロール有効 (`wmSetContentSize` で仮想高さ設定)。
-  最小高さが `MIN_HEIGHT` まで緩和され、初期高さは work area に自動クランプ
+- `chrome` — 標準スクロールバー chrome (縦横バー + ステッパー + コーナー) の明示指定。
+  省略時はモーダル以外 ON。→ 「標準スクロールバー chrome」節を参照
+- `scrollable` — WM 管理の縦スクロール有効 (`wmSetContentSize` で仮想高さ設定)。
+  最小高さが `MIN_HEIGHT` まで緩和され、初期高さは work area に自動クランプ。
+  chrome の縦バーが「機能」になる (横は飾りのまま)
 - `onBeforeClose` — 閉じる前フック。`false` を返すとキャンセル
 
-## ウィンドウスクロール
+## 標準スクロールバー chrome
 
-仮想コンテンツ高さが物理サイズより大きいとき垂直スクロールバーを自動表示する。
+Pixera 標準 UI: 通常のアプリウィンドウ (モーダル以外) は、スクロール可否に**よらず**
+ボディ端に縦スクロールバー・横スクロールバー・ステッパーボタン・交差コーナーを**常時**
+表示する。1bit 表現で「ここはウィンドウ」という手掛かりを一貫して与えるのが狙い。
+
+- 実体は `ui/scrollbar.js` の slot API (`drawVScrollbarSlot` / `drawHScrollbarSlot` /
+  `drawScrollCorner`)。レイアウトは `win_layout.js` が `scrollbarRect` /
+  `hScrollbarRect` / `scrollCornerRect` として算出し、wm.js が描画・入力を一元処理する。
+- **飾り / 機能の 2 モード**: 各軸のスクロール状態 (`win._vScroll` / `win._hScroll`) が
+  `scrollNeeded=false` なら「飾り」(100% 表示・非操作・ドラッグカーソル無し)、
+  `true` なら「機能」(サム・ドラッグ・ステッパー・オートリピート)。既定は飾り
+  (`createScrollState(1,1)`)。`scrollable` (WM 管理縦) や `wmAttachScroll` で機能化する。
+- **コンテンツ領域は縮まない**: chrome の分だけウィンドウ外寸を SLOT 広げる
+  (`calcWindowSize` / `wmOpen`)。既存アプリは `contentRect` に描くだけで自動対応する。
+- ステッパー 1 クリックの量は `wmAttachScroll` の `vStep` / `hStep` (既定 px、行/桁
+  単位のアプリは 1)。
+
+### WM 管理の縦スクロール (`scrollable`)
+
+仮想コンテンツ高さが物理サイズより大きいとき、縦バーが機能化してスクロールする。
 
 - 通常ホイールは WM が消費、**Ctrl+ホイールはアプリに透過** (ズーム等)。
 - `onInput` の `localY` はスクロール加算済み (仮想座標)。
-  `contentRect.w` はスクロールバー幅分縮む。
 - `scrollable` は「コンテンツ自然サイズ」と「ウィンドウ最小サイズ」を分離する。
   初期は work area の一定比率にクランプ、リサイズ下限は `MIN_HEIGHT` まで緩和
   (幅は水平スクロール非対応のため `onMeasure` 幅で縛る)。
 - フォント/パディング変更時は現在の高さを維持 (自然サイズへ勝手に巻き戻さない)。
+
+### アプリ管理のスクロール (`wmAttachScroll`)
+
+自前のスクロール (行・桁単位など) を持つアプリ (例: NOTEPAD) は、その `ScrollState` を
+`wmAttachScroll(id, { v, h, vStep, hStep })` で chrome の縦横バーへ接続する。WM は表示・
+ドラッグ・ステッパーのみを担い、viewport / content 同期・ホイール・座標変換はアプリ側
+(`_scrollable=false` のため WM が触れない) が担う。
 
 ## 設計原則
 
