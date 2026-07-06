@@ -42,7 +42,7 @@ let screenshotCount = 0;
 let screenshotTimerEnd = 0;
 let screenshotDelay = 0;
 let screenshotTargetId = -1; // -1 = Full screen
-let screenshotScale = 2; // 撮影倍率 (1,2,3,4,8)
+let screenshotScale = 2; // 撮影倍率 (1-10 の整数)
 
 // ── 動画撮影状態 ──
 let isRecording = false;
@@ -439,7 +439,7 @@ function captureVramSnapshot() {
 
 // ── ウィジェット (遅延初期化) ──
 let lblTarget, ddTarget;
-let lblScale, ddScale;
+let lblScale, nbScale;
 let lblOutputHdr, lblOutput;
 let lblDelay, nbDelay, labelSeconds;
 let lblCapture, btnCapture, lblCountdown;
@@ -468,13 +468,13 @@ function _initWidgets() {
     refreshOutputLabel();
   });
 
-  // Row 2: Scale: [dropdown]
+  // Row 2: Scale: [number]
   lblScale = new UI.Label(0, 0, "Scale:");
-  ddScale = new UI.DropDown(0, 0, ["X1", "X2", "X3", "X4", "X8"], 1, (i) => {
-    screenshotScale = [1, 2, 3, 4, 8][i];
+  nbScale = new UI.NumberBox(0, 0, 1, 10, screenshotScale, 1, (v) => {
+    screenshotScale = v;
     refreshOutputLabel();
   });
-  ddScale.tooltip = "Output magnification";
+  nbScale.tooltip = "Output magnification (1-10x)";
 
   // Row 3: Output: {dynamic} — フッターに移動
   lblOutputHdr = new UI.Label(0, 0, "Output:");
@@ -571,7 +571,7 @@ function _initWidgets() {
   // ── Box レイアウト ──
   captureRoot = UI.VBox([
     UI.HBox([lblTarget, ddTarget]),
-    UI.HBox([lblScale, ddScale]),
+    UI.HBox([lblScale, nbScale]),
     UI.HBox([lblDelay, nbDelay, labelSeconds]),
     sepScreenshot,
     UI.HBox([lblCapture, btnCapture, lblCountdown]),
