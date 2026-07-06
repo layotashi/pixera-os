@@ -43,6 +43,8 @@ export class NotepadEditor extends FocusableWidget {
   set cursorCol(v) { this.view.cursorCol = v; }
   get scrollX() { return this.view.scrollX; }
   set scrollX(v) { this.view.scrollX = v; }
+  get showLineNumbers() { return this.view.showLineNumbers; }
+  set showLineNumbers(v) { this.view.showLineNumbers = v; }
   getText() { return this.view.getText(); }
   selectedCharCount() { return this.view.selectedCharCount(); }
   setContentLength(length) { this.view.setContentLength(length); }

@@ -116,6 +116,7 @@ function _initWidgets() {
     isDirty = true;
     refreshTitle();
   });
+  textAreaEditor.showLineNumbers = true; // コード編集用途が多いので行番号ガターを表示
   // 配列形式の WidgetGroup（自動レイアウト無し）。フォーカス/キーボード配信のみ担い、
   // 位置・サイズは onDraw でボディ矩形に合わせる（editor-as-body）。
   group = new WidgetGroup([textAreaEditor]);
