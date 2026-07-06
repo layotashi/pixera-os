@@ -768,23 +768,47 @@ function sendToBack(i) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
+ * 実画面端に接する辺にだけ設ける背景ハロー幅 (px)。
+ * drawWindowFrame は枠の外側 1px に背景色のアウトラインを描くため、
+ * スナップ/最大化時も実画面端との間に同じ 1px を残してハローを連続させる。
+ * ウィンドウ同士が直接隣接する内側境界 (snap-left/snap-right 間) には
+ * ハローを入れず、枠線同士を密着させる。
+ */
+const SCREEN_EDGE_HALO = 1;
+
+/**
+ * ドラッグ中のスナッププレビュー (離す前の表示) 専用の実画面端マージン (px)。
+ * ドロップ後の実配置は SCREEN_EDGE_HALO (1px, drawWindowFrame のハローに一致) の
+ * ままにし、プレビューだけ見やすいよう大きめの余白を取る。
+ */
+const SNAP_PREVIEW_MARGIN = 5;
+
+/**
  * スナップ状態名から配置矩形を返す。現在の work area / 解像度に基づく。
  * ドロップ時 (getSnapRect) と解像度変更時 (Config.onResize) が共有する
  * 単一の矩形式。state が "none" / 不明なら null。
  * @param {string} state  "maximized" | "snap-left" | "snap-right"
+ * @param {number} [edgeMargin=SCREEN_EDGE_HALO]  実画面端 (上下左右の外側) からのマージン (px)。
+ *   プレビュー表示 (getSnapRect の呼び出し元) だけ SNAP_PREVIEW_MARGIN を渡す。
+ * @param {number} [centerMargin=0]  snap-left/snap-right の分割線 (画面中央側) に設けるマージン (px)。
+ *   ドロップ時の実配置は 0 のまま (2 枚が直接隣接し、二重枠で連続させる)。
+ *   プレビューだけ edgeMargin と同じ値を渡し、四辺すべて均等マージンに見せる。
  * @returns {{ x:number, y:number, w:number, h:number }|null}
  */
-function snapRectFor(state) {
+function snapRectFor(state, edgeMargin = SCREEN_EDGE_HALO, centerMargin = 0) {
   const waTop = workAreaTop;
-  const h = Config.VRAM_HEIGHT - waTop;
-  const half = (Config.VRAM_WIDTH / 2) | 0;
+  const mid = Config.VRAM_WIDTH >> 1;
+  const y0 = waTop + edgeMargin;
+  const innerH = Config.VRAM_HEIGHT - waTop - edgeMargin * 2;
   switch (state) {
     case "maximized":
-      return { x: 0, y: waTop, w: Config.VRAM_WIDTH, h };
+      return { x: edgeMargin, y: y0, w: Config.VRAM_WIDTH - edgeMargin * 2, h: innerH };
     case "snap-left":
-      return { x: 0, y: waTop, w: half, h };
-    case "snap-right":
-      return { x: half, y: waTop, w: Config.VRAM_WIDTH - half, h };
+      return { x: edgeMargin, y: y0, w: mid - centerMargin - edgeMargin, h: innerH };
+    case "snap-right": {
+      const x = mid + centerMargin;
+      return { x, y: y0, w: Config.VRAM_WIDTH - edgeMargin - x, h: innerH };
+    }
     default:
       return null;
   }
@@ -793,14 +817,16 @@ function snapRectFor(state) {
 /**
  * マウス座標からスナップ先の矩形 (state 付き) を返す。
  * スナップゾーン外なら null。上端=最大化を優先し、次に左端・右端。
+ * @param {number} [edgeMargin=SCREEN_EDGE_HALO]  snapRectFor に渡す実画面端マージン (px)
+ * @param {number} [centerMargin=0]  snapRectFor に渡す中央側マージン (px)
  * @returns {{ x:number, y:number, w:number, h:number, state:string }|null}
  */
-function getSnapRect(mx, my) {
+function getSnapRect(mx, my, edgeMargin = SCREEN_EDGE_HALO, centerMargin = 0) {
   let state = null;
   if (my < workAreaTop + SNAP_ZONE) state = "maximized";
   else if (mx < SNAP_ZONE) state = "snap-left";
   else if (mx >= Config.VRAM_WIDTH - SNAP_ZONE) state = "snap-right";
-  const rect = snapRectFor(state);
+  const rect = snapRectFor(state, edgeMargin, centerMargin);
   return rect && { ...rect, state };
 }
 
@@ -853,6 +879,32 @@ function unsnap(win, mx, my) {
     offX: mx - win.x,
     offY: my - win.y,
   };
+}
+
+/**
+ * snap-left / snap-right が隣接配置されている場合の中央境界線を補修する。
+ *
+ * drawWindowFrame は各ウィンドウ毎に「背景アウトライン(1px, 背景色) →
+ * 前景枠線」の順で描画するため、2 枚が隣接していると後から描画される側の
+ * 背景アウトラインが先に描画された側の前景枠線を上書きしてしまう
+ * (描画順依存で片側の枠線が消える)。
+ * 双方の内側境界を前景色で再描画し、2px の隣接縦線として見えるようにする。
+ * 上下端 1px (角丸の欠け) はそのまま残し、透過ピクセルの扱いには触れない。
+ */
+function repairSnapSeam() {
+  const leftWin = windows.find((w) => w.snapState === "snap-left");
+  const rightWin = windows.find((w) => w.snapState === "snap-right");
+  if (!leftWin || !rightWin) return;
+  // 実際に隣接していない場合は対象外 (手動リサイズ等でズレた場合)
+  if (leftWin.x + leftWin.w !== rightWin.x) return;
+
+  const seamLeftX = leftWin.x + leftWin.w - 1; // Lwin 側の枠線 (前景)
+  const seamRightX = rightWin.x; // Rwin 側の枠線 (前景)
+  const y0 = Math.max(leftWin.y, rightWin.y) + 1;
+  const y1 = Math.min(leftWin.y + leftWin.h, rightWin.y + rightWin.h) - 2;
+  if (y0 > y1) return;
+  GPU.vline(seamLeftX, y0, y1, 1);
+  GPU.vline(seamRightX, y0, y1, 1);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1552,10 +1604,11 @@ function toggleMaximize(win) {
     win.snapState = "none";
   } else {
     savePreSnapRect(win);
-    win.x = 0;
-    win.y = workAreaTop;
-    win.w = Config.VRAM_WIDTH;
-    win.h = Config.VRAM_HEIGHT - workAreaTop;
+    const r = snapRectFor("maximized");
+    win.x = r.x;
+    win.y = r.y;
+    win.w = r.w;
+    win.h = r.h;
     win.snapState = "maximized";
   }
   recalcLayout(win);
@@ -1716,7 +1769,9 @@ function handleDrag(mx, my) {
     win.y = my - dragOffY;
     recalcLayout(win);
     // モーダルウィンドウはスナップ不可
-    snapPreview = win.modal ? null : getSnapRect(mx, my);
+    snapPreview = win.modal
+      ? null
+      : getSnapRect(mx, my, SNAP_PREVIEW_MARGIN, SNAP_PREVIEW_MARGIN);
   }
 
   if (mode === "resize") {
@@ -2128,8 +2183,9 @@ export function wmDraw() {
     // ── スナッププレビュー (全ウィンドウの背面) ──
     if (snapPreview) {
       const sp = snapPreview;
-      // 背景を暗色で塗り潰し (角丸四隅の透過防止 + 余白の下地)
-      GPU.fillRect(sp.x, sp.y, sp.w, sp.h, 0);
+      // 背景との分離用ハロー (1px, 背景色) — drawWindowFrame と同じ構造。
+      // 角丸四隅の透過防止 + 内側全域の下地塗りも兼ねる。
+      GPU.fillRoundRect(sp.x - 1, sp.y - 1, sp.w + 2, sp.h + 2, 1, 0);
       // 角丸ボーダー (1px)
       GPU.drawRoundRect(sp.x, sp.y, sp.w, sp.h, 1, 1);
       // ボーダー内側 1px 余白を空けて市松模様
@@ -2139,6 +2195,9 @@ export function wmDraw() {
     for (const win of windows) {
       drawWindowFrame(win);
     }
+
+    // ── snap-left/snap-right 隣接時の中央境界線補修 ──
+    repairSnapSeam();
   }
 
   // ── メニュー ──
