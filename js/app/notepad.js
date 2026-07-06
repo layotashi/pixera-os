@@ -307,6 +307,15 @@ WM.wmRegister(APP_NAME, () => {
     about:
       "A plain text editor. Type to write, and save notes to the filesystem.",
   });
+  // エディタの縦(行)・横(桁)スクロール状態を WM 標準スクロールバー chrome へ接続する。
+  // 以降 WM が枠端の縦横バー + ステッパー + コーナーを描画・操作し、エディタは本文と
+  // content/viewport 同期に専念する。ステップは行/桁単位なので 1。
+  WM.wmAttachScroll(winId, {
+    v: textAreaEditor.view._vScroll,
+    h: textAreaEditor._hScroll,
+    vStep: 1,
+    hStep: 1,
+  });
   return winId;
 });
 

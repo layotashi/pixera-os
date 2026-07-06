@@ -75,7 +75,6 @@ export class NotepadEditor extends FocusableWidget {
    * @private
    */
   _geom(originX, originY) {
-    const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
     const charW = Ports.GLYPH_W + 1;
     const lineH = Helpers.TEXTAREA_LINE_HEIGHT;
     const bx = originX + this.x;
@@ -84,25 +83,28 @@ export class NotepadEditor extends FocusableWidget {
     const H = this.h;
     const innerX = bx + MARGIN;
     const innerY = by + MARGIN;
-    const innerW = Math.max(charW, W - SLOT - MARGIN * 2);
-    const innerH = Math.max(lineH, H - SLOT - MARGIN * 2);
+    // 縦横スクロールバースロットは WM 標準 chrome が this.w/this.h の外側に確保済み
+    // (host が渡す contentRect が既にスロット分縮まっている) ため、ここでは四辺の
+    // 均等余白 (MARGIN) だけを引く。
+    const innerW = Math.max(charW, W - MARGIN * 2);
+    const innerH = Math.max(lineH, H - MARGIN * 2);
     return {
-      bx, by, W, H, SLOT, charW, lineH,
+      bx, by, W, H, charW, lineH,
       innerX, innerY, innerW, innerH,
       widthChars: Math.max(1, Math.floor(innerW / charW)),
       visibleRows: Math.max(1, Math.floor(innerH / lineH)),
-      // V バー: 右端フラッシュ（下端は H バーぶん空ける）
-      vSlotX: bx + W - SLOT,
-      vSlotY: by,
-      vSlotH: H - SLOT,
-      // H バー: 下端フラッシュ（右端は V バーぶん空ける）
-      hSlotX: bx,
-      hSlotY: by + H - SLOT,
-      hSlotW: W - SLOT,
     };
   }
 
-  /** @private 横スクロールバー状態を view.scrollX と最長行から同期する。 */
+  /**
+   * @private 横スクロールバー状態を view.scrollX と最長行から同期する。
+   *
+   * _hScroll は WM 標準 chrome の横バーへ接続されており (notepad.js の wmAttachScroll)、
+   * WM がドラッグ / ステッパーで _hScroll.offset を書き換える。横スクロールの真実は
+   * view.scrollX（本文描画が参照）なので、両者を橋渡しする:
+   *   - WM がバー操作中 (ドラッグ / ステッパー押下) → バー → view.scrollX
+   *   - それ以外 (タイプでキャレット追従して view.scrollX が動く等) → view.scrollX → バー
+   */
   _syncHScroll() {
     let maxLen = 0;
     const lines = this.view.lines;
@@ -111,7 +113,12 @@ export class NotepadEditor extends FocusableWidget {
     }
     this._hScroll.viewport = this.view.widthChars;
     Scroll.scrollSetContent(this._hScroll, maxLen);
-    Scroll.scrollTo(this._hScroll, this.view.scrollX);
+    if (Scroll.scrollIsDragging(this._hScroll)) {
+      // _hScroll.offset は scrollBy/scrollTo でクランプ済み。本文へ反映する。
+      this.view.scrollX = this._hScroll.offset;
+    } else {
+      Scroll.scrollTo(this._hScroll, this.view.scrollX);
+    }
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -127,75 +134,22 @@ export class NotepadEditor extends FocusableWidget {
     const focused = Helpers.getFocused() === this;
     this.view.drawContent(g.innerX, g.innerY, g.innerW, g.innerH, focused);
 
-    // 縦バー（右端フラッシュ）/ 横バー（下端フラッシュ・常時表示）
-    Scroll.drawVScrollbarSlot(this.view._vScroll, g.vSlotX, g.vSlotY, g.vSlotH);
-    Scroll.drawHScrollbarSlot(this._hScroll, g.hSlotX, g.hSlotY, g.hSlotW);
-    // V/H が交わる右下コーナー（押下不能の飾り。ボタンが浮いて見えないように）
-    Scroll.drawScrollCorner(this._hScroll, g.vSlotX, g.hSlotY);
+    // 縦横スクロールバー + ステッパー + コーナーは WM 標準 chrome が枠端に描画する
+    // (notepad.js の wmAttachScroll で view._vScroll / this._hScroll を接続済み)。
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  //  入力（V/H スクロールバー → 本文マウス / キーボード）
+  //  入力（本文マウス / キーボード）
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   /** @override */
   update(ev) {
+    // 縦横スクロールバー・ステッパー・コーナーの入力は WM 標準 chrome が処理し、
+    // その領域のクリックはコンテンツへ伝播しない (this.w/this.h の外側にある)。
+    // ここでは本文領域のマウスのみを扱う。
     const g = this._geom(0, 0); // 入力はローカル座標
-    const v = this.view;
-    const vScroll = v._vScroll;
-    const hScroll = this._hScroll;
-
-    // ── 縦スクロールバー ──
-    const vt = Scroll.vScrollbarSlotThumbArea(g.vSlotX, g.vSlotY, g.vSlotH);
-    const inV =
-      ev.localX >= vt.x && ev.localX < vt.x + vt.w &&
-      ev.localY >= vt.y && ev.localY < vt.y + vt.h;
-    if (inV && (ev.type === "down" || ev.type === "held" || ev.type === "up")) {
-      Scroll.handleVScrollInput(vScroll, ev.type, ev.localY, vt.y, vt.h);
-    }
-    if (ev.type === "held" && Scroll.scrollIsDragging(vScroll) && !inV) {
-      Scroll.handleVScrollInput(vScroll, ev.type, ev.localY, vt.y, vt.h);
-    }
-
-    // ── 横スクロールバー（操作後 view.scrollX へ反映） ──
-    const ht = Scroll.hScrollbarSlotThumbArea(g.hSlotX, g.hSlotY, g.hSlotW);
-    const inH =
-      ev.localX >= ht.x && ev.localX < ht.x + ht.w &&
-      ev.localY >= ht.y && ev.localY < ht.y + ht.h;
-    if (inH && (ev.type === "down" || ev.type === "held" || ev.type === "up")) {
-      Scroll.handleHScrollInput(hScroll, ev.type, ev.localX, ht.x, ht.w);
-      v.scrollX = hScroll.offset;
-    }
-    if (ev.type === "held" && Scroll.scrollIsDragging(hScroll) && !inH) {
-      Scroll.handleHScrollInput(hScroll, ev.type, ev.localX, ht.x, ht.w);
-      v.scrollX = hScroll.offset;
-    }
-
-    if (ev.type === "up") {
-      Scroll.scrollDragReset(vScroll);
-      Scroll.scrollDragReset(hScroll);
-    }
-
-    // ── スクロールバー上のカーソル ──
-    const draggingV = Scroll.scrollIsDragging(vScroll);
-    const draggingH = Scroll.scrollIsDragging(hScroll);
-    if ((inV || draggingV) && (ev.type === "hover" || ev.type === "held" || ev.type === "down")) {
-      Helpers.wmRequestCursor("drag-v");
-    } else if ((inH || draggingH) && (ev.type === "hover" || ev.type === "held" || ev.type === "down")) {
-      Helpers.wmRequestCursor("drag-h");
-    }
-    if (draggingV || draggingH) return;
-
-    // ── 本文領域のマウス ──
-    // 交差コーナー（押下不能）や、内容が収まっている時の 100% thumb をクリックしても、
-    // ここへ落ちて「本文カーソル配置＝末尾へジャンプ＝下スクロール」してしまうのを防ぐ。
-    // スクロールバー各領域 (V/H バー・コーナー) を本文ヒットから除外する。
-    const inCorner =
-      ev.localX >= g.vSlotX && ev.localX < g.vSlotX + g.SLOT &&
-      ev.localY >= g.hSlotY && ev.localY < g.hSlotY + g.SLOT;
-    const hit =
-      this.hitTest(ev.localX, ev.localY) && !inV && !inH && !inCorner;
-    v.handleTextMouse(ev, hit, g.innerX, g.innerY);
+    const hit = this.hitTest(ev.localX, ev.localY);
+    this.view.handleTextMouse(ev, hit, g.innerX, g.innerY);
   }
 
   /** @override */
