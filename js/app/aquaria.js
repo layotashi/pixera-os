@@ -21,12 +21,16 @@
 
 import { pset, fillRect, drawRect, vline } from "../core/gpu.js";
 import { getFishFrame, FISH_W, FISH_H } from "../core/fish.js";
-import { wmOpen, wmRegister } from "../wm/index.js";
+import { wmOpen, wmRegister, wmOpenOrFocus, wmClose } from "../wm/index.js";
+import { VRAM_WIDTH, VRAM_HEIGHT } from "../config.js";
 
 const APP_NAME = "AQUARIA";
 
 const WIN_W = 200;
 const WIN_H = 140;
+
+/** デスクトップモードで放つ魚の数 (画面が広いので水槽より多め) */
+const DESKTOP_FISH_COUNT = 15;
 
 // ── 水槽レイアウト (ローカル座標、cr 起点) ──
 const BORDER = 1; // ボディ内枠線の太さ
@@ -113,12 +117,21 @@ function _tickFood() {
   food = food.filter((p) => p.y < sandTop);
 }
 
-function _tickFish() {
-  // Boids 風: 中央引力 + 個体反発 + 壁反発 + 餌追従
-  const cx = _crW / 2;
-  const cy = _crH / 2;
-  for (let i = 0; i < fish.length; i++) {
-    const f = fish[i];
+/**
+ * Boids 風の 1 ステップ。水槽モードとデスクトップモードで共有する。
+ * 群れの挙動 (中央引力 + 個体反発 + 壁反発 + 餌追従) は同一で、境界 (bounds) と
+ * 中央引力の中心 (cx, cy)、餌の有無だけがモードで異なる。
+ *
+ * @param {{x:number,y:number,vx:number,vy:number}[]} arr  魚配列
+ * @param {{left:number,right:number,top:number,bottom:number}} bounds  壁反発の作用境界 (魚座標系)
+ * @param {number} cx  中央引力の中心 X
+ * @param {number} cy  中央引力の中心 Y
+ * @param {{x:number,y:number,_eaten?:boolean}[]|null} foodArr  餌配列 (null = 餌なし)
+ */
+function stepSchool(arr, bounds, cx, cy, foodArr) {
+  const { left, right, top, bottom } = bounds;
+  for (let i = 0; i < arr.length; i++) {
+    const f = arr[i];
     const fcx = f.x + FISH_W / 2;
     const fcy = f.y + FISH_H / 2;
 
@@ -127,9 +140,9 @@ function _tickFish() {
     f.vy += (cy - f.y) * 0.0002;
 
     // 個体間反発
-    for (let j = 0; j < fish.length; j++) {
+    for (let j = 0; j < arr.length; j++) {
       if (i === j) continue;
-      const g = fish[j];
+      const g = arr[j];
       const dx = f.x - g.x;
       const dy = f.y - g.y;
       const d2 = dx * dx + dy * dy;
@@ -141,31 +154,33 @@ function _tickFish() {
     }
 
     // 餌追従: 一番近い餌へ向かう。十分近ければ食べる。
-    let best = null;
-    let bestD2 = 70 * 70; // 探知範囲
-    for (const p of food) {
-      const dx = p.x - fcx;
-      const dy = p.y - fcy;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = p;
+    if (foodArr) {
+      let best = null;
+      let bestD2 = 70 * 70; // 探知範囲
+      for (const p of foodArr) {
+        const dx = p.x - fcx;
+        const dy = p.y - fcy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = p;
+        }
       }
-    }
-    if (best) {
-      const dx = best.x - fcx;
-      const dy = best.y - fcy;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      f.vx += (dx / d) * 0.25;
-      f.vy += (dy / d) * 0.25;
-      if (d < 5) best._eaten = true; // 食べた印
+      if (best) {
+        const dx = best.x - fcx;
+        const dy = best.y - fcy;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        f.vx += (dx / d) * 0.25;
+        f.vy += (dy / d) * 0.25;
+        if (d < 5) best._eaten = true; // 食べた印
+      }
     }
 
     // 壁反発
-    if (f.x < BORDER + 1) f.vx += 0.1;
-    if (f.x > _crW - FISH_W - BORDER - 1) f.vx -= 0.1;
-    if (f.y < WATER_TOP_LOCAL + 1) f.vy += 0.1;
-    if (f.y > _sandBaseTop() - FISH_H) f.vy -= 0.1; // 砂の手前で反転
+    if (f.x < left) f.vx += 0.1;
+    if (f.x > right) f.vx -= 0.1;
+    if (f.y < top) f.vy += 0.1;
+    if (f.y > bottom) f.vy -= 0.1;
 
     // 速度上限 + 摩擦
     const sp = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
@@ -178,6 +193,22 @@ function _tickFish() {
     f.x += f.vx;
     f.y += f.vy;
   }
+}
+
+function _tickFish() {
+  // 水槽モード: 境界は水面〜砂の手前、餌あり。
+  stepSchool(
+    fish,
+    {
+      left: BORDER + 1,
+      right: _crW - FISH_W - BORDER - 1,
+      top: WATER_TOP_LOCAL + 1,
+      bottom: _sandBaseTop() - FISH_H, // 砂の手前で反転
+    },
+    _crW / 2,
+    _crH / 2,
+    food,
+  );
   // 食べられた餌を除去
   if (food.some((p) => p._eaten)) food = food.filter((p) => !p._eaten);
 }
@@ -323,6 +354,148 @@ function onInput(ev) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  デスクトップモード
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 魚だけを画面全体 (VRAM_WIDTH × VRAM_HEIGHT) に最前面で泳がせるモード。
+// 砂・水草・気泡・水面などの水槽要素は描かず、魚は画面端で反転する。
+// ウィンドウを持たないため、放流中はウィンドウを閉じても泳ぎ続ける
+// (状態はこのモジュールに常駐する)。入力は一切奪わず描画のみ行うので、
+// 魚の下にあるアイコン/ウィンドウ/メニューは通常どおり操作できる。
+//
+// モードは「起動モード」を表す永続選択で、アイコン右クリックメニューの
+// WINDOW MODE / DESKTOP MODE ラジオで切り替える。Run (= ダブルクリック) すると
+// 選択中のモードで起動し、Exit で停止する。動作中のモード間 live 切替は行わない。
+
+/** 起動モード: "window" (水槽ウィンドウ) | "desktop" (最前面で放流) */
+let launchMode = "window";
+
+/** デスクトップに放流中の魚 (放流中のみ非空) */
+/** @type {{x:number,y:number,vx:number,vy:number,phase:number}[]} */
+let deskFish = [];
+
+/** デスクトップモードが起動中か */
+let deskRunning = false;
+
+/** デスクトップ魚の尾びれアニメ用フレームカウンタ (ウィンドウと独立に進む) */
+let deskFrame = 0;
+
+/** デスクトップ魚を画面全体にランダム配置で生成する。 */
+function _initDesktopFish() {
+  deskFish = [];
+  for (let i = 0; i < DESKTOP_FISH_COUNT; i++) {
+    deskFish.push({
+      x: Math.random() * (VRAM_WIDTH - FISH_W),
+      y: Math.random() * (VRAM_HEIGHT - FISH_H),
+      vx: (Math.random() - 0.5) * 1.5,
+      vy: (Math.random() - 0.5) * 0.8,
+      phase: (Math.random() * 8) | 0,
+    });
+  }
+}
+
+/**
+ * デスクトップ魚の物理更新。kernel の update() から毎フレーム呼ばれる。
+ * 画面解像度は毎フレーム参照するため、解像度変更にも追従する。
+ */
+export function updateDesktopFish() {
+  if (!deskRunning) return;
+  deskFrame++;
+  stepSchool(
+    deskFish,
+    {
+      left: 1,
+      right: VRAM_WIDTH - FISH_W - 1,
+      top: 1,
+      bottom: VRAM_HEIGHT - FISH_H - 1,
+    },
+    VRAM_WIDTH / 2,
+    VRAM_HEIGHT / 2,
+    null, // デスクトップモードでは餌なし
+  );
+}
+
+/**
+ * デスクトップ魚の描画。app.js の draw() で wmDraw() の後・カーソルの前に呼ばれ、
+ * すべての UI の上・カーソルの下に描かれる。スプライトはカーソルと同じ自己完結型
+ * (本体 + アウトライン) なので任意の背景の上でそのまま視認できる。
+ */
+export function drawDesktopFish() {
+  if (!deskRunning) return;
+  for (const f of deskFish) {
+    const wf = ((deskFrame + f.phase * 4) >> 3) & 1;
+    drawFishSprite(wf, f.x | 0, f.y | 0, f.vx >= 0);
+  }
+}
+
+// ── コントローラ (アイコン右クリックメニューから駆動) ──
+
+/** AQUARIA が (いずれかのモードで) 起動中か。 */
+function _isRunning(entry) {
+  return (entry && entry.winId !== null) || deskRunning;
+}
+
+/**
+ * 選択中の launchMode で起動する。Run / ダブルクリックの実体。
+ * 既に起動中なら (window モードのみ) 最前面へ、それ以外は何もしない
+ * (モード間の live 切替はしない = 一度 Exit してから Run する)。
+ */
+function runAquaria(entry) {
+  if (_isRunning(entry)) {
+    if (entry && entry.winId !== null) wmOpenOrFocus(APP_NAME);
+    return;
+  }
+  if (launchMode === "desktop") {
+    _initDesktopFish();
+    deskRunning = true;
+  } else {
+    wmOpenOrFocus(APP_NAME); // 水槽ウィンドウを開く (factory 経由で winId 追跡)
+  }
+}
+
+/** 起動中のインスタンスを停止する。Exit の実体。 */
+function exitAquaria(entry) {
+  if (entry && entry.winId !== null) wmClose(entry.winId);
+  if (deskRunning) {
+    deskRunning = false;
+    deskFish = [];
+  }
+}
+
+/**
+ * アイコン右クリックのコンテキストメニュー項目を返す。
+ * 右クリックのたびに現在状態で再構築される (1-bit のため無効項目は
+ * グレーアウトせず、Exit は起動中のみ出す = 表示/非表示で状態を伝える)。
+ */
+function buildIconMenu(entry) {
+  const items = [
+    { type: "action", label: "RUN", action: () => runAquaria(entry) },
+    { type: "sep" },
+    {
+      type: "action",
+      label: "WINDOW MODE",
+      checked: launchMode === "window",
+      action: () => {
+        launchMode = "window";
+      },
+    },
+    {
+      type: "action",
+      label: "DESKTOP MODE",
+      checked: launchMode === "desktop",
+      action: () => {
+        launchMode = "desktop";
+      },
+    },
+  ];
+  if (_isRunning(entry)) {
+    items.push({ type: "sep" });
+    items.push({ type: "action", label: "EXIT", action: () => exitAquaria(entry) });
+  }
+  return items;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  登録
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -333,11 +506,14 @@ wmRegister(
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
       about:
         "A 1-bit fish tank. The fish school using simple flocking rules. " +
-        "Click in the tank to drop food, and the fish will come to eat it.",
+        "Click in the tank to drop food, and the fish will come to eat it. " +
+        "Right-click the desktop icon to release the school onto the desktop.",
       noResize: true,
       noMaximize: true,
       padding: "none", // 水面・水草を枠端まで描く（ボディ内側の余白を消す）
     });
   },
-  { category: "EXPERIMENT" },
+  // iconMenu: アイコン右クリックで Window/Desktop モードを切り替え・起動・終了。
+  // launch: ダブルクリック起動を launchMode 尊重にする (factory の代わりに呼ばれる)。
+  { category: "EXPERIMENT", iconMenu: buildIconMenu, launch: runAquaria },
 );

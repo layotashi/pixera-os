@@ -35,7 +35,7 @@ import "./graze.js";
 import "./dungeon.js";
 import "./tessera.js";
 import "./telex.js";
-import "./aquaria.js";
+import { updateDesktopFish, drawDesktopFish } from "./aquaria.js";
 import "./astral.js";
 import "./oscillo.js";
 import "./oracle.js";
@@ -89,6 +89,9 @@ export function update() {
   // ── 入力オーバーレイ更新 ──
   updateInputOverlay();
 
+  // ── AQUARIA デスクトップモードの魚を更新 (ウィンドウ有無と独立に常駐) ──
+  updateDesktopFish();
+
   // ── スクリーンショット タイマー更新 ──
   Capture.updateScreenshotTimer();
 
@@ -107,6 +110,11 @@ export function draw() {
 
   // ── ウィンドウ描画 ──
   wmDraw();
+
+  // ── AQUARIA デスクトップモードの魚 (最前面) ──
+  // wmDraw() の後に描くことで、アイコン・ウィンドウ・コンテキストメニューを
+  // 含むすべての UI の上、かつカーソルの下に魚を表示する。
+  drawDesktopFish();
 
   // ── カーソル: マウスが canvas 領域内のときだけ表示 ──
   if (isMouseInside()) drawCursor(mouseX(), mouseY());
