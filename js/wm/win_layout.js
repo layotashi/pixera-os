@@ -164,7 +164,7 @@ export function recalcLayout(win) {
   const fw = win.w;
   const fh = win.h;
   const footerH = win.footer ? FOOTER_HEIGHT : 0;
-  // ボディ内側パディング: padding:"none" のウィンドウ (NOTEPAD/AQUARIUM 等の
+  // ボディ内側パディング: padding:"none" のウィンドウ (NOTEPAD/AQUARIA 等の
   // 画面端まで描くアプリ) は 0、それ以外は config の CONTENT_PADDING。
   const pad = win._noPad ? 0 : CONTENT_PADDING;
 

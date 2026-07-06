@@ -51,7 +51,7 @@
  *     エラーは最下端の反転バーに出し、映像/音は直前 good が流れ続ける。
  *   - Alt+W で現在の場をデスクトップ背景に。Alt+P で音の再生/停止。Shift+Alt+F で整形。
  *     未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順・09 で音）と /Sketches/Gallery。
- *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
+ *   - FILES から .tess をダブルクリックで開く（tesseraOpenFile）。
  */
 
 import * as WM from "../wm/index.js";
@@ -1449,7 +1449,7 @@ WM.wmRegister(
   { category: "CREATIVE" },
 );
 
-// ── 公開 API: EXPLORER 等から .tess を開く ──
+// ── 公開 API: FILES 等から .tess を開く ──
 
 /**
  * 指定パスの Tessera ソースを TESSERA で開く。

@@ -370,7 +370,7 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     noResize: o.noResize || false,
     noMaximize: o.noMaximize || false,
     // ボディ内側パディング: padding:"none" で contentRect の内側余白を 0 にする
-    // (NOTEPAD/AQUARIUM 等の画面端まで描く/配置するアプリ用)。既定は CONTENT_PADDING。
+    // (NOTEPAD/AQUARIA 等の画面端まで描く/配置するアプリ用)。既定は CONTENT_PADDING。
     _noPad: o.padding === "none",
     onBeforeClose: o.onBeforeClose || null,
     // ── ABOUT パネル (opt-in) ──

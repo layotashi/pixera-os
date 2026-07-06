@@ -1,8 +1,8 @@
 /**
  * @module core/user_fonts
- * user_fonts.js — FONTSMITH 製ユーザーフォントの永続化
+ * user_fonts.js — GLYPHER 製ユーザーフォントの永続化
  *
- * FONTSMITH でデザインした 5x5 フォントを VFS に保存し、Config の
+ * GLYPHER でデザインした 5x5 フォントを VFS に保存し、Config の
  * フォントレジストリに登録する。boot 時に保存済みフォントを全て読み込んで
  * 登録することで、リロード後も Settings のドロップダウンから選べる。
  *

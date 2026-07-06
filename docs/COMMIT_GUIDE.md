@@ -62,7 +62,7 @@
 | ------------------------------------------------------------------------------------- | --------------------------- |
 | `(wm)` `(ui)` `(audio)` `(kernel)` `(config)` `(wallpaper)` `(splash)`                | レイヤー / 単一ファイル     |
 | `(core/gpu)` `(core/display_fx)` `(core/vfs)` `(core/audio)`                          | `core/` 内の特定モジュール  |
-| `(settings)` `(synesta)` `(paint)` `(notepad)` `(explorer)` `(capture)` `(tessera)` 等 | 特定アプリ                  |
+| `(settings)` `(synesta)` `(paint)` `(notepad)` `(files)` `(capture)` `(tessera)` 等 | 特定アプリ                  |
 | `(docs)` `(backlog)` `(brief)` `(humor)`                                              | docs 配下の特定ドキュメント |
 | `(test)`                                                                              | テスト全般                  |
 

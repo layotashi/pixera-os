@@ -29,16 +29,16 @@
   - `paint` — 1-bit ピクセルペイント
 - **トップレベル** (カテゴリ無し = OS ユーティリティ)
   - `notepad` — テキスト編集
-  - `explorer` — VFS マネージャ
+  - `files` — VFS マネージャ
   - `capture` — スクショ/動画/GIF 撮影
   - `settings` — パレット/壁紙/解像度/エフェクト
   - `about` — バージョン情報
 - **GAMES**
-  - `lifegame` — ライフゲーム / `breakout` — ブロック崩し
-  - `graze` — 弾幕サバイバル / `delve` — 1-bit ローグライク
+  - `life` — ライフゲーム / `bricker` — ブロック崩し
+  - `graze` — 弾幕サバイバル / `dungeon` — 1-bit ローグライク
 - **EXPERIMENT**
-  - `band` — 音声反応ビジュアル / `fontsmith` — フォントエディタ
-  - `aquarium` / `observatory` — 「映える画面」
+  - `oscillo` — 音声反応ビジュアル / `glypher` — フォントエディタ
+  - `aquaria` / `astral` — 「映える画面」
   - `telex` — テレタイプ演出 / `oracle` — 隠しテキストアドベンチャー
 - **DEMO** (dev) — `easing_demo` / `ascii_art_demo` / `gradient_demo`
   (プリミティブ動作確認)

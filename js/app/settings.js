@@ -181,7 +181,7 @@ function _initWidgets() {
   ddFont = new DropDown(0, 0, fontLabels, Math.max(0, curFontIdx), (i) =>
     Config.setSystemFont(Config.FONTS[i].id),
   );
-  // フォント一覧 / 選択の変化に追従 (FONTSMITH での保存・適用を即時反映)
+  // フォント一覧 / 選択の変化に追従 (GLYPHER での保存・適用を即時反映)
   const _syncFontSel = () => {
     if (!ddFont) return;
     const idx = Config.FONTS.findIndex(

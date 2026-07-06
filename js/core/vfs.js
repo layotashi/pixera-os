@@ -582,7 +582,7 @@ export function move(srcPath, destPath) {
  * 各エントリ: { path, name, type, depth, expanded, hasChildren }
  * @param {Object.<string, boolean>} expandedMap  パス → 展開状態のマップ
  * @param {boolean} [defaultExpanded=true]  マップに無いフォルダの既定展開状態。
- *   false にすると「明示的に開いたフォルダだけ展開」（EXPLORER は / だけ開いた初期表示）。
+ *   false にすると「明示的に開いたフォルダだけ展開」（FILES は / だけ開いた初期表示）。
  * @returns {Array}
  */
 export function flattenTree(expandedMap, defaultExpanded = true) {

@@ -23,7 +23,7 @@ npx playwright install chromium   # 初回のみ (~150MB)
 ```bash
 npm run capture <WINDOW_NAME>
 # 例:
-npm run capture AQUARIUM
+npm run capture AQUARIA
 npm run capture SYNESTA
 npm run capture desktop          # ウィンドウを開かず、デスクトップ全体のみ
 ```
@@ -73,7 +73,7 @@ window.__pixera = {
 |---|---|
 | 静的レイアウト確認 | ◎ できる |
 | アニメーション (魚・星・印字) | △ 1 フレームの静止画のみ |
-| 音 (BAND の反応) | × headless 環境では音が出ない |
+| 音 (OSCILLO の反応) | × headless 環境では音が出ない |
 | キーボード/マウス操作 | △ 別途 Playwright API で記述すれば可能 |
 | デザイン 4 原則の自動適用 | × エージェントの責任 |
 

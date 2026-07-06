@@ -14,7 +14,7 @@
  *   - Ctrl+O: ファイルを開く (未保存確認あり)
  *   - Ctrl+S: 上書き保存 (パスが無い場合は Save As にフォールバック)
  *   - Ctrl+Shift+S: 名前を付けて保存 (FileDialog)
- *   - notepadOpenFile(path): Explorer 等の外部モジュールからファイルを開く
+ *   - notepadOpenFile(path): Files 等の外部モジュールからファイルを開く
  */
 
 import * as WM from "../wm/index.js";

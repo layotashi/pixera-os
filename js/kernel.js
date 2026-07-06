@@ -175,7 +175,7 @@ async function boot() {
     // (ユーザーフォントから default へ戻す切替も content-swap で行えるように)
     Config.setFontGlyphs("default", getAllGlyphs());
 
-    // ── ユーザーフォント (FONTSMITH 製) の登録と選択復元 ──
+    // ── ユーザーフォント (GLYPHER 製) の登録と選択復元 ──
     VFS.initVfs();
     loadUserFonts();
     const savedFontId = Config.getSystemFontId();
@@ -196,7 +196,7 @@ async function boot() {
         await initIcon(`./assets/${initialFont.iconDir}/manifest.json`); // アイコンPNGの読み込み
         await initAppIcon(appIconNames); // アプリアイコンPNGの読み込み (規約ベース)
         await initTextIcon(`./assets/${initialFont.textIconDir}/manifest.json`); // テキストアイコンPNGの読み込み
-        await initFish(); // AQUARIUM用エンゼルフィッシュPNGの読み込み
+        await initFish(); // AQUARIA用エンゼルフィッシュPNGの読み込み
         await initWallpaper(); // 壁紙の読み込み
       })(),
     ]);

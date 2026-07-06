@@ -21,7 +21,7 @@
  *
  * 限界:
  *   - 1 フレーム静止画のみ (アニメーションの良し悪しは別途)
- *   - 音は無し (BAND の AnalyserNode は無入力)
+ *   - 音は無し (OSCILLO の AnalyserNode は無入力)
  *   - キーボード/マウス操作は無し (初期状態のレイアウトのみ)
  */
 
@@ -37,7 +37,7 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const PORT = 8765;
 const BOOT_TIMEOUT_MS = 15000;
 const SETTLE_MS = 2000; // ウィンドウ open 後にレイアウト + アニメーションが落ち着くまで待つ
-// (TELEX のタイプライタや AQUARIUM の魚の動きが初期遷移を終えるのに十分な時間)
+// (TELEX のタイプライタや AQUARIA の魚の動きが初期遷移を終えるのに十分な時間)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Args
@@ -109,7 +109,7 @@ async function main() {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       viewport: { width: 1280, height: 720 },
-      // 音声 autoplay を許可しておく (BAND 用、将来必要なら)
+      // 音声 autoplay を許可しておく (OSCILLO 用、将来必要なら)
     });
     const page = await context.newPage();
 

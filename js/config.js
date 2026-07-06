@@ -306,7 +306,7 @@ export function setTextTransform(mode) {
  * 複数の寸法を持たないことで、フォント切替が「グリフ内容の差し替えだけ」に
  * なり、寸法依存のメトリクス・アイコン・レイアウト再計算が一切不要になる
  * (シンプルさ = PIXERA OS の美学)。
- * FONTSMITH が作るユーザーフォントも同じ 5x5 でこの配列に登録される。
+ * GLYPHER が作るユーザーフォントも同じ 5x5 でこの配列に登録される。
  *
  *   id     : 内部識別子 (localStorage 保存用)
  *   label  : Settings DropDown の表示名
@@ -362,7 +362,7 @@ export function getSystemFont() {
   return FONTS.find((f) => f.id === _currentFontId) || FONTS[0];
 }
 
-// ── フォントレジストリ (組込 + FONTSMITH 製ユーザーフォント) ──
+// ── フォントレジストリ (組込 + GLYPHER 製ユーザーフォント) ──
 //
 // 全フォントは 5x5 同一寸法。各定義は `_glyphs` (Uint8Array[95]、各 25 byte)
 // を持ち、切替は kernel 経由の content-swap (font.js setGlyphs) で行う。
@@ -402,7 +402,7 @@ export function getFontGlyphs(id) {
 }
 
 /**
- * FONTSMITH 製のユーザーフォントを登録する (同 id があれば上書き)。
+ * GLYPHER 製のユーザーフォントを登録する (同 id があれば上書き)。
  * @param {string} id        一意なフォント ID
  * @param {string} label     ドロップダウン表示名
  * @param {Uint8Array[]} glyphs  5x5 グリフ配列 (95 文字)

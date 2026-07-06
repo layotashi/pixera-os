@@ -3,7 +3,7 @@
     "width": 12,
     "height": 11,
     "encoding": "3level",
-    "description": "White (R>=192) = foreground, gray (64<=R<192) = outline/background, black = transparent. AQUARIUM app's angelfish swim-animation frames."
+    "description": "White (R>=192) = foreground, gray (64<=R<192) = outline/background, black = transparent. AQUARIA app's angelfish swim-animation frames."
   },
   "frames": {
     "angelfish-1": {

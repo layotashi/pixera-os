@@ -18,7 +18,7 @@
 - core/ の純粋モジュール (dither / field_render / gif / mp4 / wav / pbm /
   anim / display_fx) は依存ゼロでテスト可能。手を入れる必要はない。
 - lang/ は薄く整理されており、現時点で分割・変更の必要はない。
-- ゲーム類 (breakout / graze / delve / lifegame) は自己完結の
+- ゲーム類 (bricker / graze / dungeon / life) は自己完結の
   1 ファイルアプリとして妥当。game_utils.js への共通化も済んでいる。
 
 問題は主に 3 種類:
@@ -100,16 +100,16 @@
 
 ### A-4. VFS 初期化の副作用 import を除去する
 
-- **対象**: `js/app/explorer.js` (モジュールトップの `VFS.initVfs()`)
+- **対象**: `js/app/files.js` (モジュールトップの `VFS.initVfs()`)
 - **問題**: kernel.js が boot() 内で `VFS.initVfs()` を呼ぶ一方、
-  explorer.js もモジュール評価時 (副作用 import) に呼んでいる。
+  files.js もモジュール評価時 (副作用 import) に呼んでいる。
   規約「副作用インポートは wmRegister 登録のみ」に反し、
   初期化順序が import 順に依存する。
-- **方針**: explorer.js の呼び出しを削除する。app/app.js の import は
+- **方針**: files.js の呼び出しを削除する。app/app.js の import は
   kernel の boot() 途中 (initVfs 済み) より前に評価されるため、
   安全のため `initVfs()` 側に「二重呼び出しは no-op」のガード
   (`if (root) return;`) を追加してから削除すること。
-- **検証**: 起動 → EXPLORER でツリーが表示される。
+- **検証**: 起動 → FILES でツリーが表示される。
   localStorage クリア後の初回起動でも既定ツリーが生成される。
 
 ---
@@ -191,12 +191,12 @@
   - `app/tessera/tessera.js` — ウィンドウ登録・エディタ・プレビュー・
     ツールバー・onDraw/onInput/onMeasure・ファイル操作。
   - `app/app.js` の import を `./tessera/tessera.js` に更新。
-    `tesseraOpenFile` の export 位置も維持する (explorer が参照)。
+    `tesseraOpenFile` の export 位置も維持する (files が参照)。
 - **期待される状態**: 挙動不変。各ファイル 500 行以下。
 - **検証**: TESSERA を開き、編集→即プレビュー、Ctrl+R / Ctrl+E
   (PNG/GIF/MP4/WAV)、CODE カードトグル、Alt+P (音)、
   Alt+Enter (PERFORM で編集・エラーバー)、Alt+W (壁紙化)、
-  EXPLORER から .tess ダブルクリック、を確認。
+  FILES から .tess ダブルクリック、を確認。
 
 ### B-3. Tessera ディレクティブ解決を tessera / wallpaper で共有する
 
@@ -317,22 +317,22 @@
 - **期待される状態**: 3 アプリから同型コードが消え、
   「ファイルを扱うアプリ」の追加が doc_host 利用で完結する。
 - **検証**: 各アプリで new / open / save / save as / dirty 表示 /
-  閉じる時の破棄確認 / EXPLORER からのダブルクリックオープン。
+  閉じる時の破棄確認 / FILES からのダブルクリックオープン。
 
 ### C-3. ファイル関連付けを自己登録レジストリにする
 
-- **対象**: `js/app/explorer.js` (FILE_ASSOC / FILE_HANDLERS),
+- **対象**: `js/app/files.js` (FILE_ASSOC / FILE_HANDLERS),
   `js/app/notepad.js`, `js/app/paint.js`, `js/app/tessera.js`
-- **問題**: explorer が拡張子表とハンドラ表をハードコードし、
+- **問題**: files が拡張子表とハンドラ表をハードコードし、
   notepad / paint / tessera を直接 import している (アプリ間の横結合)。
-  ファイルを開けるアプリを増やすたびに explorer の修正が要る。
+  ファイルを開けるアプリを増やすたびに files の修正が要る。
 - **方針**: `js/app/file_assoc.js` (新規) に
   `registerFileHandler(exts, openFn)` / `openWithAssociatedApp(path)` を
   作る。各アプリが wmRegister と同じ場所で自己登録し、
-  explorer は `openWithAssociatedApp` を呼ぶだけにする。
+  files は `openWithAssociatedApp` を呼ぶだけにする。
   wallpaper の SETTINGS 連携等は対象外 (拡張子起動のみ)。
-- **期待される状態**: explorer.js からアプリ import が消える。
-- **検証**: EXPLORER で .txt / .pbm / .tess をダブルクリックし
+- **期待される状態**: files.js からアプリ import が消える。
+- **検証**: FILES で .txt / .pbm / .tess をダブルクリックし
   各アプリで開くこと。未知拡張子は従来どおり何もしない。
 
 ### C-4. desktop.js の gridRowSpan 機構を除去する
@@ -398,11 +398,11 @@
 
 ### D-2. vfs.js の remove / removeRecursive を統合する
 
-- **対象**: `js/core/vfs.js`, 呼び出し側 (explorer 等), `tests/core/vfs.test.js`
+- **対象**: `js/core/vfs.js`, 呼び出し側 (files 等), `tests/core/vfs.test.js`
 - **問題**: 両関数は「空チェックの有無」以外同一。
 - **方針**: `remove(path, { recursive = false } = {})` に統合し、
   removeRecursive は削除。呼び出し側とテストを更新する。
-- **検証**: EXPLORER でファイル削除・空/非空フォルダ削除。
+- **検証**: FILES でファイル削除・空/非空フォルダ削除。
 
 ### D-3. package.json のメタデータを実態に合わせる
 

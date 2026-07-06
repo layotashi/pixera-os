@@ -153,7 +153,7 @@ export function getGlyph(ch) {
 
 /**
  * 現在のグリフ寸法と文字範囲を返す。
- * FONTSMITH が現在のシステムフォントを取り込んで編集する際に使う。
+ * GLYPHER が現在のシステムフォントを取り込んで編集する際に使う。
  * @returns {{ glyphW:number, glyphH:number, firstChar:number, charCount:number }}
  */
 export function getFontMetrics() {
@@ -167,7 +167,7 @@ export function getFontMetrics() {
 
 /**
  * 全グリフのコピーを ASCII 0x20..0x7E 順の配列で返す。
- * FONTSMITH の保存や、フォント切替のためのスナップショットに使う。
+ * GLYPHER の保存や、フォント切替のためのスナップショットに使う。
  * @returns {Uint8Array[]}  CHAR_COUNT 個の GLYPH_W*GLYPH_H バッファ (コピー)
  */
 export function getAllGlyphs() {
@@ -180,7 +180,7 @@ export function getAllGlyphs() {
 
 /**
  * グリフテーブルを実行時に差し替える (PNG を介さない in-memory フォント適用)。
- * FONTSMITH が編集したグリフをシステム全体へ即時反映するために使う。
+ * GLYPHER が編集したグリフをシステム全体へ即時反映するために使う。
  *
  * GLYPH_W / GLYPH_H は変更しない。グリフの「中身」だけを差し替えるため、
  * ラベル幅・ウィンドウ chrome・アイコンといった寸法依存のメトリクスは

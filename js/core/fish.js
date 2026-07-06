@@ -1,9 +1,9 @@
 /**
  * @module core/fish
- * fish.js — エンゼルフィッシュ・スプライト読み込み (AQUARIUM 用)
+ * fish.js — エンゼルフィッシュ・スプライト読み込み (AQUARIA 用)
  *
  * assets/fish/manifest.json に基づき PNG から泳ぎアニメーションの
- * フレームを読み込む。AQUARIUM がフレームを交互に描画して尾びれの
+ * フレームを読み込む。AQUARIA がフレームを交互に描画して尾びれの
  * 動きを表現する。
  *
  * ピクセル判定 (cursor.js / app_icon.js と同じ 3-level 方式):

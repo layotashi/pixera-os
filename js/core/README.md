@@ -36,7 +36,7 @@
 
 - `storage.js` — localStorage ベースの設定永続化
 - `vfs.js` — localStorage ベースの仮想ファイルシステム (テキスト/バイナリ)
-- `user_fonts.js` — FONTSMITH 製ユーザーフォントの VFS 永続化・登録
+- `user_fonts.js` — GLYPHER 製ユーザーフォントの VFS 永続化・登録
 - `defaults.js` — 現在の全設定を「出荷時デフォルト」として書き出す
   (config.js へベイクする運用)
 

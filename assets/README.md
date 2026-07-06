@@ -10,7 +10,7 @@ assets/
   icons/            UI アイコン + manifest.json
   icons-text/       テキスト表示用の特殊記号 (中点・改行矢印等) + manifest.json
   app-icons/        デスクトップ用アプリアイコン + manifest.json
-  fish/             AQUARIUM 用エンゼルフィッシュ・スプライト + manifest.json
+  fish/             AQUARIA 用エンゼルフィッシュ・スプライト + manifest.json
   font/             ビットマップフォント PNG (どれを使うかは config.js の FONTS が参照)
   favicon.png       ブラウザタブ用アイコン
 ```

@@ -3,7 +3,7 @@
  * VfsBrowser.js — VFS ツリーブラウジング コンポジットウィジェット
  *
  * 仮想ファイルシステム (VFS) のツリーを TreeView で表示する再利用可能コンポーネント。
- * Explorer アプリとファイルダイアログ (Save/Open) の共通基盤。
+ * Files アプリとファイルダイアログ (Save/Open) の共通基盤。
  *
  * ── 責務 ──
  *   - expandedMap (パス → 展開状態) の管理
@@ -15,7 +15,7 @@
  *   - D&D によるファイル移動 (enableDragDrop オプション)
  *
  * ── 使用例 ──
- *   // Explorer (フル機能)
+ *   // Files (フル機能)
  *   const browser = new VfsBrowser(236, 12, {
  *     onSelect:   (path, item) => { ... },
  *     onActivate: (path, item) => { ... },
@@ -200,12 +200,12 @@ export class VfsBrowser extends FocusableWidget {
     this._treeView.ensureVisible(idx);
   }
 
-  /** 内部 items 配列への参照 (Explorer 互換用) */
+  /** 内部 items 配列への参照 (Files 互換用) */
   get items() {
     return this._items;
   }
 
-  /** 内部 TreeView の selectedIndex (Explorer 互換用) */
+  /** 内部 TreeView の selectedIndex (Files 互換用) */
   get selectedIndex() {
     return this._treeView.selectedIndex;
   }
@@ -214,7 +214,7 @@ export class VfsBrowser extends FocusableWidget {
     this._treeView.selectedIndex = v;
   }
 
-  /** 展開状態マップへの参照 (Explorer 互換用) */
+  /** 展開状態マップへの参照 (Files 互換用) */
   get expandedMap() {
     return this._expandedMap;
   }
