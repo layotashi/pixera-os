@@ -503,6 +503,10 @@ const registry = [];
  *                                  ">" で区切ると N 階層のサブメニューになる。省略でトップレベル。
  * @param {boolean} [opts.dev]      開発専用アプリ。DEV_MODE=false 時にメニュー・アイコンから非表示。
  * @param {boolean} [opts.hidden]   メニューに表示しない（デスクトップアイコンのみ）。
+ * @param {(entry:object)=>object[]} [opts.iconMenu] デスクトップアイコン右クリック時の
+ *   コンテキストメニュー項目を返す関数。省略時は従来どおりランチャーメニューを開く。
+ * @param {(entry:object)=>void} [opts.launch] 起動ハンドラ。指定するとダブルクリック
+ *   (wmOpenByName) 時に factory ではなくこれを呼ぶ (モード付き起動などに使う)。
  */
 export function wmRegister(name, factory, opts = null) {
   registry.push({
@@ -514,6 +518,8 @@ export function wmRegister(name, factory, opts = null) {
     category: (opts && opts.category) || null,
     dev: (opts && opts.dev) || false,
     hidden: (opts && opts.hidden) || false,
+    iconMenu: (opts && opts.iconMenu) || null,
+    launch: (opts && opts.launch) || null,
   });
 }
 
@@ -1057,7 +1063,13 @@ export function wmGetRegistry() {
  */
 export function wmOpenByName(name) {
   const entry = registry.find((e) => e.name === name);
-  if (entry && entry.winId === null) {
+  if (!entry) return;
+  // 起動ハンドラを持つアプリ (モード付き起動など) はそちらへ委譲する。
+  if (entry.launch) {
+    entry.launch(entry);
+    return;
+  }
+  if (entry.winId === null) {
     entry.winId = entry.factory();
   }
 }
@@ -1581,7 +1593,16 @@ function handleRightClick(mx, my) {
     }
   }
 
-  // ウィンドウ外 → デスクトップメニュー
+  // ウィンドウ外 → デスクトップアイコン上ならアプリ別コンテキストメニュー、
+  // 空白ならランチャーメニュー。
+  const iconName = Desktop.hitTestIconName(mx, my);
+  if (iconName) {
+    const entry = registry.find((e) => e.name === iconName);
+    if (entry && entry.iconMenu) {
+      openContextMenu(entry.iconMenu(entry), mx, my);
+      return;
+    }
+  }
   openMenu(mx, my);
 }
 

@@ -90,6 +90,17 @@ function _menuItemLabel(item) {
   return item.label;
 }
 
+/**
+ * アイテムにチェックマークを表示すべきか。
+ *   app    … 対応ウィンドウが開いている
+ *   action … item.checked が true (ラジオ/トグル状態の表示に使う)
+ */
+function _itemChecked(item) {
+  if (item.type === "app") return !item.entry.modal && item.entry.winId !== null;
+  if (item.type === "action") return item.checked === true;
+  return false;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ツリー構築 / 寸法算出
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -407,33 +418,17 @@ function drawMenuPanel(panel) {
     const tx = x + MENU_PADDING + MENU_CHECK_WIDTH;
     const iconY = iy + ((MENU_ITEM_HEIGHT - ICON_H) >> 1);
 
-    if (isHover) {
-      GPU.fillRect(x + 2, iy, w - 4, MENU_ITEM_HEIGHT, 1);
-      // チェックマーク (開いているアプリ)
-      if (
-        item.type === "app" &&
-        !item.entry.modal &&
-        item.entry.winId !== null
-      ) {
-        drawIcon("check", x + MENU_PADDING, iconY, 0);
-      }
-      drawText(tx, iy + 3, label, 0);
-      // サブメニュー矢印
-      if (item.type === "sub") {
-        drawIcon("arrow-right", x + w - MENU_PADDING - ICON_W, iconY, 0);
-      }
-    } else {
-      if (
-        item.type === "app" &&
-        !item.entry.modal &&
-        item.entry.winId !== null
-      ) {
-        drawIcon("check", x + MENU_PADDING, iconY, 1);
-      }
-      drawText(tx, iy + 3, label, 1);
-      if (item.type === "sub") {
-        drawIcon("arrow-right", x + w - MENU_PADDING - ICON_W, iconY, 1);
-      }
+    // ホバー行は反転 (背景 fg / 前景 bg)、非ホバーは通常配色。
+    const fg = isHover ? 0 : 1;
+    if (isHover) GPU.fillRect(x + 2, iy, w - 4, MENU_ITEM_HEIGHT, 1);
+    // チェックマーク (開いているアプリ / checked な action 項目)
+    if (_itemChecked(item)) {
+      drawIcon("check", x + MENU_PADDING, iconY, fg);
+    }
+    drawText(tx, iy + 3, label, fg);
+    // サブメニュー矢印
+    if (item.type === "sub") {
+      drawIcon("arrow-right", x + w - MENU_PADDING - ICON_W, iconY, fg);
     }
 
     iy += MENU_ITEM_HEIGHT;

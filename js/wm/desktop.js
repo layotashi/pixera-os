@@ -615,6 +615,18 @@ function hitTestIcon(mx, my) {
   return -1;
 }
 
+/**
+ * マウス座標上のアイコンのアプリ名を返す (アイコン別コンテキストメニュー用)。
+ * wm.js が右クリック時に呼び、ヒットしたアプリの iconMenu を開くのに使う。
+ * @param {number} mx
+ * @param {number} my
+ * @returns {string|null} アプリ名 (ヒットなしは null)
+ */
+export function hitTestIconName(mx, my) {
+  const idx = hitTestIcon(mx, my);
+  return idx >= 0 ? iconEntries[idx].name : null;
+}
+
 // ── ドラッグ＆ドロップ ──
 
 /**
