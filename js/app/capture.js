@@ -65,7 +65,6 @@ let gifStartTime = 0;
 let gifDuration = GIF_DEFAULT_DURATION;
 let gifFps = GIF_DEFAULT_FPS;
 let gifFrameInterval = 0; // ms — 1/fps
-let gifLastFrameTime = 0;
 let gifTimerEnd = 0;
 let gifPending = false;
 let gifEncoding = false; // エンコード中フラグ
@@ -373,7 +372,6 @@ function doStartGifRecording() {
 
   gifFrames = [];
   gifFrameInterval = 1000 / gifFps;
-  gifLastFrameTime = 0;
   isGifRecording = true;
   gifStartTime = performance.now();
 }
@@ -804,6 +802,18 @@ export function drawGifOverlay() {
  * draw() 末尾 (flush 後) から呼ぶ:
  * 予約された GIF 録画を開始し、録画中は FPS 間隔で VRAM スナップショットを蓄積。
  * ウィンドウ単体録画中にウィンドウが閉じられた/リサイズされた場合は自動停止する。
+ *
+ * 捕捉は「前回捕捉時刻からの経過」ではなく「録画開始からの経過時間」を基準に、
+ * 今あるべきフレーム数まで追いつかせる方式で行う。requestAnimationFrame の
+ * tick 間隔 (ディスプレイのリフレッシュレート依存、通常 60Hz≒16.7ms) は
+ * gifFrameInterval (例: 50fps=20ms) と綺麗に割り切れないことが多く、
+ * 「前回捕捉時刻」を基準にすると tick 境界で毎回わずかに超過した分が切り捨てられ、
+ * 実効キャプチャ間隔が gifFrameInterval よりシステマティックに間延びする
+ * (例: 60Hz 環境で 50fps 指定 → 実際は約 30fps しか捕捉されない)。
+ * GIF は捕捉フレーム数 × (1/fps) で再生時間が決まるため、フレームが目減りした分
+ * だけ実際の録画時間より短く再生され、早回し (fast-forward) して見えてしまう。
+ * 開始時刻からの絶対経過時間で「あるべきフレーム数」を都度計算すれば、
+ * tick 粒度に起因するズレは蓄積せず平均で正しい fps に収束する。
  */
 export function commitGifRecording() {
   if (gifPending) {
@@ -812,17 +822,16 @@ export function commitGifRecording() {
   }
   if (isGifRecording) {
     const now = performance.now();
-    if (now - gifLastFrameTime >= gifFrameInterval) {
+    const targetFrameCount =
+      Math.floor((now - gifStartTime) / gifFrameInterval) + 1;
+    while (gifFrames.length < targetFrameCount) {
       const snap = captureVramSnapshot();
-      if (snap) {
-        gifFrames.push(snap);
-      } else {
+      if (!snap) {
         // ターゲットウィンドウが閉じられた or リサイズされた
         stopGifRecording();
         return;
       }
-      gifLastFrameTime = now;
+      gifFrames.push(snap);
     }
   }
 }
-
