@@ -76,21 +76,29 @@ import { compile } from "../../lang/runtime.js";
 import { makeBufferSurface } from "../../lang/surface.js";
 import { format } from "../../lang/format.js";
 import * as Wallpaper from "../wallpaper.js";
+import * as Config from "../config.js";
 import { DEFAULT_CODE, HOME_DIR, EXT, seedSamples } from "./tessera/samples.js";
 
 const APP_NAME = "TESSERA";
 
 // ── レイアウト/プレビュー ──
-// エディタ幅 (文字数)。39桁 = PERFORM (最小幅 480px) に 2x グリフ
-// (字送り12px) が対称余白 (透過4+バー3 ×左右) 込みでぴったり収まる桁数:
-// 4+3 + (39*12-2) + 3+4 = 480。
+// レイアウトは**レスポンシブ**（コンテンツ矩形から毎フレーム再配置）。狭い既定解像度
+// (360x360) でもウィンドウがはみ出さず、最大化すれば全域に広がる。上=全幅ツールバー、
+// 左=コードエディタ（残り幅を充填・縦は全高）、右=ライブプレビュー＋見た目トグル。
+// COLS/ROWS は初期値のみ（実際の表示桁数/行数は fitEditor が px から算出して上書き）。
+// COLS=39 は PERFORM の桁基準・桁ガイド（guideCol）としても使う不変値。
 const COLS = 39;
-const ROWS = 24; // エディタ表示行数（最長サンプル julia ~23 行をスクロール無しで表示）
+const ROWS = 24;
 const MAX_LINES = 9999;
-const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
-// プレビューは出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で見せる
-// ＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。
-const GAP = 8; // エディタ⇄プレビュー間
+// エディタが割り込まれても最低限の可読幅を確保する桁数（プレビューはこの残りに収める）。
+const MIN_EDIT_COLS = 24;
+// プレビュー枠の長辺px。出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で
+// 見せる＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。実際の枠は利用可能域から
+// fitLayout が算出（_previewBox）。PV_BOX_MAX はその上限（大画面で巨大化させない）。
+const PV_BOX_MAX = 176;
+const PV_BOX_MIN = 40;
+let _previewBox = PV_BOX_MAX; // fitLayout が毎フレーム更新（previewScale が参照）
+const GAP = 8; // エディタ⇄プレビュー間 / 縦の区切り
 
 
 // ── レンダーモード（場 → 1-bit。共有 core/field_render.js を使う） ──
@@ -604,10 +612,16 @@ let isDirty = false;
 
 // ── ウィジェット (遅延初期化) ──
 // パラメータ（seed/方式/出力/dot/pad/fps）はすべてコードの設定ディレクティブで指定する。
-// 画面に残すコントロールは「書き出し形式 + DOWNLOAD」のみ（最小コントロール）。
-let editor, ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, ctrlRow, root, group;
+// 画面に残すコントロールはツールバー（書き出し形式 + アクション）と、プレビュー下の
+// 「カードの見た目」トグル（CODE / ART INV / CODE INV）のみ（最小コントロール）。
+// 全ウィジェットを 1 つのフラット WidgetGroup に入れ、fitLayout が毎フレーム座標を与える
+// （手動配置＝レスポンシブ）。フォーカス/入力/ツールチップ/ポップアップは group が一括処理。
+let editor, ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, group;
+let toolbarBtns; // ツールバーの均等配分対象（ddFormat + アクション群）
 // プレビュー直下の「カードの見た目」トグル群（CODE / ART INV / CODE INV）。
-let codeToggle, artInvToggle, codeInvToggle, sideGroup;
+let codeToggle, artInvToggle, codeInvToggle;
+// エディタの枠ぶんの余白（px）。widthChars/visibleRows ⇄ px 変換に使う（実測で導出）。
+let _editChromeW = 0, _editChromeH = 0;
 let _ready = false;
 
 function recompile(src) {
@@ -655,6 +669,11 @@ function _initWidgets() {
   });
   editor.showWhitespace = false; // コード編集では空白/改行マーカーを消す（読みやすさ）
   editor.guideCol = COLS; // 39桁ガイド（点線）＋超過行ティック。TESS の桁制約を可視化（D）
+  // 枠ぶんの余白を実測で導出（widthChars/visibleRows ⇄ px 変換に使う）。
+  const charW = GLYPH_W + 1;
+  const lineH = GLYPH_H + 3; // = Helpers.TEXTAREA_LINE_HEIGHT
+  _editChromeW = editor.w - (COLS * charW + GLYPH_W);
+  _editChromeH = editor.h - (ROWS * lineH - 1);
 
   // ── ツールバー（1 行）: 書き出し形式 + アクション群。ショートカットは各ボタンの
   // hover ツールチップに表示する（画面下部の凡例は廃止）。
@@ -674,16 +693,10 @@ function _initWidgets() {
   btnSave = mkBtn("SAVE", "Save — Ctrl+S   (Save As — Ctrl+Shift+S)", saveFile);
   btnOpen = mkBtn("OPEN", "Open a .tess sketch — Ctrl+O", openFile);
   btnNew = mkBtn("NEW", "New sketch — Alt+N", newFile);
-  btnWallpaper = mkBtn("WALLPAPER", "Set as desktop wallpaper, live-rendered — Alt+W", setWallpaper);
+  btnWallpaper = mkBtn("WALL", "Set as desktop wallpaper, live-rendered — Alt+W", setWallpaper);
+  toolbarBtns = [ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
 
-  ctrlRow = UI.HBox([ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
-
-  // エディタは HBox で包む。VBox は直下のリーフ幅を最大子（=幅広ツールバー）へ引き伸ばす
-  // が、Box 子は引き伸ばさない。これで枠が 40 桁テキストと一致する（枠だけ広くならない）。
-  root = UI.VBox([ctrlRow, UI.HBox([editor])]);
-  group = new UI.WidgetGroup(root);
-
-  // ── プレビュー直下: カードの見た目トグル（onDraw で preview の下へ配置）──
+  // ── プレビュー直下: カードの見た目トグル（fitLayout で preview の下へ配置）──
   const onLook = () => { _pvFrame = -1; }; // 変更を即プレビューへ
   codeToggle = new UI.ToggleButton(0, 0, "CODE", (v) => { codeOn = v; onLook(); }, codeOn);
   codeToggle.tooltip = "Overlay the source code on the preview/export (= code card)";
@@ -691,15 +704,101 @@ function _initWidgets() {
   artInvToggle.tooltip = "Invert the artwork (light/dark swap)";
   codeInvToggle = new UI.ToggleButton(0, 0, "CODE INV", (v) => { codeInv = v; onLook(); }, codeInv);
   codeInvToggle.tooltip = "Invert the code highlight: dark bar+light text  <->  light bar+dark text";
-  sideGroup = new UI.WidgetGroup(UI.VBox([codeToggle, artInvToggle, codeInvToggle]));
+
+  // 全ウィジェットを 1 つのフラット group に（手動配置。fitLayout が毎フレーム座標を与える）。
+  group = new UI.WidgetGroup([
+    ...toolbarBtns, editor, codeToggle, artInvToggle, codeInvToggle,
+  ]);
 
   recompile(DEFAULT_CODE);
 }
 
-/** コントロール再レイアウト。 */
+/**
+ * エディタを px 矩形 (x,y,w,h) に合わせ、表示桁数/行数を実寸から導出する。
+ * TextArea の枠は保ちつつ NotePad 的にフィルする（右下に半端な余白を残さない）。
+ */
+function fitEditor(x, y, w, h) {
+  const charW = GLYPH_W + 1;
+  const lineH = GLYPH_H + 3;
+  const cols = Math.max(MIN_EDIT_COLS, Math.floor((w - _editChromeW) / charW));
+  const rows = Math.max(4, Math.floor((h - _editChromeH + 1) / lineH));
+  editor.widthChars = cols;
+  editor.visibleRows = rows;
+  editor.view.setViewport(cols, rows); // 縦スクロール viewport も同期
+  editor.remeasure(); // widthChars/visibleRows から w/h を再算出（cols/rows ちょうど）
+  editor.x = x;
+  editor.y = y;
+}
+
+/** フォント/パディング変更時の再計測（座標は fitLayout が毎フレーム与える）。 */
 function relayout() {
   group.remeasureAll();
-  root.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
+  // 枠余白を再導出（フォント寸法が変わると charW/lineH が変わりうるため）。
+  const charW = GLYPH_W + 1;
+  const lineH = GLYPH_H + 3;
+  _editChromeW = editor.w - (editor.widthChars * charW + GLYPH_W);
+  _editChromeH = editor.h - (editor.visibleRows * lineH - 1);
+}
+
+// ── レスポンシブ配置 ──────────────────────────────────────────────────
+// コンテンツ矩形 cr から全ウィジェットの座標とプレビュー枠を毎フレーム決める。
+// 上=全幅ツールバー、左=エディタ（残り幅を充填・縦は全高）、右=プレビュー＋見た目トグル。
+// 返り値のプレビュー枠（コンテンツ相対）は onDraw が実描画に使う。
+let _pvLocal = { x: 0, y: 0, w: 0, h: 0 };
+function fitLayout(cr) {
+  const FM = UI.FOCUS_MARGIN;
+  const uW = cr.w - 2 * FM; // フォーカスブラケットぶんを四辺に確保
+  const uH = cr.h - 2 * FM;
+  const ox = FM;
+  const oy = FM;
+
+  // ── ツールバー（全幅に均等配分）──
+  const toolbarH = layoutToolbar(ox, oy, uW);
+
+  // ── ボディ（ツールバーの下）──
+  const bodyY = oy + toolbarH + GAP;
+  const bodyH = Math.max(1, uH - toolbarH - GAP);
+
+  // ── プレビュー枠を決める（クリーンスケール）。エディタ最小幅と、トグル 3 段ぶんの
+  // 縦を残した範囲で、可能な限り大きく取る。長辺 = 幅/縦の小さい方でキャップ。──
+  const minEditW = MIN_EDIT_COLS * (GLYPH_W + 1) + GLYPH_W + _editChromeW;
+  const togglesH = codeToggle.h * 3 + UI.MIN_GAP * 2;
+  const boxW = uW - GAP - minEditW; // プレビューが取れる最大幅
+  const boxH = bodyH - GAP - togglesH; // プレビューが取れる最大縦
+  _previewBox = Math.max(PV_BOX_MIN, Math.min(boxW, boxH, PV_BOX_MAX));
+  const pv = previewScale(asciiActive); // 実寸（クリーン倍率で量子化）
+  const pvW = pv.w;
+  const pvH = pv.h;
+
+  // ── エディタ（左・残り幅を充填・縦は全高）──
+  const rightEdge = ox + uW; // 右コンテンツ端（FM 内側）
+  const pvX = rightEdge - pvW;
+  const editW = Math.max(minEditW, pvX - GAP - ox);
+  fitEditor(ox, bodyY, editW, bodyH);
+
+  // ── 右カラム: プレビュー（上）＋ 見た目トグル（下）──
+  // プレビュー枠線は 1px 外側に描くため、エディタ角丸枠の上端と揃うよう +1。
+  _pvLocal = { x: pvX, y: bodyY + 1, w: pvW, h: pvH };
+  const togY = _pvLocal.y + pvH + GAP;
+  const step = codeToggle.h + UI.MIN_GAP;
+  codeToggle.x = pvX;    codeToggle.y = togY;
+  artInvToggle.x = pvX;  artInvToggle.y = togY + step;
+  codeInvToggle.x = pvX; codeInvToggle.y = togY + step * 2;
+}
+
+/** ツールバー（ddFormat + アクション群）を [ox, ox+width] に均等配分し、行高を返す。 */
+function layoutToolbar(ox, oy, width) {
+  const btns = toolbarBtns;
+  const sumW = btns.reduce((s, b) => s + b.w, 0);
+  const n = btns.length;
+  const gap = Math.max(UI.MIN_GAP, Math.floor((width - sumW) / (n - 1)));
+  let x = ox;
+  for (let i = 0; i < n; i++) {
+    btns[i].x = x;
+    btns[i].y = oy;
+    x += btns[i].w + gap;
+  }
+  return btns[0].h;
 }
 
 
@@ -844,8 +943,8 @@ function previewScale(ascii) {
   const maxBase = Math.max(baseW, baseH);
   let renderDenom = 1,
     displayScale = 1;
-  if (maxBase <= PV_BOX) displayScale = Math.max(1, Math.floor(PV_BOX / maxBase));
-  else renderDenom = Math.ceil(maxBase / PV_BOX);
+  if (maxBase <= _previewBox) displayScale = Math.max(1, Math.floor(_previewBox / maxBase));
+  else renderDenom = Math.ceil(maxBase / _previewBox);
   // ASCII はグリフを拡大すると汚いので等倍表示。
   if (ascii && displayScale > 1) displayScale = 1;
   const rbW = Math.max(1, Math.round(baseW / renderDenom));
@@ -1149,19 +1248,6 @@ function setWallpaper() {
   }, 1500);
 }
 
-/**
- * ツールバーを「エディタ左端〜プレビュー右端」の全幅に均等配分する（最初=エディタ左、
- * 最後=プレビュー右）。トップバー右端を下のコンテンツと揃え、宙に浮く右端を無くす。
- */
-function fitToolbar() {
-  if (!ctrlRow) return;
-  const target = editor.w + GAP + previewScale(asciiActive).w; // エディタ左〜プレビュー右
-  const btns = [ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
-  const sumW = btns.reduce((s, b) => s + b.w, 0);
-  // ceil で target 以上に（端数はエディタ⇄プレビューの間隔へ回す＝右端ぴったり）。
-  ctrlRow.gap = Math.max(UI.FOCUS_MARGIN * 2, Math.ceil((target - sumW) / (btns.length - 1)));
-}
-
 function onDraw(cr) {
   // ── PERFORM ⇔ フルスクリーンを 1:1 同期（Alt+Enter / F11 / Esc すべて同じ経路）──
   const fs = winId !== null && WM.wmIsFullscreen(winId);
@@ -1207,24 +1293,24 @@ function onDraw(cr) {
     return;
   }
 
-  // ── トップツールバー（全幅に均等配分）+ エディタ（左カラム）──
-  fitToolbar();
+  // ── 実効方式を先に確定（プレビュー枠の ascii 判定に使う）──
+  const eff = effectiveRender();
+  activeMode = eff.mode;
+  activeParams = eff.params;
+  asciiActive = activeMode === "ascii" && !codeOn; // CODE ON の背景は面系ディザ
+
+  // ── レスポンシブ配置（cr から全ウィジェット座標 + プレビュー枠を決める）──
+  codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
+  fitLayout(cr);
   group.draw(cr);
 
-  // ── 右: ライブプレビュー（ツールバーの下。**右端をツールバー右端へ揃える**）──
-  // 枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）ので、エディタ枠（drawRoundRect）と
-  // 上端を揃えるため pvY を +1。右端は ctrlRow.w に合わせ、エディタ⇄プレビュー間隔で吸収。
-  const pv0 = previewScale(asciiActive); // プレビュー枠サイズ（カードもこの枠へ縮小）
-  const contentW = Math.max(ctrlRow.w, editor.w + GAP + pv0.w);
-  const pvX = cr.x + editor.x + contentW - pv0.w;
-  const pvY = cr.y + editor.y + 1;
+  // ── 右: ライブプレビュー（ツールバーの下・右カラム上）──
+  const pvX = cr.x + _pvLocal.x;
+  const pvY = cr.y + _pvLocal.y;
+  const pvBoxW = _pvLocal.w;
+  const pvBoxH = _pvLocal.h;
 
   if (program) {
-    // 実効方式（view: があればコードが決める。無ければ既定 dither）。
-    const eff = effectiveRender();
-    activeMode = eff.mode;
-    activeParams = eff.params;
-    asciiActive = activeMode === "ascii" && !codeOn; // CODE ON の背景は面系ディザ
     const { seed, period, fps } = resolvedConfig();
     // WYSIWYG: プレビューを宣言 fps のフレームグリッドへ量子化（書き出しと同じ間引き・速度）。
     // フレーム番号が変わったときだけ再レンダー。
@@ -1235,7 +1321,7 @@ function onDraw(cr) {
       if (frameIdx !== _pvFrame || _pvCache === null) {
         if (codeOn) {
           const cm = activeMode === "ascii" ? "dither" : activeMode;
-          _pvCache = renderCardPreview(t, seed, cm, activeParams, pv0.w, pv0.h);
+          _pvCache = renderCardPreview(t, seed, cm, activeParams, pvBoxW, pvBoxH);
         } else {
           _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive);
           if (artInv && _pvCache) {
@@ -1256,11 +1342,6 @@ function onDraw(cr) {
       GPU.blit(pv.buf, pv.w, pv.h, pvX, pvY, 1);
     }
   }
-
-  // ── プレビュー直下: カードの見た目トグル（CODE / ART INV / CODE INV）──
-  codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
-  sideGroup.setLayoutOrigin(editor.x + contentW - pv0.w, editor.y + 1 + pv0.h + GAP);
-  sideGroup.draw(cr);
 }
 
 function onDrawFooter(fr) {
@@ -1284,32 +1365,29 @@ function onInput(ev) {
     ovHandleMouse(ev);
     return;
   }
+  // ヒットテストが描画と同じ座標を使うよう、入力前にも配置を確定する（リサイズ追従）。
+  codeInvToggle.visible = codeOn;
+  const cr = winId !== null ? WM.wmGetContentRect(winId) : null;
+  if (cr) fitLayout(cr);
   group.update(ev);
-  codeInvToggle.visible = codeOn; // hit 判定の前に可視性を同期
-  // フォーカスは全体で 1 つ（Helpers）。sideGroup は down/mdown が自分のトグルに当たった
-  // ときだけ処理する（外れ down で clearFocus し、main group のエディタ focus を奪うのを防ぐ）。
-  // hover/up/held はそのまま渡す（tooltip・トグル完了。これらは focus を消さない）。
-  if (ev.type === "down" || ev.type === "mdown") {
-    const hit = [codeToggle, artInvToggle, codeInvToggle].some(
-      (t) => t.visible !== false && t.hitTest(ev.localX, ev.localY),
-    );
-    if (!hit) return;
-  }
-  sideGroup.update(ev);
 }
 
 function onMeasure() {
-  // トップツールバーは全幅に均等配分し、その下に [エディタ | プレビュー]。ウィンドウは
-  // エディタ + 実プレビュー幅ちょうど（プレビューが右下端に揃う）。
-  fitToolbar();
-  const pv = previewScale(asciiActive);
-  const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + pv.w);
-  const w = editor.x + contentW + UI.FOCUS_MARGIN;
-  // 右カラム = プレビュー + トグル群（プレビュー直下）。エディタとの高い方。
-  const sideH = codeToggle ? 1 + pv.h + GAP + codeToggle.h * 3 + UI.FOCUS_MARGIN * 4 : pv.h;
-  const bodyH = editor.y + Math.max(editor.h, sideH);
-  const h = bodyH + UI.FOCUS_MARGIN;
-  return { w, h };
+  // レスポンシブなので自然サイズは「画面を程よく満たす」ポリシー値。既定解像度
+  // (360x360) では画面いっぱい、大画面では控えめな窓に収める（最大化で全域へ）。
+  // ウィンドウ枠ぶんを引いた上限にクランプし、狭い画面でも決してはみ出さない。
+  const PREF_W = 360, PREF_H = 340; // 望ましいコンテンツ寸法（上限）
+  const MARGIN = 3; // デスクトップに残す余白
+  // content → window の枠増分（win_layout.js と一致）。BORDER=1 は不変の枠定数。
+  const chromeW = 2 /*BORDER*2*/ + WM.CONTENT_PADDING * 2;
+  const chromeH =
+    3 /*BORDER*2+SEP*/ + WM.HEADER_HEIGHT + WM.CONTENT_PADDING * 2 + WM.FOOTER_HEIGHT;
+  const maxW = Config.VRAM_WIDTH - chromeW - MARGIN * 2;
+  const maxH = Config.VRAM_HEIGHT - chromeH - MARGIN * 2;
+  return {
+    w: Math.max(220, Math.min(PREF_W, maxW)),
+    h: Math.max(160, Math.min(PREF_H, maxH)),
+  };
 }
 
 function onBeforeClose() {
