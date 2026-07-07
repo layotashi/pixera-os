@@ -82,9 +82,11 @@ import { DEFAULT_CODE, HOME_DIR, EXT, seedSamples } from "./tessera/samples.js";
 const APP_NAME = "TESSERA";
 
 // ── レイアウト/プレビュー ──
-// レイアウトは**レスポンシブ**（コンテンツ矩形から毎フレーム再配置）。狭い既定解像度
-// (360x360) でもウィンドウがはみ出さず、最大化すれば全域に広がる。上=全幅ツールバー、
-// 左=コードエディタ（残り幅を充填・縦は全高）、右=ライブプレビュー＋見た目トグル。
+// レイアウトは**固定**（naturalSize = 規定解像度 360x270 基準で配置。ウィンドウの
+// リサイズには追従しない＝リフローしない）。窓を小さくすると WM が窓側の縦横スクロールで
+// 巡らせ、maximize / fit-to-content で 360x270 にちょうど収まる。上=全幅ツールバー、
+// 左=コードエディタ（135px プレビュー隣の最大幅・縦は全高・長い行はエディタ自身が横スクロール）、
+// 右=135px 固定ライブプレビュー＋見た目トグル。
 // COLS/ROWS は初期値のみ（実際の表示桁数/行数は fitEditor が px から算出して上書き）。
 // COLS=39 は PERFORM の桁基準・桁ガイド（guideCol）としても使う不変値。
 const COLS = 39;
@@ -93,11 +95,10 @@ const MAX_LINES = 9999;
 // エディタが割り込まれても最低限の可読幅を確保する桁数（プレビューはこの残りに収める）。
 const MIN_EDIT_COLS = 24;
 // プレビュー枠の長辺px。出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で
-// 見せる＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。実際の枠は利用可能域から
-// fitLayout が算出（_previewBox）。PV_BOX_MAX はその上限（大画面で巨大化させない）。
-const PV_BOX_MAX = 176;
-const PV_BOX_MIN = 40;
-let _previewBox = PV_BOX_MAX; // fitLayout が毎フレーム更新（previewScale が参照）
+// 見せる＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。
+// 規定解像度 360x270 で最も映える**固定値**（非レスポンシブ）。ウィンドウのリサイズには
+// 追従しない。1080² キャンバスならクリーン 1:1 = 135px。previewScale がこの枠へ量子化する。
+const PREVIEW_BOX = 135;
 const GAP = 8; // エディタ⇄プレビュー間 / 縦の区切り
 
 
@@ -741,15 +742,36 @@ function relayout() {
   _editChromeH = editor.h - (editor.visibleRows * lineH - 1);
 }
 
-// ── レスポンシブ配置 ──────────────────────────────────────────────────
-// コンテンツ矩形 cr から全ウィジェットの座標とプレビュー枠を毎フレーム決める。
-// 上=全幅ツールバー、左=エディタ（残り幅を充填・縦は全高）、右=プレビュー＋見た目トグル。
-// 返り値のプレビュー枠（コンテンツ相対）は onDraw が実描画に使う。
+// ── 自然（fit-to-content）サイズ ────────────────────────────────────────
+// 規定解像度 360x270 を最も映える基準として、ウィンドウが work area にちょうど収まる
+// 固定コンテンツ寸法を返す（= fit to content = maximize と一致）。ウィンドウのリサイズには
+// 追従せず（＝リフローしない）、360x270 より小さくすると WM が窓側の縦横スクロールで巡らせる。
+function naturalSize() {
+  const SLOT = 10; // SCROLLBAR_SLOT_WIDTH（縦横バーのスロット）
+  // content → window の枠増分（win_layout.js と一致）。BORDER=1 は不変の枠定数。
+  const chromeW = 2 /*BORDER*2*/ + WM.CONTENT_PADDING * 2 + SLOT;
+  const chromeH =
+    3 /*BORDER*2+SEP*/ +
+    WM.HEADER_HEIGHT +
+    WM.CONTENT_PADDING * 2 +
+    WM.FOOTER_HEIGHT +
+    SLOT;
+  const availW = Config.VRAM_WIDTH - chromeW;
+  const availH = Config.VRAM_HEIGHT - WM.wmGetWorkAreaTop() - chromeH;
+  return { w: Math.max(220, availW), h: Math.max(160, availH) };
+}
+
+// ── 固定配置 ────────────────────────────────────────────────────────────
+// naturalSize（規定解像度 360x270 基準）から全ウィジェットの座標とプレビュー枠を決める。
+// ウィンドウのリサイズには追従しない（リフローしない）: 窓を小さくすると WM が窓側スクロールで
+// 巡らせ、長い行はエディタ自身の横スクロールで見る。上=全幅ツールバー、左=エディタ（135px
+// プレビュー隣の最大幅・縦は全高）、右=135px 固定プレビュー＋見た目トグル。
 let _pvLocal = { x: 0, y: 0, w: 0, h: 0 };
-function fitLayout(cr) {
+function fitLayout() {
+  const nat = naturalSize();
   const FM = UI.FOCUS_MARGIN;
-  const uW = cr.w - 2 * FM; // フォーカスブラケットぶんを四辺に確保
-  const uH = cr.h - 2 * FM;
+  const uW = nat.w - 2 * FM; // フォーカスブラケットぶんを四辺に確保
+  const uH = nat.h - 2 * FM;
   const ox = FM;
   const oy = FM;
 
@@ -760,20 +782,15 @@ function fitLayout(cr) {
   const bodyY = oy + toolbarH + GAP;
   const bodyH = Math.max(1, uH - toolbarH - GAP);
 
-  // ── プレビュー枠を決める（クリーンスケール）。エディタ最小幅と、トグル 3 段ぶんの
-  // 縦を残した範囲で、可能な限り大きく取る。長辺 = 幅/縦の小さい方でキャップ。──
-  const minEditW = MIN_EDIT_COLS * (GLYPH_W + 1) + GLYPH_W + _editChromeW;
-  const togglesH = codeToggle.h * 3 + UI.MIN_GAP * 2;
-  const boxW = uW - GAP - minEditW; // プレビューが取れる最大幅
-  const boxH = bodyH - GAP - togglesH; // プレビューが取れる最大縦
-  _previewBox = Math.max(PV_BOX_MIN, Math.min(boxW, boxH, PV_BOX_MAX));
-  const pv = previewScale(asciiActive); // 実寸（クリーン倍率で量子化）
+  // ── プレビュー（右・135px 固定、クリーン量子化）──
+  const pv = previewScale(asciiActive);
   const pvW = pv.w;
   const pvH = pv.h;
-
-  // ── エディタ（左・残り幅を充填・縦は全高）──
   const rightEdge = ox + uW; // 右コンテンツ端（FM 内側）
   const pvX = rightEdge - pvW;
+
+  // ── エディタ（左・プレビュー隣の残り幅を充填・縦は全高）。長い行はエディタ自身が横スクロール。──
+  const minEditW = MIN_EDIT_COLS * (GLYPH_W + 1) + GLYPH_W + _editChromeW;
   const editW = Math.max(minEditW, pvX - GAP - ox);
   fitEditor(ox, bodyY, editW, bodyH);
 
@@ -944,8 +961,8 @@ function previewScale(ascii) {
   const maxBase = Math.max(baseW, baseH);
   let renderDenom = 1,
     displayScale = 1;
-  if (maxBase <= _previewBox) displayScale = Math.max(1, Math.floor(_previewBox / maxBase));
-  else renderDenom = Math.ceil(maxBase / _previewBox);
+  if (maxBase <= PREVIEW_BOX) displayScale = Math.max(1, Math.floor(PREVIEW_BOX / maxBase));
+  else renderDenom = Math.ceil(maxBase / PREVIEW_BOX);
   // ASCII はグリフを拡大すると汚いので等倍表示。
   if (ascii && displayScale > 1) displayScale = 1;
   const rbW = Math.max(1, Math.round(baseW / renderDenom));
@@ -1300,9 +1317,10 @@ function onDraw(cr) {
   activeParams = eff.params;
   asciiActive = activeMode === "ascii" && !codeOn; // CODE ON の背景は面系ディザ
 
-  // ── レスポンシブ配置（cr から全ウィジェット座標 + プレビュー枠を決める）──
+  // ── 固定配置（naturalSize から全ウィジェット座標 + プレビュー枠を決める。窓が
+  //     自然サイズより小さければ WM が窓側スクロールで巡らせる）──
   codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
-  fitLayout(cr);
+  fitLayout();
   group.draw(cr);
 
   // ── 右: ライブプレビュー（ツールバーの下・右カラム上）──
@@ -1366,29 +1384,14 @@ function onInput(ev) {
     ovHandleMouse(ev);
     return;
   }
-  // ヒットテストが描画と同じ座標を使うよう、入力前にも配置を確定する（リサイズ追従）。
+  // ヒットテストが描画と同じ座標を使うよう、入力前にも配置を確定する。
   codeInvToggle.visible = codeOn;
-  const cr = winId !== null ? WM.wmGetContentRect(winId) : null;
-  if (cr) fitLayout(cr);
+  fitLayout();
   group.update(ev);
 }
 
 function onMeasure() {
-  // レスポンシブなので自然サイズは「画面を程よく満たす」ポリシー値。既定解像度
-  // (360x360) では画面いっぱい、大画面では控えめな窓に収める（最大化で全域へ）。
-  // ウィンドウ枠ぶんを引いた上限にクランプし、狭い画面でも決してはみ出さない。
-  const PREF_W = 360, PREF_H = 340; // 望ましいコンテンツ寸法（上限）
-  const MARGIN = 3; // デスクトップに残す余白
-  // content → window の枠増分（win_layout.js と一致）。BORDER=1 は不変の枠定数。
-  const chromeW = 2 /*BORDER*2*/ + WM.CONTENT_PADDING * 2;
-  const chromeH =
-    3 /*BORDER*2+SEP*/ + WM.HEADER_HEIGHT + WM.CONTENT_PADDING * 2 + WM.FOOTER_HEIGHT;
-  const maxW = Config.VRAM_WIDTH - chromeW - MARGIN * 2;
-  const maxH = Config.VRAM_HEIGHT - chromeH - MARGIN * 2;
-  return {
-    w: Math.max(220, Math.min(PREF_W, maxW)),
-    h: Math.max(160, Math.min(PREF_H, maxH)),
-  };
+  return naturalSize();
 }
 
 function onBeforeClose() {
