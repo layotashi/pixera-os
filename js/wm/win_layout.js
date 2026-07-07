@@ -193,15 +193,16 @@ export function recalcLayout(win) {
   // ── body / content / スクロールバー領域 ──
   //
   // _chrome=true のウィンドウは、ボディ右端に縦スクロールバースロット、ボディ下端に
-  // 横スクロールバースロットを**常時**確保する (Pixera 標準 UI: スクロール可否に
-  // よらず縦横バー + ステッパー + コーナーを出す)。バーは「飾り」(コンテンツが収まって
-  // いれば 100% 表示・非操作) にも「機能」(_scrollable の WM 管理縦スクロール、または
-  // アプリが _vScroll/_hScroll を機能状態へ差し替えた場合) にもなる。
+  // 横スクロールバースロットを**常時**確保する (Pixera 標準 UI: レトロ GUI の意匠として
+  // スクロール可否によらず縦横バー + ステッパー + コーナーを出す)。バーは常に機能し得る:
+  // コンテンツが収まっていれば 100% 全長 (今スクロール不要)、はみ出せばその軸でスクロールする
+  // (_scrollable の WM 管理スクロール、またはアプリが _vScroll/_hScroll を差し替えた場合)。
   // SLOT = sep(1) + dark(1) + thumb(7) + dark(1)。
   //
   //   構成 (横): content | pad | V-slot(SLOT) | border
   //   構成 (縦): content | pad | H-slot(SLOT) | (footer | border)
-  //   V/H が交わる右下 SLOT×SLOT はコーナー飾り。footer は H バーの下に全幅で残る。
+  //   V/H が交わる右下 SLOT×SLOT は押下不能のコーナー (V/H の交差部フィラー)。
+  //   footer は H バーの下に全幅で残る。
   //
   // _chrome=false (モーダルダイアログ等) は従来どおりスロット無し (content がボディ全域)。
   const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
@@ -249,10 +250,13 @@ export function recalcLayout(win) {
     };
   }
 
-  // ── WM 管理縦スクロール (_scrollable) の viewport 更新 ──
-  // 飾りバーやアプリ管理バー (NOTEPAD) の状態には触れない。
-  if (win._scrollable && win._vScroll) {
-    Scroll.scrollSetViewport(win._vScroll, contentH);
+  // ── WM 管理スクロール (_scrollable) の viewport 更新 (縦横) ──
+  // 仮想コンテンツ幅/高 (content) は wm.js が onMeasure 由来で設定する。ここでは
+  // 現在の表示領域 (viewport) のみ両軸で同期する。アプリ管理バー (NOTEPAD,
+  // _scrollable=false) の状態には触れない。
+  if (win._scrollable) {
+    if (win._vScroll) Scroll.scrollSetViewport(win._vScroll, contentH);
+    if (win._hScroll) Scroll.scrollSetViewport(win._hScroll, contentW);
   }
 
   // ── footer (opt-in) ──

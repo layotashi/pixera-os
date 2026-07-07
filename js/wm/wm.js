@@ -37,18 +37,18 @@
  *   スナップ中のウィンドウを再ドラッグすると元のサイズに復帰する。
  *
  * ── ウィンドウスクロール ──
- *   scrollable: true オプションで仮想コンテンツ領域のスクロールを有効化。
- *   wmSetContentSize(id, virtualH) で仮想高さを設定し、
- *   WM が自動でスクロールバー描画・入力処理・座標オフセットを行う。
- *   scrollbar.js プリミティブを共通部品として使用。
+ *   標準 chrome 窓は既定で WM 管理の縦横スクロールを持つ (scrollable, 既定 ON)。
+ *   仮想コンテンツ寸法は onMeasure (自然サイズ) から毎フレーム同期し (syncScrollContent)、
+ *   ウィンドウが自然サイズより小さい軸でバーが機能する。WM が描画・入力処理・座標オフセット
+ *   (縦横) を自動で行う。scrollbar.js プリミティブを共通部品として使用。
+ *   (onMeasure を持たず自前で仮想寸法を決める窓は wmSetContentSize でも設定できる。)
  *
- *   scrollable ウィンドウは「コンテンツの自然サイズ」と「ウィンドウの最小サイズ」を
- *   分離して扱う:
- *     - 初期高さは自然サイズではなく work area 高さに自動クランプ (画面外はみ出し防止)
- *     - リサイズ下限は MIN_HEIGHT まで緩和 (縦スクロールで吸収できるため)
- *     - フォント/パディング変更時に自然サイズへ自動復元しない (ユーザーが選んだ h を維持)
- *   この分離により、コンテンツが画面より縦に大きい設定パネル等でも
- *   通常状態のままスクロールでアクセス可能になる。
+ *   scrollable 窓は「コンテンツの自然サイズ」と「ウィンドウの実サイズ」を分離して扱う:
+ *     - 初期/再フィットは work area にクランプ (自然サイズが収まれば fit = maximize と一致)
+ *     - リサイズ下限は MIN_WIDTH / MIN_HEIGHT まで緩和 (内容は縦横スクロールで巡るので切れない)
+ *     - フォント/パディング変更時は自然サイズへ再フィット (work area クランプ付き)
+ *   この分離により、画面より大きいコンテンツ (設定パネル等) でもスクロールでアクセスでき、
+ *   ウィンドウを自由に縮めても内容が失われない。
  */
 
 import * as Config from "../config.js";
@@ -188,14 +188,13 @@ function recalcAllWindows() {
           win._chrome,
           win._noPad ? 0 : CONTENT_PADDING,
         );
-        // scrollable ウィンドウはユーザーが選んだサイズを維持する。
-        // 自然サイズに勝手に戻すと、フォント切替・パディング変更のたびに
-        // 窓が拡大してしまい UX として違和感が大きい。
-        // 縦方向はスクロールで吸収できるため h を保持。
-        // 幅は水平スクロール非対応なので、コンテンツ幅が縮んでも維持し、
-        // 広がった場合のみ追従する。
+        // フォント / パディング変更時は自然サイズへ再フィットする (内容にちょうど合わせ、
+        // 上下左右対称な余白を保つ)。WM 管理スクロール窓も再フィットするが、work area を
+        // 超える分はスクロールで吸収するため初期サイズと同じく縦横をクランプする。
         if (win._scrollable) {
-          win.w = Math.max(win.w, fit.w);
+          const c = clampScrollableInitSize(fit.w, fit.h);
+          win.w = c.w;
+          win.h = c.h;
         } else {
           win.w = fit.w;
           win.h = fit.h;
@@ -245,7 +244,7 @@ export function wmSetWorkAreaTop(y) {
 }
 
 /** 現在の workArea 上端を返す */
-function wmGetWorkAreaTop() {
+export function wmGetWorkAreaTop() {
   return workAreaTop;
 }
 
@@ -333,18 +332,26 @@ function nextCascadePos(winW, winH) {
  * @param {boolean} [opts.modal=false] モーダルウィンドウフラグ (他ウィンドウの入力をブロック)
  * @param {boolean} [opts.noResize=false] リサイズ無効
  * @param {boolean} [opts.noMaximize=false] 最大化無効
- * @param {boolean} [opts.scrollable=false] WM 管理の縦ウィンドウスクロール有効 (wmSetContentSize で仮想サイズを設定)。
- *   有効時は (a) 初期高さが自然サイズではなく work area 高さに自動クランプされ、
- *   (b) リサイズ下限が MIN_HEIGHT まで緩和され、
- *   (c) フォント/パディング変更時に自然サイズへ自動復元しなくなる。
+ * @param {boolean} [opts.scrollable] WM 管理の縦横ウィンドウスクロール。省略時は chrome 窓で ON。
+ *   仮想コンテンツ寸法は onMeasure (自然サイズ) から導出し、ウィンドウが自然サイズより小さい軸で
+ *   バーが機能してスクロールする。初期/再フィット時は work area にクランプされる。アプリが自前
+ *   スクロールを持つ場合は wmAttachScroll が false へ移譲する。
  * @param {boolean} [opts.chrome] 標準スクロールバー chrome (縦横バー + ステッパー + コーナーを常時表示)。
  *   省略時はモーダル以外で ON。ボディ端にスロットを確保しウィンドウを SLOT 分広げる。
- *   スクロール不要でも飾りとして表示し、_scrollable / wmAttachScroll で機能化される。
+ *   バーはレトロ GUI の意匠として常設し、コンテンツがはみ出す軸で機能してスクロールする
+ *   (全長サムは「今スクロール不要」を表すだけで、非機能な飾りではない)。
  * @param {function|null} [opts.onBeforeClose=null] 閉じる前コールバック (() => boolean, false で閉じをキャンセル)
  * @returns {object} ウィンドウオブジェクト
  */
 function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
   const o = opts || {};
+  // 標準スクロールバー chrome とその WM 管理スクロール。
+  //   chrome: モーダル以外は既定 ON (ボディ端に縦横バー + ステッパー + コーナー)。
+  //   scrollable: chrome 窓では既定で縦横スクロールを WM が管理する。opts.scrollable で
+  //   明示上書きでき、アプリが自前スクロールを持つ場合は wmAttachScroll がアプリ管理へ移譲する。
+  const chrome =
+    o.chrome !== undefined ? !!o.chrome : !o.modal || o.scrollable === true;
+  const scrollable = o.scrollable !== undefined ? !!o.scrollable : chrome;
   const win = {
     id,
     x,
@@ -382,12 +389,15 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     onRelayout: o.onRelayout || null,
     // ── スクロール / 標準スクロールバー chrome ──
     // _chrome: Pixera 標準 UI。ボディ端に縦横スクロールバー + ステッパー + コーナーを
-    //   常時表示し、スロット分ウィンドウを広げる。既定はモーダル以外 ON (opts.chrome で上書き)。
-    // _vScroll/_hScroll: スクロール状態。既定は「飾り」(createScrollState(1,1) = 100%・非操作)。
-    //   _scrollable なら wmSetContentSize で縦を機能化、アプリは wmAttachScroll で差し替え可能。
+    //   常時表示し、スロット分ウィンドウを広げる (レトロ GUI の意匠として常設)。
+    // _scrollable: WM が縦横スクロールを管理する (chrome 窓の既定)。仮想コンテンツ寸法は
+    //   onMeasure から導出し、ウィンドウが自然サイズより小さいときにバーが機能してスクロールする。
+    //   アプリ管理スクロール (wmAttachScroll, 例 NOTEPAD) の窓は false へ移譲される。
+    // _vScroll/_hScroll: スクロール状態。初期は 100%(=スクロール不要) で、コンテンツが
+    //   ビューポートを超えると機能する。全長サムは「今スクロール不要」を表すだけで非機能ではない。
     // _vStep/_hStep: ステッパーボタン 1 クリックのスクロール量 (既定 px、行/桁単位のアプリは 1)。
-    _scrollable: !!o.scrollable,
-    _chrome: o.chrome !== undefined ? !!o.chrome : !o.modal || !!o.scrollable,
+    _scrollable: scrollable,
+    _chrome: chrome,
     _vScroll: null,
     _hScroll: null,
     _vStep: WIN_SCROLL_BTN_STEP,
@@ -397,7 +407,8 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     _layout: null,
   };
   if (win._chrome) {
-    // 飾りの縦横スクロールバー状態 (機能化されるまで 100% 表示・非操作)。
+    // 縦横スクロールバー状態。初期は 100% (viewport==content=1 でスクロール不要)。
+    // 実寸は syncScrollContent が onMeasure から毎フレーム更新する。
     win._vScroll = Scroll.createScrollState(1, 1);
     win._hScroll = Scroll.createScrollState(1, 1);
   }
@@ -959,10 +970,32 @@ function getContentRect(win) {
  * イベント座標をコンテンツローカル座標に変換する。
  * スクロール可能ウィンドウではスクロール分を加算して仮想座標を返す。
  */
+/**
+ * WM 管理スクロール窓の仮想コンテンツ寸法 (縦横) を onMeasure から同期する。
+ * 毎フレーム呼ぶ: 自然サイズ (onMeasure) を content、現在の表示領域を viewport とし、
+ * ウィンドウが自然サイズより小さい軸のバーが機能してスクロールする。onMeasure を
+ * 持たない窓 (アプリ管理スクロール等) には触れない (アプリ / recalcLayout が管理)。
+ */
+function syncScrollContent(win) {
+  if (!win._scrollable || !win.onMeasure || !win._layout) return;
+  const m = win.onMeasure();
+  if (!m) return;
+  const cr = win._layout.contentRect;
+  if (win._vScroll) {
+    Scroll.scrollSetViewport(win._vScroll, cr.h);
+    Scroll.scrollSetContent(win._vScroll, m.h);
+  }
+  if (win._hScroll) {
+    Scroll.scrollSetViewport(win._hScroll, cr.w);
+    Scroll.scrollSetContent(win._hScroll, m.w);
+  }
+}
+
 function toLocalCoords(win, mx, my) {
   const cr = getContentRect(win);
+  const scrollX = win._scrollable && win._hScroll ? win._hScroll.offset : 0;
   const scrollY = win._scrollable && win._vScroll ? win._vScroll.offset : 0;
-  return { lx: mx - cr.x, ly: my - cr.y + scrollY };
+  return { lx: mx - cr.x + scrollX, ly: my - cr.y + scrollY };
 }
 
 /** 点 (x,y) が矩形 a に含まれるか (a が null/undefined なら false)。 */
@@ -989,7 +1022,7 @@ function hScrollHitArea(win) {
 /**
  * ボディ down が標準スクロールバー chrome に当たったか判定し、当たれば入力を処理して
  * true を返す (コンテンツへ伝播させない)。機能バー (scrollNeeded=true) はスクロールし、
- * 飾りバー / コーナーはクリックを飲むだけで何もしない。
+ * スクロール不要のバー (100% 全長) / コーナーはクリックを飲むだけ (何もしない)。
  */
 function handleScrollbarDown(win, mx, my) {
   if (!win._chrome || !win._layout) return false;
@@ -1023,7 +1056,7 @@ function handleScrollbarDown(win, mx, my) {
     }
     return true;
   }
-  // コーナー (押下不能の飾り) — クリックを飲むだけ
+  // コーナー (押下不能の V/H 交差部フィラー) — クリックを飲むだけ
   if (ptInRect(win._layout.scrollCornerRect, mx, my)) return true;
   return false;
 }
@@ -1085,16 +1118,15 @@ export function wmOpenOrFocus(name) {
 }
 
 /**
- * scrollable ウィンドウの初期サイズを work area の SCROLL_INIT_RATIO 倍へ
- * クランプする。
+ * WM 管理スクロール窓の初期 / 再フィットサイズを work area (画面 − タスクバー) に
+ * クランプする。自然サイズが work area 内なら無改変で「内容にちょうど合う (= fit to
+ * content = maximize と一致)」外寸になり、超える分だけスクロールで巡れる。
  *
- * クランプしないと画面外にはみ出し、かつ contentRect.h == virtualH となって
- * スクロールバーが出ない (= 最大化するまで下部に到達不可) という矛盾が発生する。
- * 100% でなく ~85% にすることで画面上下に余白を作り、圧迫感を緩和する。
+ * クランプしないと画面外へはみ出し、かつ contentRect == 自然サイズ となって
+ * スクロールバーが機能しない (= 最大化するまで端に到達不可) という矛盾が生じる。
  *
- * @returns {{ w: number, h: number, clamped: boolean }} clamped: 高さが clamp されたか
+ * @returns {{ w: number, h: number, clamped: boolean }} clamped: いずれかの軸が clamp されたか
  */
-const SCROLL_INIT_RATIO = 0.85;
 
 /**
  * ウィンドウスクロールは px 単位。ステッパーボタン 1 クリックは 1 行ぶん
@@ -1103,13 +1135,15 @@ const SCROLL_INIT_RATIO = 0.85;
 const WIN_SCROLL_BTN_STEP = GLYPH_H + 1;
 function clampScrollableInitSize(w, h) {
   const workAreaH = Config.VRAM_HEIGHT - workAreaTop;
-  const maxH = Math.floor(workAreaH * SCROLL_INIT_RATIO);
   let clamped = false;
-  if (h > maxH) {
-    h = maxH;
+  if (h > workAreaH) {
+    h = workAreaH;
     clamped = true;
   }
-  if (w > Config.VRAM_WIDTH) w = Config.VRAM_WIDTH;
+  if (w > Config.VRAM_WIDTH) {
+    w = Config.VRAM_WIDTH;
+    clamped = true;
+  }
   return { w, h, clamped };
 }
 
@@ -1219,11 +1253,15 @@ export function wmOpen(
   opts = null,
 ) {
   const footer = !!(opts && opts.footer);
-  const scrollable = !!(opts && opts.scrollable);
   const modal = !!(opts && opts.modal);
-  // 標準スクロールバー chrome の有無 (createWindow の _chrome と同じ導出)。
+  // 標準スクロールバー chrome と WM 管理スクロール (createWindow と同じ導出)。
+  // chrome はモーダル以外で既定 ON、scrollable は chrome 窓で既定 ON。
   const chrome =
-    opts && opts.chrome !== undefined ? !!opts.chrome : !modal || scrollable;
+    opts && opts.chrome !== undefined
+      ? !!opts.chrome
+      : !modal || (opts && opts.scrollable === true);
+  const scrollable =
+    opts && opts.scrollable !== undefined ? !!opts.scrollable : chrome;
   const contentPad = opts && opts.padding === "none" ? 0 : CONTENT_PADDING;
   const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
   // 明示指定された外寸か (onMeasure 自動算出でない) を先に記録しておく。
@@ -1382,8 +1420,12 @@ export function wmIsModalOpen() {
 // ── スクロール API ──
 
 /**
- * スクロール可能ウィンドウの仮想コンテンツサイズを設定する。
- * contentRect より大きい場合にスクロールバーが有効になる。
+ * スクロール可能ウィンドウの仮想コンテンツ高さ (縦) を明示設定する。
+ * contentRect より大きい場合に縦バーが機能する。
+ *
+ * 標準では onMeasure から毎フレーム自動導出される (syncScrollContent) ため通常は不要。
+ * onDraw の描画直前に最新の自然高を確実に反映したいアプリ (SETTINGS / AQUARIA
+ * PREFERENCES) が併用している。同フレームでは後に呼ばれた側 (onDraw のこの API) が優先。
  * @param {number} id    ウィンドウ ID
  * @param {number} virtualH  仮想コンテンツ高さ (px)
  */
@@ -1431,6 +1473,10 @@ export function wmGetScroll(id) {
 export function wmAttachScroll(id, o = {}) {
   const win = windows.find((w) => w.id === id);
   if (!win) return;
+  // アプリがスクロールを所有する = WM 管理スクロール (座標変換 / ホイール /
+  // 仮想寸法同期) を無効化する。以後 WM はバーの表示・ドラッグ・ステッパーのみ担い、
+  // viewport/content 同期とコンテンツの平行移動はアプリが自前で行う (例: NOTEPAD)。
+  win._scrollable = false;
   if (o.v !== undefined) win._vScroll = o.v;
   if (o.h !== undefined) win._hScroll = o.h;
   if (o.vStep !== undefined) win._vStep = o.vStep;
@@ -1449,6 +1495,9 @@ export function wmAttachScroll(id, o = {}) {
 export function wmUpdate() {
   const mx = Input.mouseX();
   const my = Input.mouseY();
+
+  // ── WM 管理スクロール窓の仮想寸法を onMeasure から同期 (入力・描画の前に確定) ──
+  for (const win of windows) syncScrollContent(win);
 
   // ── ツールチップ: 前フレームのテキストを保持してリセット ──
   tooltipBeginFrame();
@@ -1896,10 +1945,13 @@ function handleDrag(mx, my) {
     win.x = mx - dragOffX;
     win.y = my - dragOffY;
     recalcLayout(win);
-    // モーダルウィンドウはスナップ不可
-    snapPreview = win.modal
-      ? null
-      : getSnapRect(mx, my, SNAP_PREVIEW_MARGIN, SNAP_PREVIEW_MARGIN);
+    // モーダル / 最大化禁止 (noMaximize) ウィンドウはスナップ不可。
+    // snap (maximized/snap-left/snap-right) はシステム管理サイズへのリサイズなので、
+    // 最大化を禁じた窓は端ドラッグでも snap させない (ボタン/ダブルクリック/メニューと統一)。
+    snapPreview =
+      win.modal || win.noMaximize
+        ? null
+        : getSnapRect(mx, my, SNAP_PREVIEW_MARGIN, SNAP_PREVIEW_MARGIN);
   }
 
   if (mode === "resize") {
@@ -1908,18 +1960,15 @@ function handleDrag(mx, my) {
 
     let minW = MIN_WIDTH;
     let minH = MIN_HEIGHT;
-    if (win.onMeasure) {
+    // WM 管理スクロール窓は縦横スクロールが下限を吸収するため、枠 + ヘッダー +
+    // ボディ最小 (MIN_WIDTH / MIN_HEIGHT) まで自由に縮められる (内容はスクロールで巡る)。
+    // スクロール非対応 (モーダル / アプリ管理スクロール) で onMeasure を持つ窓のみ、
+    // 内容が切れないよう自然サイズを下限にする。
+    if (win.onMeasure && !win._scrollable) {
       const size = win.onMeasure();
       const fit = calcWindowSize(size.w, size.h, win.footer, win._chrome);
       minW = fit.w;
       minH = fit.h;
-    }
-    // scrollable ウィンドウは縦方向の最小高さを onMeasure で縛らない。
-    // 縦スクロールでコンテンツより小さくしても破綻しないため、
-    // 枠 + ヘッダー + ボディ最小 4px (MIN_HEIGHT) まで縮められる。
-    // 幅は水平スクロール非対応のため引き続き onMeasure 由来の値で縛る。
-    if (win._scrollable) {
-      minH = MIN_HEIGHT;
     }
 
     if (resizeEdges & EDGE_RIGHT) win.w = Math.max(minW, resizeStartW + dx);
@@ -2021,20 +2070,28 @@ function propagateBodyEvents(mx, my) {
           consumed: false,
         };
         if (win.onInput) safeOnInput(win, ev);
-        if (
-          !ev.consumed &&
-          win._scrollable &&
-          win._vScroll &&
-          Scroll.scrollNeeded(win._vScroll) &&
-          !Input.wheelHasCtrl()
-        ) {
+        if (!ev.consumed && win._scrollable && !Input.wheelHasCtrl()) {
           // ウィンドウスクロール単位は px。ホイール delta (典型値: 100/clk on
           // Windows、trackpad では小さい連続値) を ~1/6 してスクロール量に変換する。
           // 最低 1px を保証してトラックパッドの微細な操作も拾う。
-          if (wy !== 0) {
-            const step =
-              Math.sign(wy) * Math.max(1, Math.round(Math.abs(wy) / 6));
-            Scroll.scrollBy(win._vScroll, step);
+          // Shift+縦ホイールは横スクロールに回す (横 delta を持たないマウス向け)。
+          const toStep = (d) => Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 6));
+          const shift = Input.wheelHasShift();
+          const hDelta = wx !== 0 ? wx : shift ? wy : 0;
+          const vDelta = shift && wx === 0 ? 0 : wy;
+          if (
+            win._hScroll &&
+            Scroll.scrollNeeded(win._hScroll) &&
+            hDelta !== 0
+          ) {
+            Scroll.scrollBy(win._hScroll, toStep(hDelta));
+          }
+          if (
+            win._vScroll &&
+            Scroll.scrollNeeded(win._vScroll) &&
+            vDelta !== 0
+          ) {
+            Scroll.scrollBy(win._vScroll, toStep(vDelta));
           }
         }
         break;
@@ -2244,8 +2301,8 @@ function handleMouseRelease(mx, my) {
   if (!Input.mouseButtonUp(0)) return;
   if (mode === "move" && activeIndex >= 0) {
     const win = windows[activeIndex];
-    // モーダルウィンドウはスナップ不可
-    if (!win.modal && trySnap(win, mx, my)) {
+    // モーダル / 最大化禁止 (noMaximize) ウィンドウはスナップ不可 (handleDrag と同条件)
+    if (!win.modal && !win.noMaximize && trySnap(win, mx, my)) {
       // snapped
     } else {
       win.restoreRect = null;
@@ -2460,11 +2517,14 @@ function drawWindowFrame(win) {
     }
   } else if (win.onDraw) {
     if (cr.w > 0 && cr.h > 0) {
-      // スクロール可能ウィンドウ: contentRect.y をスクロール分だけ上へずらす
+      // スクロール可能ウィンドウ: contentRect を縦横スクロール分だけずらす
+      // (アプリは自然座標に描き、WM が offset ぶん平行移動 + クリップする)。
+      const scrollX = win._scrollable && win._hScroll ? win._hScroll.offset : 0;
       const scrollY = win._scrollable && win._vScroll ? win._vScroll.offset : 0;
-      const drawCr = scrollY
-        ? { x: cr.x, y: cr.y - scrollY, w: cr.w, h: cr.h }
-        : cr;
+      const drawCr =
+        scrollX || scrollY
+          ? { x: cr.x - scrollX, y: cr.y - scrollY, w: cr.w, h: cr.h }
+          : cr;
       // フォーカスブラケットのためにクリップを拡張。
       // CONTENT_PADDING を超えないようにクランプ (ヘッダー/枠線へのはみ出し防止)
       const clipMargin = Math.min(FOCUS_MARGIN, CONTENT_PADDING);
@@ -2480,9 +2540,9 @@ function drawWindowFrame(win) {
   }
 
   // ── 標準スクロールバー chrome 描画 (縦・横・コーナー) ──
-  // _chrome ウィンドウは常に縦横バー + ステッパー + コーナーを描く。バーは飾り
-  // (win._vScroll/_hScroll が 100% 状態) か機能 (スクロール状態が機能化済み) かに
-  // よらず drawVScrollbarSlot / drawHScrollbarSlot が同じ見た目で描画する。
+  // _chrome ウィンドウは常に縦横バー + ステッパー + コーナーを描く (レトロ GUI の意匠)。
+  // スクロール不要 (win._vScroll/_hScroll が 100% 全長) でも機能 (スクロール可) でも
+  // drawVScrollbarSlot / drawHScrollbarSlot が同じ見た目で描画する。
   if (win._chrome && !win.fullscreen) {
     if (L.scrollbarRect) {
       const sb = L.scrollbarRect;
