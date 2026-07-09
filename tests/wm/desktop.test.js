@@ -18,6 +18,8 @@ vi.mock("@/core/gpu.js", () => ({
   fillRect: vi.fn(),
   fillRoundRect: vi.fn(),
   drawRect: vi.fn(),
+  drawRoundRect: vi.fn(),
+  drawCheckerboard: vi.fn(),
   invertRect: vi.fn(),
   invertRoundRect: vi.fn(),
   pset: vi.fn(),
@@ -49,6 +51,8 @@ const _inputState = {
   dragging: false,
   ctrlA: false,
   dblclick: false,
+  keys: new Set(),
+  chars: [],
 };
 
 vi.mock("@/core/input.js", () => ({
@@ -62,6 +66,8 @@ vi.mock("@/core/input.js", () => ({
     type === "dblclick" && btn === 0 ? _inputState.dblclick : false,
   isDragging: (btn) => (btn === 0 ? _inputState.dragging : false),
   ctrlDown: (key) => (key === "KeyA" ? _inputState.ctrlA : false),
+  keyDown: (code) => _inputState.keys.has(code),
+  getCharQueue: () => _inputState.chars,
 }));
 
 import {
@@ -74,6 +80,7 @@ import {
   desktopDraw,
   _testing,
 } from "@/wm/desktop.js";
+import * as GPUMock from "@/core/gpu.js";
 
 // ── ヘルパー ──
 
@@ -97,6 +104,8 @@ function resetInput() {
   _inputState.dragging = false;
   _inputState.ctrlA = false;
   _inputState.dblclick = false;
+  _inputState.keys.clear();
+  _inputState.chars = [];
 }
 
 /** セルの中心ピクセル座標を返す */
@@ -107,6 +116,24 @@ function cellCenter(col, row) {
     x: GRID_MARGIN_X + col * CELL_W + (CELL_W >> 1),
     y: wat + GRID_MARGIN_Y + row * CELL_H + (CELL_H >> 1),
   };
+}
+
+/**
+ * アイコンをクリックして選択し、デスクトップにフォーカスを与える。
+ * (キーボード操作は _desktopFocused が true のときのみ動くため、
+ *  クリックで確実にフォーカス状態を作ってからキー入力を検証する)
+ */
+function focusIconViaClick(idx) {
+  const e = _testing.iconEntries[idx];
+  const c = cellCenter(e.gridCol, e.gridRow);
+  _inputState.btnDown = true;
+  _inputState.btnHeld = true;
+  desktopHandleInput(c.x, c.y, vi.fn());
+  _inputState.btnDown = false;
+  _inputState.btnHeld = false;
+  _inputState.btnUp = true;
+  desktopUpdate(c.x, c.y, vi.fn());
+  resetInput();
 }
 
 // ── セットアップ ──
@@ -133,21 +160,22 @@ describe("desktopSetIcons", () => {
   });
 
   it("列優先で上→下、左→右に配置される", () => {
+    // maxRows 以内なら全て col=0 の連続行
     desktopSetIcons(makeEntries(3));
     const entries = _testing.iconEntries;
-    // 行数 = (360 - 12 - 4*2) / 33 = 340/33 = 10
-    // 3 アイコンなら全て col=0
     expect(entries[0]).toMatchObject({ gridCol: 0, gridRow: 0 });
     expect(entries[1]).toMatchObject({ gridCol: 0, gridRow: 1 });
     expect(entries[2]).toMatchObject({ gridCol: 0, gridRow: 2 });
   });
 
   it("行数を超えると次の列に配置される", () => {
-    // maxRows = 10 → 11番目は col=1, row=0
-    desktopSetIcons(makeEntries(11));
+    // 最終行の次のアイコンは次列の先頭 (col=1, row=0) へ回り込む
+    const rows = _testing.maxRows;
+    desktopSetIcons(makeEntries(rows + 1));
     const entries = _testing.iconEntries;
-    expect(entries[10].gridCol).toBe(1);
-    expect(entries[10].gridRow).toBe(0);
+    expect(entries[rows - 1]).toMatchObject({ gridCol: 0, gridRow: rows - 1 });
+    expect(entries[rows].gridCol).toBe(1);
+    expect(entries[rows].gridRow).toBe(0);
   });
 
   it("選択状態をクリアする", () => {
@@ -515,6 +543,91 @@ describe("desktopDraw", () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  drawDesktopIcon レイアウト (ASCII 仕様準拠)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("アイコンレイアウト — ASCII 仕様準拠", () => {
+  it("7文字ラベルのウィジェット相対座標が仕様に一致する", () => {
+    // 仕様 ASCII は 5x5 フォント。GLYPH_W=5 は本番同一なので水平座標は完全一致、
+    // 垂直はグリフ高非依存の位置 (アイコン上端・ラベル上端) を検証する。
+    const L = _testing.computeIconLayout(0, 0, 7); // 7 グリフ
+    const wx = L.haloX;
+    const wy = L.haloY;
+
+    // ── 水平 (仕様: セル幅57, 枠55, アイコン列6, ラベル背景5..51, 文字8) ──
+    expect(L.haloW).toBe(57); // ウィジェット全幅
+    expect(L.boxX - wx).toBe(1); // 角丸枠 左端
+    expect(L.boxW).toBe(55); // 角丸枠 幅
+    expect(L.iconPlateX - wx).toBe(5); // アイコンプレート左端
+    expect(L.iconX - wx).toBe(6); // アイコン本体左端
+    expect(L.labelBgX - wx).toBe(5); // ラベル背景左端
+    expect(L.labelBgW).toBe(47); // ラベル背景幅 (文字41 + 余白6)
+    expect(L.textX - wx).toBe(8); // 文字左端
+
+    // ── 垂直 (グリフ高非依存: 仕様 row 5/6/27/29) ──
+    expect(L.iconPlateY - wy).toBe(5);
+    expect(L.iconY - wy).toBe(6);
+    expect(L.labelBgY - wy).toBe(27);
+    expect(L.textY - wy).toBe(29);
+  });
+
+  it("短いラベルでもボックス全幅は最長ラベル基準で固定", () => {
+    const L = _testing.computeIconLayout(0, 0, 1); // 1 グリフ
+    // ボックス全幅は 7 文字時と同じ 57 に固定 (余った幅はディザで埋まる)。
+    // ラベル背景だけが文字数に応じて縮む (文字5 + 余白6 = 11)。
+    expect(L.haloW).toBe(57);
+    expect(L.labelBgW).toBe(11);
+  });
+
+  it("8文字以上のラベルは 7 グリフ幅 (省略マーク込み) で固定", () => {
+    // AMETHYST (8文字) → "AMETHY" + 省略マーク = 7 グリフ → 7文字ラベルと同幅
+    const L7 = _testing.computeIconLayout(0, 0, 7);
+    const L8 = _testing.computeIconLayout(0, 0, 7); // 省略後も 7 グリフ
+    expect(L8.haloW).toBe(L7.haloW);
+    expect(L8.labelBgW).toBe(47);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  ラベル省略 (三点リーダ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("ラベル省略 (三点リーダ)", () => {
+  it("7 文字以内はそのまま (省略なし)", () => {
+    expect(_testing.truncateLabel("TESSERA")).toEqual({
+      text: "TESSERA",
+      ellipsis: false,
+    });
+    expect(_testing.truncateLabel("LIFE")).toEqual({
+      text: "LIFE",
+      ellipsis: false,
+    });
+  });
+
+  it("8 文字以上は先頭 6 文字 + 省略マーク", () => {
+    expect(_testing.truncateLabel("AMETHYST")).toEqual({
+      text: "AMETHY",
+      ellipsis: true,
+    });
+  });
+
+  it("省略ラベルの描画で三点リーダ (pset×3) を打つ", () => {
+    desktopSetIcons([{ name: "AMETHYST", label: "AMETHYST", icon: "default" }]);
+    GPUMock.pset.mockClear();
+    desktopDraw();
+    // ラッソ/ドラッグ無しなので pset は省略マークの 3 点のみ
+    expect(GPUMock.pset).toHaveBeenCalledTimes(3);
+  });
+
+  it("7 文字以内のラベル描画では pset を呼ばない (省略マーク無し)", () => {
+    desktopSetIcons([{ name: "TESSERA", label: "TESSERA", icon: "default" }]);
+    GPUMock.pset.mockClear();
+    desktopDraw();
+    expect(GPUMock.pset).not.toHaveBeenCalled();
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  1 アイコン = 1 セル
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -532,6 +645,204 @@ describe("1 アイコン = 1 セル", () => {
     const e = _testing.iconEntries[0];
     expect(e.gridRowSpan).toBeUndefined();
     expect(typeof e.gridRow).toBe("number");
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  6 列レイアウト (360px 幅)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("6 列レイアウト (360px 幅)", () => {
+  it("360px 幅にアイコンが 6 列ちょうど収まる", () => {
+    const { GRID_MARGIN_X, CELL_W } = _testing;
+    const cols = Math.floor((360 - GRID_MARGIN_X * 2) / CELL_W);
+    expect(cols).toBe(6);
+  });
+
+  it("選択ボックスの左右余白が 5px で対称になる", () => {
+    const { GRID_MARGIN_X, CELL_W } = _testing;
+    const col0X = GRID_MARGIN_X + 0 * CELL_W;
+    const col5X = GRID_MARGIN_X + 5 * CELL_W;
+    const L0 = _testing.computeIconLayout(col0X, 0, 7);
+    const L5 = _testing.computeIconLayout(col5X, 0, 7);
+    // 左端 (1 列目) ボックスの左余白 = 5px
+    expect(L0.boxX).toBe(5);
+    // 右端 (6 列目) ボックスの右端から画面端 (360) までの余白 = 5px
+    expect(360 - (L5.boxX + L5.boxW)).toBe(5);
+  });
+
+  it("隣接するボックス間の間隔が 4px になる", () => {
+    const { GRID_MARGIN_X, CELL_W } = _testing;
+    const L0 = _testing.computeIconLayout(GRID_MARGIN_X, 0, 7);
+    const L1 = _testing.computeIconLayout(GRID_MARGIN_X + CELL_W, 0, 7);
+    expect(L1.boxX - (L0.boxX + L0.boxW)).toBe(4);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  キーボード操作 — 矢印キー
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("キーボード操作 — 矢印キー", () => {
+  // 2×2 グリッドに固定配置:
+  //   (col,row)  0=(0,0)  2=(1,0)
+  //             1=(0,1)  3=(1,1)
+  function arrange2x2() {
+    desktopSetIcons(makeEntries(4));
+    const e = _testing.iconEntries;
+    e[0].gridCol = 0;
+    e[0].gridRow = 0;
+    e[1].gridCol = 0;
+    e[1].gridRow = 1;
+    e[2].gridCol = 1;
+    e[2].gridRow = 0;
+    e[3].gridCol = 1;
+    e[3].gridRow = 1;
+  }
+
+  /** キーを 1 回押して更新する (フレーム前後で入力をリセット) */
+  function pressKey(code) {
+    resetInput();
+    _inputState.keys.add(code);
+    desktopUpdate(0, 0, vi.fn());
+    resetInput();
+  }
+
+  beforeEach(arrange2x2);
+
+  it("未選択で矢印キーを押すと左上のアイコンが選択される", () => {
+    focusIconViaClick(0);
+    _testing.selectedSet.clear();
+    pressKey("ArrowDown");
+    expect(_testing.selectedSet.has(0)).toBe(true);
+    expect(_testing.selectedSet.size).toBe(1);
+  });
+
+  it("右キーで隣の列の同じ行へ移動する", () => {
+    focusIconViaClick(0); // (0,0)
+    pressKey("ArrowRight");
+    expect(_testing.selectedSet.has(2)).toBe(true); // (1,0)
+    expect(_testing.selectedSet.size).toBe(1);
+  });
+
+  it("下キーで同じ列の次の行へ移動する", () => {
+    focusIconViaClick(0); // (0,0)
+    pressKey("ArrowDown");
+    expect(_testing.selectedSet.has(1)).toBe(true); // (0,1)
+  });
+
+  it("左キーで隣の列へ戻る", () => {
+    focusIconViaClick(2); // (1,0)
+    pressKey("ArrowLeft");
+    expect(_testing.selectedSet.has(0)).toBe(true); // (0,0)
+  });
+
+  it("上キーで同じ列の前の行へ移動する", () => {
+    focusIconViaClick(1); // (0,1)
+    pressKey("ArrowUp");
+    expect(_testing.selectedSet.has(0)).toBe(true); // (0,0)
+  });
+
+  it("列の端では上下移動しない", () => {
+    focusIconViaClick(1); // (0,1) 最下行
+    pressKey("ArrowDown");
+    expect(_testing.selectedSet.has(1)).toBe(true); // 変わらず
+    expect(_testing.selectedSet.size).toBe(1);
+  });
+
+  it("デスクトップにフォーカスが無いとキーが効かない", () => {
+    focusIconViaClick(0);
+    desktopBlur();
+    pressKey("ArrowRight");
+    expect(_testing.selectedSet.has(0)).toBe(true); // 移動しない
+    expect(_testing.selectedSet.has(2)).toBe(false);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  キーボード操作 — Enter 起動
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("キーボード操作 — Enter 起動", () => {
+  it("Enter で選択中アイコンの openByName が呼ばれる", () => {
+    desktopSetIcons(makeEntries(3));
+    focusIconViaClick(0);
+    const openByName = vi.fn();
+    _inputState.keys.add("Enter");
+    desktopUpdate(0, 0, openByName);
+    expect(openByName).toHaveBeenCalledWith("app0");
+    resetInput();
+  });
+
+  it("未選択なら Enter で何も起動しない", () => {
+    desktopSetIcons(makeEntries(3));
+    focusIconViaClick(0);
+    _testing.selectedSet.clear();
+    const openByName = vi.fn();
+    _inputState.keys.add("Enter");
+    desktopUpdate(0, 0, openByName);
+    expect(openByName).not.toHaveBeenCalled();
+    resetInput();
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  キーボード操作 — 頭文字入力 (type-ahead)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("キーボード操作 — 頭文字入力", () => {
+  // 列 0 に縦積み: 0=NOTEPAD 1=NEXUS 2=FILES
+  function arrangeNamed() {
+    desktopSetIcons([
+      { name: "notepad", label: "NOTEPAD", icon: "notepad" },
+      { name: "nexus", label: "NEXUS", icon: "nexus" },
+      { name: "files", label: "FILES", icon: "files" },
+    ]);
+  }
+
+  /** 1 文字入力して更新する */
+  function typeChar(ch) {
+    resetInput();
+    _inputState.chars = [ch];
+    desktopUpdate(0, 0, vi.fn());
+    resetInput();
+  }
+
+  beforeEach(arrangeNamed);
+
+  it("頭文字で最初の一致アイコンへ移動する", () => {
+    focusIconViaClick(0);
+    _testing.selectedSet.clear();
+    typeChar("f");
+    expect(_testing.selectedSet.has(2)).toBe(true); // FILES
+  });
+
+  it("同じ頭文字を続けて押すとラウンドロビンする", () => {
+    focusIconViaClick(0);
+    _testing.selectedSet.clear();
+
+    typeChar("n"); // → NOTEPAD (index 0)
+    expect(_testing.selectedSet.has(0)).toBe(true);
+
+    typeChar("n"); // → NEXUS (index 1)
+    expect(_testing.selectedSet.has(1)).toBe(true);
+
+    typeChar("n"); // → NOTEPAD (index 0) へ循環
+    expect(_testing.selectedSet.has(0)).toBe(true);
+  });
+
+  it("大文字・小文字を区別しない", () => {
+    focusIconViaClick(0);
+    _testing.selectedSet.clear();
+    typeChar("F");
+    expect(_testing.selectedSet.has(2)).toBe(true); // FILES
+  });
+
+  it("一致が無ければ選択は変わらない", () => {
+    focusIconViaClick(0); // NOTEPAD 選択
+    typeChar("z");
+    expect(_testing.selectedSet.has(0)).toBe(true);
+    expect(_testing.selectedSet.size).toBe(1);
   });
 });
 

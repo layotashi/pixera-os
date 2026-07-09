@@ -14,9 +14,12 @@
  *   workAreaTop 以下の領域に配置する。
  *
  * ── アイコン描画 ──
- *   全アイコンは app_icon.js の drawAppIcon (18×18, 3-level) で描画する。
- *   専用スプライトが無いアプリには "default" アイコンが自動適用される。
- *   ラベル (アプリ名) はアイコンの下に描画する。
+ *   各アイコンは「アイコンプレート + ラベルプレート」を縦に積んだ構成。
+ *   プレートは背景色の下地で、壁紙が模様でも中身が読めるよう分離する。
+ *   選択時のみ周囲を角丸ボックス (枠線 + 市松ディザ) で囲い、
+ *   アイコン/ラベル自体は反転せず囲みだけで選択を示す。
+ *   アイコン本体は app_icon.js の drawAppIcon (18×18, 3-level) で描画し、
+ *   専用スプライトが無いアプリは "default" にフォールバックする。
  *
  * ── 入力 ──
  *   シングルクリック: アイコン選択 (Ctrl+Click でトグル追加)
@@ -45,22 +48,88 @@ export function desktopSetTooltipCallback(fn) {
   _wmSetTooltip = fn;
 }
 
-// ── 定数 ──
+// ── レイアウト定数 ──
+//
+// 1 アイコンは「アイコンプレート」と「ラベルプレート」を縦に積んだ構成。
+// 各プレートは前景色 1px の枠 (仕様の余白B `+`) で縁取り、内側はアイコン/文字を
+// 背景色の下地に載せる。壁紙が模様でも、枠と下地の二重で中身が読めるよう分離する。
+// 選択時のみ、その周囲を角丸ボックス (枠線 + 市松ディザ) で囲う。
+// 各寸法は仕様 ASCII に 1:1 対応する (コメントの px は 5x5 システムフォント時)。
+//
+// 余白は 2 種: 余白A (`_` = 背景色。ハロー/枠内側/パディング) と
+// 余白B (`+` = 前景色。アイコン/ラベルの縁取り = CONTENT_BORDER)。
+//
+//   ┌─────────────────┐ 外周余白1 + 角丸枠1 + 内側余白1 + ディザ帯2
+//   │ ┌────┐            │ ← アイコンプレート (18 + 余白1×2 = 20×20)
+//   │ │icon│  ▓ディザ▓  │
+//   │ └────┘            │   間隔2
+//   │ ┌──────────────┐ │ ← ラベルプレート (文字幅 + 余白)
+//   │ │ App Name      │ │
+//   │ └──────────────┘ │
+//   └─────────────────┘
 
-/** グリッドセル幅 (px)。ラベル表示幅を考慮 */
-const CELL_W = 48;
+/**
+ * アイコン/ラベルプレート外周の前景色枠 (仕様の余白B `+`)。
+ * 視認性のため外周 1px を前景色で縁取り、壁紙・ディザから中身を分離する。
+ * プレート寸法はこの枠を含む (プレート = 中身 + 枠×2)。
+ */
+const CONTENT_BORDER = 1;
 
-/** グリッドセル高さ (px)。アプリアイコン (18px) + ラベル + 余白 */
-const CELL_H = 33;
+/** アイコンプレート寸法 (前景枠 + アイコン。枠内はアイコン下地の背景色) */
+const ICON_PLATE_W = APP_ICON_W + CONTENT_BORDER * 2;
+const ICON_PLATE_H = APP_ICON_H + CONTENT_BORDER * 2;
 
-/** セル内のアイコン上部余白 */
-const ICON_PAD_TOP = 3;
+/** アイコンプレートとラベルプレートの縦間隔 (選択時はここもディザ) */
+const ICON_LABEL_GAP = 2;
 
-/** アイコンとラベルの間隔 */
-const ICON_LABEL_GAP = 3;
+/** ラベル文字の左右パディング (前景枠の内側・背景色) */
+const LABEL_PAD_X = 2;
 
-/** グリッドの左マージン */
-const GRID_MARGIN_X = 4;
+/** ラベル文字の上下パディング (前景枠の内側・背景色) */
+const LABEL_PAD_Y = 1;
+
+/** 文字左端までの幅 = 前景枠 + 背景パディング */
+const LABEL_INSET_X = CONTENT_BORDER + LABEL_PAD_X;
+
+/** 文字上端までの高 = 前景枠 + 背景パディング */
+const LABEL_INSET_Y = CONTENT_BORDER + LABEL_PAD_Y;
+
+/** 選択ボックス: 角丸半径 */
+const BOX_RADIUS = 1;
+
+/** 選択ボックス: 枠線内側の背景余白 */
+const BOX_INNER_MARGIN = 1;
+
+/** 選択ボックス: コンテンツ周囲のディザ帯幅 */
+const DITHER_BAND = 2;
+
+/** 選択ボックス: 枠線外周の背景余白 (角丸四隅の透過用) */
+const BOX_OUTER_MARGIN = 1;
+
+/**
+ * セル内ウィジェット原点からコンテンツ左上までのインセット。
+ * = 外周余白 + 枠線(1) + 内側余白 + ディザ帯。
+ * 選択・非選択でアイコン位置が動かないよう、常にこの位置に描く。
+ */
+const CONTENT_INSET = BOX_OUTER_MARGIN + 1 + BOX_INNER_MARGIN + DITHER_BAND;
+
+/** 額縁の合計幅 (各軸両端分)。ウィジェット寸 = コンテンツ寸 + FRAME_TOTAL */
+const FRAME_TOTAL = CONTENT_INSET * 2;
+
+/** グリッドセルとウィジェットの隙間 (各辺) */
+const GRID_PAD = 1;
+
+/**
+ * グリッドの左右マージン (セル外周)。
+ *
+ * 選択ボックスは各セル内で GRID_PAD(1) + BOX_OUTER_MARGIN(1) だけ内側に描かれるため、
+ * 画面端から選択ボックスまでの実効余白は GRID_MARGIN_X + 2 になる。
+ * 3 にすると 360px 幅で 6 列 (CELL_W=59, boxW=55) がちょうど収まり、
+ * 選択ボックス基準の左右余白 5px・ボックス間の間隔 4px が対称になる:
+ *   5 + 55(box) × 6 + 4(gap) × 5 + 5 = 360
+ * (maxCols は VRAM_WIDTH − GRID_MARGIN_X×2 を CELL_W で割って算出する)
+ */
+const GRID_MARGIN_X = 3;
 
 /** グリッドの上マージン (workAreaTop からの相対) */
 const GRID_MARGIN_Y = 4;
@@ -68,17 +137,50 @@ const GRID_MARGIN_Y = 4;
 /** ラベルの最大文字数 (それ以上は切り捨て) */
 const MAX_LABEL_CHARS = 7;
 
-/** フォントステップ (文字幅 + 字間) */
-let FONT_STEP = GLYPH_W + 1; // 6
+// ── フォント依存メトリクス (recomputeMetrics で確定) ──
 
-/** ラベル行高さ (1 行の文字高 + 行間) */
-let LABEL_LINE_H = GLYPH_H + 1; // 8
+/** フォントステップ (文字幅 + 字間 1px) */
+let FONT_STEP = GLYPH_W + 1;
+
+/** ラベルプレート高さ (文字高 + 上下 inset) */
+let LABEL_BG_H = GLYPH_H + LABEL_INSET_Y * 2;
+
+/** コンテンツ縦寸 (アイコンプレート + 間隔 + ラベルプレート)。ラベル長に依らず一定 */
+let CONTENT_H = ICON_PLATE_H + ICON_LABEL_GAP + LABEL_BG_H;
+
+/** ウィジェット高さ (コンテンツ + 額縁)。一定 */
+let WIDGET_H = CONTENT_H + FRAME_TOTAL;
+
+/**
+ * コンテンツ横寸 (アイコン/ラベルプレートを内包する領域)。ラベル長に依らず一定。
+ * 最長ラベル (MAX_LABEL_CHARS) 基準で固定し、ラベルが短くてもボックス全体の
+ * 寸法は変えない。短いラベルでは余った幅がそのまま市松ディザで埋まる。
+ */
+let CONTENT_W = 0;
+
+/** グリッドセル寸法 (最長ラベルのウィジェット + 隙間) */
+let CELL_W = 0;
+let CELL_H = 0;
+
+/**
+ * フォント寸法から派生メトリクスを再計算する。
+ * 初期化時と onFontChange で呼ぶ。
+ */
+function recomputeMetrics() {
+  FONT_STEP = GLYPH_W + 1;
+  LABEL_BG_H = GLYPH_H + LABEL_INSET_Y * 2;
+  CONTENT_H = ICON_PLATE_H + ICON_LABEL_GAP + LABEL_BG_H;
+  WIDGET_H = CONTENT_H + FRAME_TOTAL;
+
+  const maxLabelW = MAX_LABEL_CHARS * FONT_STEP - 1;
+  CONTENT_W = Math.max(ICON_PLATE_W, maxLabelW + LABEL_INSET_X * 2);
+  CELL_W = CONTENT_W + FRAME_TOTAL + GRID_PAD * 2;
+  CELL_H = WIDGET_H + GRID_PAD * 2;
+}
+recomputeMetrics();
 
 // ── フォント変更リスナー ──
-onFontChange(() => {
-  FONT_STEP = GLYPH_W + 1;
-  LABEL_LINE_H = GLYPH_H + 1;
-});
+onFontChange(recomputeMetrics);
 
 // ── 状態 ──
 
@@ -94,6 +196,12 @@ const selectedSet = new Set();
  * ウィンドウクリック時に false、デスクトップクリック時に true になる。
  */
 let _desktopFocused = true;
+
+/**
+ * キーボード操作の「カーソル」アイコンインデックス (-1 = 未確定)。
+ * 上下左右キー / 頭文字入力の移動起点。クリック選択とは keyboardCursor() で整合させる。
+ */
+let _focusIdx = -1;
 
 /**
  * デスクトップに表示するアイコンエントリ。
@@ -196,6 +304,7 @@ export function desktopSetIcons(entries) {
   }
 
   selectedSet.clear();
+  _focusIdx = -1;
   _dragMode = "none";
   _dragIdx = -1;
   _dragGroupOffsets.clear();
@@ -319,17 +428,23 @@ export function desktopHandleInput(mx, my, openByName) {
 
 /**
  * デスクトップのフレーム更新。wmUpdate() から毎フレーム呼ぶ。
- * ドラッグの継続処理・Ctrl+A ショートカットを処理する。
+ * ドラッグの継続処理・Ctrl+A ショートカット・キーボード操作を処理する。
  * @param {number} mx  マウス X
  * @param {number} my  マウス Y
+ * @param {function} [openByName]  wmOpenByName 関数参照 (Enter によるアプリ起動用)
  */
-export function desktopUpdate(mx, my) {
+export function desktopUpdate(mx, my, openByName) {
   // ── マーチングアンツ アニメーションカウンタ (毎フレーム進行) ──
   _antsFrame++;
 
   // ── Ctrl+A: 全選択 (デスクトップにフォーカスがある場合のみ) ──
   if (_desktopFocused && Input.ctrlDown("KeyA") && iconEntries.length > 0) {
     for (let i = 0; i < iconEntries.length; i++) selectedSet.add(i);
+  }
+
+  // ── キーボード操作 (矢印/Enter/頭文字入力)。ドラッグ・ラッソ中は無効 ──
+  if (_dragMode === "none" && _lassoMode === "none") {
+    handleDesktopKeys(openByName);
   }
 
   // ── ラッソ選択処理 ──
@@ -396,6 +511,188 @@ export function desktopUpdate(mx, my) {
     _dragIdx = -1;
     _dragGroupOffsets.clear();
   }
+}
+
+// ── キーボード操作 ──
+
+/**
+ * デスクトップアイコンのキーボード操作を処理する。
+ * デスクトップにフォーカスがあるときのみ動作する (Ctrl+A と同じフォーカス条件)。
+ *   - 上下左右 : 選択アイコンを見た目の並びに沿って隣へ移動 (単一選択に切替)
+ *   - Enter    : 選択中アイコンを起動
+ *   - 英数字   : その頭文字を持つアイコンへ移動 (同頭文字が複数ならラウンドロビン)
+ * @param {function} [openByName]  wmOpenByName 関数参照 (Enter 起動用)
+ */
+function handleDesktopKeys(openByName) {
+  if (!_desktopFocused || iconEntries.length === 0) return;
+
+  const cur = keyboardCursor();
+
+  // ── Enter: 選択中アイコンを起動 ──
+  if (Input.keyDown("Enter")) {
+    if (cur >= 0 && openByName) openByName(iconEntries[cur].name);
+    return;
+  }
+
+  // ── 上下左右: 空間的な隣のアイコンへ移動 ──
+  let dir = null;
+  if (Input.keyDown("ArrowLeft")) dir = "left";
+  else if (Input.keyDown("ArrowRight")) dir = "right";
+  else if (Input.keyDown("ArrowUp")) dir = "up";
+  else if (Input.keyDown("ArrowDown")) dir = "down";
+  if (dir) {
+    // 未選択なら最初 (左上) のアイコンを選ぶ。選択済みなら方向に応じた隣へ。
+    const next = cur < 0 ? firstIconIndex() : neighborIndex(cur, dir);
+    if (next >= 0) selectSingleIcon(next);
+    return;
+  }
+
+  // ── 頭文字入力: 一致するアイコンへ移動 (ラウンドロビン) ──
+  const ch = firstTypedLetter();
+  if (ch) {
+    const next = typeaheadIndex(ch, cur);
+    if (next >= 0) selectSingleIcon(next);
+  }
+}
+
+/**
+ * キーボード操作の起点となる「カーソル」アイコンインデックスを返す。
+ * _focusIdx が有効かつ現在の選択に含まれていればそれを、
+ * そうでなくとも単一選択ならそのアイコンを返す (クリック直後の選択と整合)。
+ * 複数選択・未選択では -1 (未確定)。
+ * @returns {number}
+ */
+function keyboardCursor() {
+  if (
+    _focusIdx >= 0 &&
+    _focusIdx < iconEntries.length &&
+    selectedSet.has(_focusIdx)
+  ) {
+    return _focusIdx;
+  }
+  if (selectedSet.size === 1) return selectedSet.values().next().value;
+  return -1;
+}
+
+/**
+ * 単一アイコンだけを選択し、キーボードカーソルをそこへ合わせる。
+ * @param {number} idx  アイコンインデックス
+ */
+function selectSingleIcon(idx) {
+  selectedSet.clear();
+  selectedSet.add(idx);
+  _focusIdx = idx;
+}
+
+/**
+ * 左上 (グリッド列優先で最小) のアイコンインデックスを返す。
+ * @returns {number} アイコンインデックス (アイコンが無ければ -1)
+ */
+function firstIconIndex() {
+  let best = -1;
+  let bestCol = Infinity;
+  let bestRow = Infinity;
+  for (let i = 0; i < iconEntries.length; i++) {
+    const e = iconEntries[i];
+    if (e.gridCol < bestCol || (e.gridCol === bestCol && e.gridRow < bestRow)) {
+      bestCol = e.gridCol;
+      bestRow = e.gridRow;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * cur のアイコンから指定方向の隣接アイコンインデックスを返す (無ければ -1)。
+ *   左右: 隣接する列のうち最も近い列で、行が最も近いアイコン (部分列でも自然に着地)。
+ *   上下: 同一列で行が隣のアイコン (列の端では移動しない)。
+ * すべてグリッド座標ベースなので、見た目の並びからそのまま遷移先を予測できる。
+ * @param {number} cur  起点アイコンインデックス
+ * @param {"left"|"right"|"up"|"down"} dir  移動方向
+ * @returns {number}
+ */
+function neighborIndex(cur, dir) {
+  const c = iconEntries[cur];
+  let best = -1;
+  let bestPrimary = Infinity;
+  let bestSecondary = Infinity;
+  let bestRow = Infinity;
+  for (let i = 0; i < iconEntries.length; i++) {
+    if (i === cur) continue;
+    const e = iconEntries[i];
+    const dCol = e.gridCol - c.gridCol;
+    const dRow = e.gridRow - c.gridRow;
+    let primary;
+    let secondary;
+    if (dir === "right") {
+      if (dCol <= 0) continue;
+      primary = dCol; // 列が近いほど優先
+      secondary = Math.abs(dRow); // 同点なら行が近いほど優先
+    } else if (dir === "left") {
+      if (dCol >= 0) continue;
+      primary = -dCol;
+      secondary = Math.abs(dRow);
+    } else if (dir === "down") {
+      if (dCol !== 0 || dRow <= 0) continue;
+      primary = dRow;
+      secondary = 0;
+    } else {
+      // up
+      if (dCol !== 0 || dRow >= 0) continue;
+      primary = -dRow;
+      secondary = 0;
+    }
+    if (
+      primary < bestPrimary ||
+      (primary === bestPrimary && secondary < bestSecondary) ||
+      (primary === bestPrimary &&
+        secondary === bestSecondary &&
+        e.gridRow < bestRow)
+    ) {
+      bestPrimary = primary;
+      bestSecondary = secondary;
+      bestRow = e.gridRow;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * そのフレームに入力された最初の英数字を大文字で返す (無ければ null)。
+ * 矢印などは e.key が 1 文字でないため対象外。
+ * @returns {string|null}
+ */
+function firstTypedLetter() {
+  for (const ch of Input.getCharQueue()) {
+    if (ch.length === 1 && /[a-z0-9]/i.test(ch)) return ch.toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * 頭文字 ch を持つアイコンへの移動先インデックスを返す (無ければ -1)。
+ * 一致アイコンを現在のグリッド配置順 (列優先) に並べ、
+ * カーソルが一致集合内なら次の要素へ、そうでなければ先頭へ遷移する (ラウンドロビン)。
+ * @param {string} ch   大文字化した頭文字
+ * @param {number} cur  現在のカーソルインデックス (-1 = 未確定)
+ * @returns {number}
+ */
+function typeaheadIndex(ch, cur) {
+  const matches = [];
+  for (let i = 0; i < iconEntries.length; i++) {
+    const label = iconEntries[i].label || "";
+    if (label && label[0].toUpperCase() === ch) matches.push(i);
+  }
+  if (matches.length === 0) return -1;
+  matches.sort((a, b) => {
+    const ea = iconEntries[a];
+    const eb = iconEntries[b];
+    return ea.gridCol - eb.gridCol || ea.gridRow - eb.gridRow;
+  });
+  const pos = matches.indexOf(cur);
+  return pos >= 0 ? matches[(pos + 1) % matches.length] : matches[0];
 }
 
 /**
@@ -717,43 +1014,134 @@ function dropIcons(mx, my) {
 // ── 描画 ──
 
 /**
- * 1 つのデスクトップアイコン (スプライト + ラベル) を描画する。
- * 3-level エンコーディングにより bg→fg の 2 パスで描画されるため、
- * fillRect による背景クリアは不要。
+ * 1 アイコン分のピクセル座標を算出する。
+ * ウィジェットはセル内で水平左寄せ (アイコン列を揃える)・垂直中央に置く。
+ * ボックス全幅 (CONTENT_W) はラベル長に依らず最長ラベル基準で一定。
+ * ラベルプレート幅 (labelBgW) だけが文字数で縮み、余白はディザで埋まる。
+ * アイコン/ラベルとも左端を揃えて配置する (contentX 基準)。
+ * @param {number} cx          セル左上 X
+ * @param {number} cy          セル左上 Y
+ * @param {number} glyphCount  ラベルのグリフ数 (文字 + 省略マーク)
+ */
+function computeIconLayout(cx, cy, glyphCount) {
+  const textW = glyphCount > 0 ? glyphCount * FONT_STEP - 1 : 0;
+  const labelBgW = textW + LABEL_INSET_X * 2;
+  const contentW = CONTENT_W;
+
+  // ウィジェット原点 (高さ一定なので垂直中央、水平は左寄せで列を揃える)
+  const wx = cx + GRID_PAD;
+  const wy = cy + ((CELL_H - WIDGET_H) >> 1);
+
+  // コンテンツ (プレート群) 左上
+  const contentX = wx + CONTENT_INSET;
+  const contentY = wy + CONTENT_INSET;
+
+  // ラベルプレート上端 (アイコンプレート + 間隔の下)
+  const labelBgY = contentY + ICON_PLATE_H + ICON_LABEL_GAP;
+
+  return {
+    // 選択ボックス (角丸枠) とその背景ハロー
+    boxX: wx + BOX_OUTER_MARGIN,
+    boxY: wy + BOX_OUTER_MARGIN,
+    boxW: contentW + (CONTENT_INSET - BOX_OUTER_MARGIN) * 2,
+    boxH: CONTENT_H + (CONTENT_INSET - BOX_OUTER_MARGIN) * 2,
+    haloX: wx,
+    haloY: wy,
+    haloW: contentW + FRAME_TOTAL,
+    haloH: CONTENT_H + FRAME_TOTAL,
+    // アイコンプレート & アイコン本体
+    iconPlateX: contentX,
+    iconPlateY: contentY,
+    iconX: contentX + CONTENT_BORDER,
+    iconY: contentY + CONTENT_BORDER,
+    // ラベルプレート & 文字
+    labelBgX: contentX,
+    labelBgY,
+    labelBgW,
+    textX: contentX + LABEL_INSET_X,
+    textY: labelBgY + LABEL_INSET_Y,
+  };
+}
+
+/**
+ * 1 つのデスクトップアイコン (アイコンプレート + ラベルプレート) を描画する。
+ * 選択時は周囲に角丸ボックス (枠線 + 市松ディザ) を追加するのみで、
+ * アイコン/ラベル自体は選択状態に依らず不変。
  * @param {{ name: string, label: string, icon: string }} entry
  * @param {number} cx  セル左上 X
  * @param {number} cy  セル左上 Y
  * @param {boolean} selected  選択状態
  */
 function drawDesktopIcon(entry, cx, cy, selected) {
-  // ── アイコン描画 (3-level スプライト、未登録名は default にフォールバック) ──
-  const iconX = cx + ((CELL_W - APP_ICON_W) >> 1);
-  const iconY = cy + ICON_PAD_TOP;
-  // 選択時はアイコン自身を反転描画する (外周に箱を作らない)
-  drawAppIcon(entry.icon, iconX, iconY, selected);
+  const { text, ellipsis } = truncateLabel(entry.label);
+  // グリフ数 = 文字数 + 省略マーク (1 グリフ分)
+  const glyphCount = text.length + (ellipsis ? 1 : 0);
+  const L = computeIconLayout(cx, cy, glyphCount);
 
-  // ── ラベル描画 (単一行・アイコン下部中央寄せ) ──
-  const line = truncateLabel(entry.label);
-  const ly = cy + ICON_PAD_TOP + APP_ICON_H + ICON_LABEL_GAP;
-  const labelW = line.length * FONT_STEP - 1;
-  const labelX = cx + ((CELL_W - labelW) >> 1);
-  GPU.fillRoundRect(labelX - 2, ly - 2, labelW + 4, GLYPH_H + 4, 1, 0);
-  drawText(labelX, ly, line, 1);
   if (selected) {
-    // ラベル背景チップと同じ角丸形状で反転 (四隅が浮かないよう形を揃える)
-    GPU.invertRoundRect(labelX - 2, ly - 2, labelW + 4, GLYPH_H + 4, 1);
+    // 選択ボックス: 背景ハロー → 角丸枠 → 市松ディザ地。
+    // (スナッププレビュー / ウィンドウ枠と同じ 1-bit 意匠)
+    GPU.fillRoundRect(L.haloX, L.haloY, L.haloW, L.haloH, BOX_RADIUS, 0);
+    GPU.drawRoundRect(L.boxX, L.boxY, L.boxW, L.boxH, BOX_RADIUS, 1);
+    const inset = 1 + BOX_INNER_MARGIN;
+    GPU.drawCheckerboard(
+      L.boxX + inset,
+      L.boxY + inset,
+      L.boxW - inset * 2,
+      L.boxH - inset * 2,
+      1,
+    );
+  }
+
+  // アイコン/ラベルプレート: 背景色の下地 (アイコン透過部/文字余白を埋める) +
+  // 前景色 1px の枠 (仕様の余白B `+`)。下地と枠の二重で壁紙・ディザから分離する
+  // (選択・非選択で不変)。
+  GPU.fillRect(L.iconPlateX, L.iconPlateY, ICON_PLATE_W, ICON_PLATE_H, 0);
+  GPU.drawRect(L.iconPlateX, L.iconPlateY, ICON_PLATE_W, ICON_PLATE_H, 1);
+  GPU.fillRect(L.labelBgX, L.labelBgY, L.labelBgW, LABEL_BG_H, 0);
+  GPU.drawRect(L.labelBgX, L.labelBgY, L.labelBgW, LABEL_BG_H, 1);
+
+  // 前景コンテンツ (選択状態に依らず不変)
+  drawAppIcon(entry.icon, L.iconX, L.iconY, false);
+  drawText(L.textX, L.textY, text, 1);
+  // 省略ラベル: 文字列の直後のグリフセルに三点リーダを打つ
+  if (ellipsis) {
+    drawEllipsisMark(L.textX + text.length * FONT_STEP, L.textY, 1);
   }
 }
 
 /**
- * ラベル文字列を単一行に切り詰める (MAX_LABEL_CHARS を超えたら切り捨て)。
+ * ラベル文字列を 7 文字幅に収める。
+ * MAX_LABEL_CHARS 以内はそのまま。超える場合は先頭 (MAX_LABEL_CHARS - 1) 文字に
+ * 切り詰め、末尾に省略マーク (三点リーダ) を付ける前提で ellipsis フラグを立てる。
+ * 例: "AMETHYST" → { text: "AMETHY", ellipsis: true } → 描画は "AMETHY…"。
  * @param {string} label
- * @returns {string}
+ * @returns {{ text: string, ellipsis: boolean }}
  */
 function truncateLabel(label) {
-  return label.length > MAX_LABEL_CHARS
-    ? label.slice(0, MAX_LABEL_CHARS)
-    : label;
+  if (label.length > MAX_LABEL_CHARS) {
+    return { text: label.slice(0, MAX_LABEL_CHARS - 1), ellipsis: true };
+  }
+  return { text: label, ellipsis: false };
+}
+
+/**
+ * 省略マーク (三点リーダ) を 1 グリフ分の位置に描く。
+ * 専用グリフを font に持たないため、グリフ最下行に 3 点 (列 0/2/4) を打つ。
+ *   .....
+ *   .....
+ *   .....
+ *   .....
+ *   #.#.#
+ * @param {number} x  グリフセル左端 X (drawText のグリフ原点と同じ基準)
+ * @param {number} y  グリフセル上端 Y
+ * @param {number} c  色
+ */
+function drawEllipsisMark(x, y, c) {
+  const yb = y + GLYPH_H - 1;
+  GPU.pset(x, yb, c);
+  GPU.pset(x + 2, yb, c);
+  GPU.pset(x + 4, yb, c);
 }
 
 // ── テスト用内部アクセス ──
@@ -761,7 +1149,7 @@ function truncateLabel(label) {
 /**
  * テスト専用: 内部状態への参照を公開する。
  * プロダクションコードでは使用しないこと。
- * @type {{ selectedSet: Set<number>, CELL_W: number, CELL_H: number, GRID_MARGIN_X: number, GRID_MARGIN_Y: number }}
+ * CELL_W / CELL_H はフォント依存で再計算されるため getter で公開する。
  */
 export const _testing = {
   get selectedSet() {
@@ -779,12 +1167,21 @@ export const _testing = {
   get iconEntries() {
     return iconEntries;
   },
-  CELL_W,
-  CELL_H,
+  get CELL_W() {
+    return CELL_W;
+  },
+  get CELL_H() {
+    return CELL_H;
+  },
   GRID_MARGIN_X,
   GRID_MARGIN_Y,
-  get LABEL_LINE_H() {
-    return LABEL_LINE_H;
+  get maxRows() {
+    return maxRows();
   },
+  get maxCols() {
+    return maxCols();
+  },
+  computeIconLayout,
+  truncateLabel,
 };
 
