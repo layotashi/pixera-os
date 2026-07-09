@@ -32,7 +32,7 @@ js/          全 JavaScript モジュール (アーキテクチャは js/README.
 assets/      フォント・アイコン・カーソル等のアセット
 lang/        Tessera 言語 (生成的アート言語) のコア
 docs/        プロダクト・設計ドキュメント
-tools/       開発支援スクリプト (visual review harness 等)
+tools/       開発支援スクリプト (ローカル静的サーバー等)
 ```
 
 ## ドキュメント
