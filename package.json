@@ -8,14 +8,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "capture": "node tools/capture.mjs",
     "play": "node tools/serve.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "playwright": "^1.60.0",
     "vitest": "^4.0.18"
   }
 }

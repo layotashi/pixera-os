@@ -25,6 +25,3 @@ npm-debug.log*
 # Build / cache (none currently, but reserved)
 dist/
 .cache/
-
-# tools/capture.mjs の出力 (visual review 用、commit 対象外)
-screenshots/
