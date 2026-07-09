@@ -148,18 +148,6 @@ export function getCursor() {
 // ── カーソル描画 ──
 
 /**
- * カーソルを非表示にするフラグ。
- * スクリーンショットレビュー (tools/capture.mjs) でカーソルが UI に
- * 重なって判読を妨げないよう、capture 時のみ true にする。production 不変。
- */
-let _hidden = false;
-
-/** カーソルの表示/非表示を切り替える (capture レビュー用) */
-export function setCursorHidden(v) {
-  _hidden = !!v;
-}
-
-/**
  * 現在のカーソルを描画する。
  * アウトライン (背景色) → 前景の順で描画し、
  * どんな背景でも視認可能なカーソルを実現する。
@@ -168,7 +156,7 @@ export function setCursorHidden(v) {
  * @param {number} y  マウス仮想画面 Y
  */
 export function drawCursor(x, y) {
-  if (!ready || _hidden) return;
+  if (!ready) return;
   const cur = cursors[currentCursor];
   if (!cur) return;
   const dx = x - cur.hotX;

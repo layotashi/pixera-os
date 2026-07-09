@@ -20,7 +20,7 @@
 import { initGpu, vram } from "./core/gpu.js";
 import { initInput, resetInput, updateInputLog } from "./core/input.js";
 import { initFont, getAllGlyphs, setGlyphs } from "./core/font.js";
-import { initCursor, setCursorHidden } from "./core/cursor.js";
+import { initCursor } from "./core/cursor.js";
 import { initIcon } from "./core/icon.js";
 import { initTextIcon } from "./core/text_icon.js";
 import { initAppIcon } from "./core/app_icon.js";
@@ -235,27 +235,6 @@ async function boot() {
     // 全画面中の Alt+Tab でフォーカスを失うと resize イベントが縮小値で発火するが
     // autoScale() 側でスキップする。復帰時にここで正しい値に再計算する。
     window.addEventListener("focus", () => Config.autoScale());
-
-    // ── テストフック (visual review harness 用) ──
-    // tools/capture.mjs などのオフブラウザツールが PIXERA OS の起動完了を
-    // 検知し、ウィンドウを開いて canvas をスクリーンショットするためのフック。
-    // 通常運用には影響しない (= 単なる名前空間注入)。
-    /** @type {any} */ (window).__pixera = {
-      booted: true,
-      wmOpenByName: WM.wmOpenByName,
-      wmGetRegistry: WM.wmGetRegistry,
-      wmGetWindowList: WM.wmGetWindowList,
-      wmGetWindowRect: WM.wmGetWindowRect,
-      wmGetContentRect: WM.wmGetContentRect,
-      // フルスクリーン検証用 (capture からの操作)
-      wmSetFullscreen: WM.wmSetFullscreen,
-      wmIsFullscreen: WM.wmIsFullscreen,
-      // capture.mjs が screenshot 撮影前に視覚効果 (Diagonal scanline /
-      // Vignette) を切るために使う。production には影響しない。
-      setEffect: Config.setEffectParam,
-      // capture.mjs がレビュー精度向上のためカーソルを隠す。production 不変。
-      setCursorHidden,
-    };
 
     mainLoop();
   } catch (e) {
