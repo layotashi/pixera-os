@@ -159,9 +159,10 @@ export class WidgetGroup {
       if (w.visible !== false) w.draw(contentRect);
     }
 
-    // パス 2: フォーカスインジケータ (四隅カギ括弧)
+    // パス 2: フォーカスインジケータ (四隅カギ括弧)。
+    // 自前で枠を描くウィジェット (noFocusBracket) は抑止する。
     const focused = Helpers.getFocused();
-    if (focused && this.widgets.includes(focused)) {
+    if (focused && this.widgets.includes(focused) && !focused.noFocusBracket) {
       _drawFocusBrackets(focused, contentRect);
     }
 

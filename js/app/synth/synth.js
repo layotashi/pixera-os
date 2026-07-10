@@ -8,9 +8,14 @@
  *
  * ── UI 設計 (CRAP) ──
  *   Proximity : 機能で OSC / ENV / AMP / PLAY の 4 セクションに分割 (反転バンド見出し)。
- *   Repetition: 数値調整を全て同型スライダーに統一。単位 (MS/%) を一貫表示。
- *   Alignment : 単一左マージン、スライダー track の左端・幅を統一、値+単位を右揃え列に。
+ *   Repetition: ENV(A/D/S/R) は同型の縦フェーダーを横並びにしたバンク、
+ *               AMP(VOL) は水平スライダー。ラベルはフェーダー上に中央寄せ。
+ *   Alignment : 見出し帯は全幅。フェーダーは等間隔の 1 バンクに揃え、
+ *               VOL スライダーは track の左端・幅を統一、値+単位を右揃え列に。
  *   Contrast  : 見出しは反転帯、鍵盤の押下キーは反転で強調 (1-bit の on/off)。
+ *
+ * ENV フェーダーで調整中 (最後に触れた) パラメータの値はウィンドウフッタに表示する
+ * (フェーダー自身には数値を出さない)。将来は調整中パラメータ専用の値表示窓を追加予定。
  *
  * 演奏キー (フォーカス時):
  *   Z 段 = 現オクターブ, Q 段 = +1oct, I〜P = +2oct
@@ -32,6 +37,7 @@ import {
   GAP,
   SECTION_PAD,
 } from "../../ui/index.js";
+import { Fader, FADER_W, FADER_DEFAULT_H, FADER_GAP } from "../../ui/music/index.js";
 import { Keyboard } from "./keyboard.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -48,6 +54,8 @@ const NUM_WHITE = 14;
 const PANEL_W = KEY_W * NUM_WHITE + 1;
 /** セクション内コントロールの左インセット */
 const PAD_X = 3;
+/** ENV フェーダーの高さ (可動域)。間隔は連結バンクにするため FADER_GAP (=1px) */
+const FADER_H = FADER_DEFAULT_H;
 
 /** オクターブ / ベロシティの範囲 */
 const OCTAVE_MIN = 1;
@@ -114,11 +122,24 @@ const KEY_MAP = [
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 let dropDownWave;
-let sliderA, sliderD, sliderS, sliderR, sliderVol;
+let faderA, faderD, faderS, faderR, sliderVol;
+/** ENV フェーダーを左→右順に保持 (ENV_FADERS と添字対応) */
+let envFaders = [];
 let btnOctDown, btnOctUp;
 let keyboard;
 let group;
 let _ready = false;
+
+/** ENV フェーダーの定義 (順序 = 左→右)。ラベルはフェーダー上・フッタ表示に使う */
+const ENV_FADERS = [
+  { key: "a", label: "ATT", unit: "MS" },
+  { key: "d", label: "DEC", unit: "MS" },
+  { key: "s", label: "SUS", unit: "%" },
+  { key: "r", label: "REL", unit: "MS" },
+];
+
+/** フッタに出す「最後に触れた ENV パラメータ」の表示文字列 */
+let envFooterText = "";
 
 /** レイアウト結果 (draw / 測定で共有する相対座標) */
 const L = {};
@@ -131,11 +152,16 @@ function _initWidgets() {
     synth().setWaveform(WAVE_IDS[idx]);
   });
 
-  // ENV/AMP: 全て同型スライダー。初期値は PolySynth の既定に一致させる
-  sliderA = new Slider(0, 0, 0, 0, 2000, 10, (v) => applyADSR({ a: v }));
-  sliderD = new Slider(0, 0, 0, 0, 2000, 100, (v) => applyADSR({ d: v }));
-  sliderS = new Slider(0, 0, 0, 0, 100, 80, (v) => applyADSR({ s: v }));
-  sliderR = new Slider(0, 0, 0, 0, 2000, 200, (v) => applyADSR({ r: v }));
+  // ENV: A/D/S/R は同型の縦フェーダー。初期値は PolySynth の既定に一致させる
+  faderA = new Fader(0, 0, FADER_H, 0, 2000, 10, (v) => onEnvChange(0, v));
+  faderD = new Fader(0, 0, FADER_H, 0, 2000, 100, (v) => onEnvChange(1, v));
+  faderS = new Fader(0, 0, FADER_H, 0, 100, 80, (v) => onEnvChange(2, v));
+  faderR = new Fader(0, 0, FADER_H, 0, 2000, 200, (v) => onEnvChange(3, v));
+  envFaders = [faderA, faderD, faderS, faderR];
+  // フッタ初期表示 = 先頭 (ATTACK) の値
+  setEnvFooter(0, faderA.value);
+
+  // AMP: VOL は水平スライダーのまま
   sliderVol = new Slider(0, 0, 0, 0, 100, 50, (v) => synth().setVolume(v));
 
   btnOctDown = new PushButton(0, 0, "<", () => setOctave(octave - 1));
@@ -149,7 +175,7 @@ function _initWidgets() {
 
   group = new WidgetGroup([
     dropDownWave,
-    sliderA, sliderD, sliderS, sliderR, sliderVol,
+    faderA, faderD, faderS, faderR, sliderVol,
     btnOctDown, btnOctUp,
     keyboard,
   ]);
@@ -170,6 +196,18 @@ function _initWidgets() {
       synth().noteOff(m);
     },
   });
+}
+
+/** ENV フェーダー変更: ADSR に反映し、フッタ表示を更新する */
+function onEnvChange(i, v) {
+  applyADSR({ [ENV_FADERS[i].key]: v });
+  setEnvFooter(i, v);
+}
+
+/** フッタ用の「ラベル 値 単位」文字列を組み立てる (最後に触れた ENV パラメータ) */
+function setEnvFooter(i, v) {
+  const m = ENV_FADERS[i];
+  envFooterText = m.label + "  " + String(v).padStart(4) + " " + m.unit;
 }
 
 /** ADSR の一部を更新して PolySynth に反映する */
@@ -196,7 +234,7 @@ function computeLayout() {
   group.remeasureAll();
 
   const bandH = GLYPH_H + SECTION_PAD * 2;
-  const sliderH = sliderA.h;
+  const sliderH = sliderVol.h;
   const rowH = sliderH + GAP;
   const nameColW = textWidth("WAVE"); // 最長ラベルに合わせ、全コントロールの左端を揃える
   const valueW = textWidth("0000 MS");
@@ -224,13 +262,24 @@ function computeLayout() {
   dropDownWave.y = y;
   y += dropDownWave.h + GAP;
 
-  // ── ENV ──
+  // ── ENV ── ATT/DEC/SUS/REL の縦フェーダーを 1px 間隔で連結したバンク。ラベルは各上に中央寄せ
   L.envBandY = y;
   y += bandH + GAP;
-  L.rowAY = y; setRow(sliderA, y); y += rowH;
-  L.rowDY = y; setRow(sliderD, y); y += rowH;
-  L.rowSY = y; setRow(sliderS, y); y += rowH;
-  L.rowRY = y; setRow(sliderR, y); y += rowH;
+  L.envLabelY = y; // ラベル行 (ATT/DEC/SUS/REL)
+  y += GLYPH_H + 2;
+  L.envFaderY = y; // フェーダー上端
+  const pitch = FADER_W + FADER_GAP;
+  const bankW = envFaders.length * pitch - FADER_GAP; // 末尾に間隔は付かない
+  const bankX = (PANEL_W - bankW) >> 1; // パネル中央に配置
+  L.faderX = [];
+  for (let i = 0; i < envFaders.length; i++) {
+    const fx = bankX + i * pitch;
+    L.faderX.push(fx);
+    envFaders[i].x = fx;
+    envFaders[i].y = L.envFaderY;
+    envFaders[i].h = FADER_H;
+  }
+  y += FADER_H + GAP;
 
   // ── AMP ──
   L.ampBandY = y;
@@ -278,6 +327,21 @@ function drawRow(cr, name, y, value, unit) {
   drawText(cr.x + L.valueX, ty, vs, 1);
 }
 
+/** ENV フェーダーのラベル (ATT/DEC/SUS/REL) を各フェーダーの上に中央寄せで描く */
+function drawFaderLabels(cr) {
+  for (let i = 0; i < envFaders.length; i++) {
+    const name = ENV_FADERS[i].label;
+    const lx = cr.x + L.faderX[i] + ((FADER_W - textWidth(name)) >> 1);
+    drawText(lx, cr.y + L.envLabelY, name, 1);
+  }
+}
+
+/** フッタに最後に触れた ENV パラメータの値を描く */
+function drawSynthFooter(fr) {
+  _initWidgets();
+  if (envFooterText) drawText(fr.x, fr.y, envFooterText, 1);
+}
+
 function drawSynth(cr) {
   _initWidgets();
   // CAPTURE のウィンドウ単体撮影/録画は同じフレーム内で onDraw をもう一度走らせる。
@@ -305,11 +369,10 @@ function drawSynth(cr) {
   // OSC の WAVE ラベル (DropDown 自体は group が描画)
   drawText(cr.x + PAD_X, cr.y + L.oscTextY, "WAVE", 1);
 
-  // ENV / AMP の値ラベル (スライダー値から毎フレーム)
-  drawRow(cr, "A", L.rowAY, sliderA.value, "MS");
-  drawRow(cr, "D", L.rowDY, sliderD.value, "MS");
-  drawRow(cr, "S", L.rowSY, sliderS.value, "%");
-  drawRow(cr, "R", L.rowRY, sliderR.value, "MS");
+  // ENV フェーダーのラベル (数値は出さず、フッタに表示)
+  drawFaderLabels(cr);
+
+  // AMP の値ラベル (スライダー値から毎フレーム)
   drawRow(cr, "VOL", L.rowVolY, sliderVol.value, "%");
 
   // PLAY コントロール行のテキスト
@@ -402,6 +465,9 @@ wmRegister(
         "envelope and volume, then play chords on the on-screen keyboard or the " +
         "PC keyboard (Z row = current octave, Q row = +1, I-P = +2). Use , . to " +
         "change octave, [ ] for velocity, / to cycle the waveform.",
+      // ENV フェーダーで調整中のパラメータ値をフッタに表示する
+      footer: true,
+      onDrawFooter: (fr) => drawSynthFooter(fr),
       onBeforeClose: () => {
         winOpen = false;
         silence();
