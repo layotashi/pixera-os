@@ -3,22 +3,35 @@
  * synth.js — SYNTH ウィンドウ (ポリフォニック・ソフトシンセ)
  *
  * 音楽制作機能の再設計・第 1 弾。単体で完結するソフトシンセサイザ。
- * 音色を作り (波形 / ADSR / 音量 / 位相)、PC キーボードで和音を演奏する。
+ * 音色を作り (波形 / ADSR / 音量)、PC キーボード・オンスクリーン鍵盤で和音を演奏する。
+ * 音源は core/audio.js の PolySynth。SYNESTA には依存しない完全な新規アプリ。
  *
- * 音源は core/audio.js の PolySynth (ポリフォニック)。SYNESTA には依存しない
- * 完全な新規アプリ。オンスクリーン鍵盤 (M3) と Web MIDI 入力 (M4) は後続で追加する。
+ * ── UI 設計 (CRAP) ──
+ *   Proximity : 機能で OSC / ENV / AMP / PLAY の 4 セクションに分割 (反転バンド見出し)。
+ *   Repetition: 数値調整を全て同型スライダーに統一。単位 (MS/%) を一貫表示。
+ *   Alignment : 単一左マージン、スライダー track の左端・幅を統一、値+単位を右揃え列に。
+ *   Contrast  : 見出しは反転帯、鍵盤の押下キーは反転で強調 (1-bit の on/off)。
  *
  * 演奏キー (フォーカス時):
  *   Z 段 = 現オクターブ, Q 段 = +1oct, I〜P = +2oct
- *   , / .  … オクターブ下げ / 上げ    [ / ]  … ベロシティ ± 10    /  … 波形順送り
+ *   , / .  … オクターブ ∓    [ / ]  … ベロシティ ± 10    /  … 波形順送り
  */
 
-import { pset, drawRoundRect } from "../../core/gpu.js";
+import { fillRect } from "../../core/gpu.js";
 import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
 import { createPolySynth } from "../../core/audio.js";
-import * as UI from "../../ui/index.js";
+import {
+  WidgetGroup,
+  Slider,
+  PushButton,
+  DropDown,
+  FOCUS_MARGIN,
+  GAP,
+  SECTION_PAD,
+} from "../../ui/index.js";
+import { Keyboard } from "./keyboard.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -26,22 +39,23 @@ import * as UI from "../../ui/index.js";
 
 export const APP_NAME = "SYNTH";
 
-/** 波形プレビュー幅 (px) — cw=64 = 4*halfH(16) で TRI が正確に 45° */
-const PREVIEW_WIDTH = 68;
-/** 波形プレビュー高さ (px) */
-const PREVIEW_HEIGHT = 37;
-/** スライダー幅 (px) */
-const SLIDER_WIDTH = 60;
+/** 鍵盤: 白鍵ピッチ・高さ・表示白鍵数 (2 オクターブ) */
+const KEY_W = 14;
+const KEY_H = 42;
+const NUM_WHITE = 14;
+/** コンテンツ幅 (鍵盤幅に合わせる。仕切り共有のため +1)。全セクション共通の基準幅 */
+const PANEL_W = KEY_W * NUM_WHITE + 1;
+/** セクション内コントロールの左インセット */
+const PAD_X = 3;
 
-/** オクターブの下限 / 上限 (offsetToMidi が MIDI 0〜127 に収まる範囲) */
+/** オクターブ / ベロシティの範囲 */
 const OCTAVE_MIN = 1;
 const OCTAVE_MAX = 7;
-/** ベロシティの下限 / 上限 / 刻み */
 const VEL_MIN = 10;
 const VEL_MAX = 127;
 const VEL_STEP = 10;
 
-// ── 波形 (表示名 / 内部 ID) ──
+/** 波形: 表示名 (DropDown) と内部 ID (PolySynth)。順序を対応させる */
 const WAVE_ITEMS = ["SAW", "TRI", "SQ50", "SQ25", "SQ12", "SINE", "NOISE"];
 const WAVE_IDS = ["saw", "tri", "sq50", "sq25", "sq12", "sine", "noise"];
 const waveIndexMap = Object.fromEntries(WAVE_IDS.map((id, i) => [id, i]));
@@ -52,8 +66,6 @@ const waveIndexMap = Object.fromEntries(WAVE_IDS.map((id, i) => [id, i]));
 
 /** @type {import("../../core/audio.js").PolySynth|null} */
 let _synth = null;
-
-/** PolySynth を遅延生成して返す */
 function synth() {
   if (!_synth) _synth = createPolySynth();
   return _synth;
@@ -63,228 +75,228 @@ function synth() {
 //  演奏状態
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 現在のオクターブ (Z 段の基準) */
 let octave = 4;
-/** ベロシティ (0〜127) */
 let velocity = 100;
-
-/** 押下中の物理キー → 発音した MIDI ノート番号 (ノートオフ用に押下時の音程を保持) */
+/** 押下中の物理キー → 発音した MIDI (押下時の音程で noteOff するため保持) */
 const heldKeys = new Map();
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  キーボード → ノート マッピング (C からの半音オフセット)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-const KEY_MAP = [
-  // 下段: Z〜M = C〜B (octave)
-  { code: "KeyZ", offset: 0 },
-  { code: "KeyS", offset: 1 },
-  { code: "KeyX", offset: 2 },
-  { code: "KeyD", offset: 3 },
-  { code: "KeyC", offset: 4 },
-  { code: "KeyV", offset: 5 },
-  { code: "KeyG", offset: 6 },
-  { code: "KeyB", offset: 7 },
-  { code: "KeyH", offset: 8 },
-  { code: "KeyN", offset: 9 },
-  { code: "KeyJ", offset: 10 },
-  { code: "KeyM", offset: 11 },
-  // 中段: Q〜U = C〜B (octave + 1)
-  { code: "KeyQ", offset: 12 },
-  { code: "Digit2", offset: 13 },
-  { code: "KeyW", offset: 14 },
-  { code: "Digit3", offset: 15 },
-  { code: "KeyE", offset: 16 },
-  { code: "KeyR", offset: 17 },
-  { code: "Digit5", offset: 18 },
-  { code: "KeyT", offset: 19 },
-  { code: "Digit6", offset: 20 },
-  { code: "KeyY", offset: 21 },
-  { code: "Digit7", offset: 22 },
-  { code: "KeyU", offset: 23 },
-  // 上段: I〜P = C〜E (octave + 2)
-  { code: "KeyI", offset: 24 },
-  { code: "Digit9", offset: 25 },
-  { code: "KeyO", offset: 26 },
-  { code: "Digit0", offset: 27 },
-  { code: "KeyP", offset: 28 },
-];
-
-/** オフセット + オクターブから MIDI ノート番号を計算する (C4 = 60) */
+/** オクターブ内の半音オフセット (C からの) → MIDI (C4 = 60) */
 function offsetToMidi(offset) {
   return 12 + octave * 12 + offset;
 }
 
+/** PC 演奏キー配列 (Z 段 / Q 段 / I〜P) */
+const KEY_MAP = [
+  { code: "KeyZ", offset: 0 }, { code: "KeyS", offset: 1 },
+  { code: "KeyX", offset: 2 }, { code: "KeyD", offset: 3 },
+  { code: "KeyC", offset: 4 }, { code: "KeyV", offset: 5 },
+  { code: "KeyG", offset: 6 }, { code: "KeyB", offset: 7 },
+  { code: "KeyH", offset: 8 }, { code: "KeyN", offset: 9 },
+  { code: "KeyJ", offset: 10 }, { code: "KeyM", offset: 11 },
+  { code: "KeyQ", offset: 12 }, { code: "Digit2", offset: 13 },
+  { code: "KeyW", offset: 14 }, { code: "Digit3", offset: 15 },
+  { code: "KeyE", offset: 16 }, { code: "KeyR", offset: 17 },
+  { code: "Digit5", offset: 18 }, { code: "KeyT", offset: 19 },
+  { code: "Digit6", offset: 20 }, { code: "KeyY", offset: 21 },
+  { code: "Digit7", offset: 22 }, { code: "KeyU", offset: 23 },
+  { code: "KeyI", offset: 24 }, { code: "Digit9", offset: 25 },
+  { code: "KeyO", offset: 26 }, { code: "Digit0", offset: 27 },
+  { code: "KeyP", offset: 28 },
+];
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  ウィジェット (遅延初期化)
+//  ウィジェット + レイアウト (遅延初期化)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 let dropDownWave;
-let labelWaveform;
-let numberBoxAttack, numberBoxDecay, numberBoxSustain, numberBoxRelease;
-let labelVolumeValue, sliderVolume;
-let labelPhaseValue, sliderPhase;
-let synthRoot;
-let allWidgets;
+let sliderA, sliderD, sliderS, sliderR, sliderVol;
+let btnOctDown, btnOctUp;
+let keyboard;
+let group;
 let _ready = false;
 
-function formatPercent(v) {
-  return String(v).padStart(4) + "%";
-}
-function formatDegrees(v) {
-  return String(v).padStart(4) + "DEG";
-}
-
-/** ADSR の 1 パラメータぶんの縦積み (ラベル / 数値 + 単位) を構成する */
-function adsrCell(label, numberBox, unit) {
-  return UI.VBox([
-    new UI.Label(0, 0, label),
-    UI.HBox([numberBox, new UI.Label(0, 0, unit)]),
-  ]);
-}
+/** レイアウト結果 (draw / 測定で共有する相対座標) */
+const L = {};
 
 function _initWidgets() {
   if (_ready) return;
   _ready = true;
 
-  // ── 波形 ──
-  dropDownWave = new UI.DropDown(0, 0, WAVE_ITEMS, 0, (idx) => {
+  dropDownWave = new DropDown(0, 0, WAVE_ITEMS, 0, (idx) => {
     synth().setWaveform(WAVE_IDS[idx]);
   });
-  labelWaveform = new UI.Label(0, 0, "WAVEFORM:");
 
-  // ── ADSR (ms / %) ── PolySynth の初期値に合わせる
-  numberBoxAttack = new UI.NumberBox(0, 0, 0, 2000, 10, 1, (v) => {
-    applyADSR({ a: v });
-  }, { digits: 4 });
-  numberBoxDecay = new UI.NumberBox(0, 0, 0, 2000, 100, 1, (v) => {
-    applyADSR({ d: v });
-  }, { digits: 4 });
-  numberBoxSustain = new UI.NumberBox(0, 0, 0, 100, 80, 1, (v) => {
-    applyADSR({ s: v });
-  }, { digits: 3 });
-  numberBoxRelease = new UI.NumberBox(0, 0, 0, 2000, 200, 1, (v) => {
-    applyADSR({ r: v });
-  }, { digits: 4 });
+  // ENV/AMP: 全て同型スライダー。初期値は PolySynth の既定に一致させる
+  sliderA = new Slider(0, 0, 0, 0, 2000, 10, (v) => applyADSR({ a: v }));
+  sliderD = new Slider(0, 0, 0, 0, 2000, 100, (v) => applyADSR({ d: v }));
+  sliderS = new Slider(0, 0, 0, 0, 100, 80, (v) => applyADSR({ s: v }));
+  sliderR = new Slider(0, 0, 0, 0, 2000, 200, (v) => applyADSR({ r: v }));
+  sliderVol = new Slider(0, 0, 0, 0, 100, 50, (v) => synth().setVolume(v));
 
-  const adsrGrid = UI.HBox([
-    adsrCell("A:", numberBoxAttack, "MS"),
-    adsrCell("D:", numberBoxDecay, "MS"),
-    adsrCell("S:", numberBoxSustain, "%"),
-    adsrCell("R:", numberBoxRelease, "MS"),
+  btnOctDown = new PushButton(0, 0, "<", () => setOctave(octave - 1));
+  btnOctUp = new PushButton(0, 0, ">", () => setOctave(octave + 1));
+
+  keyboard = new Keyboard(KEY_W, KEY_H, NUM_WHITE, {
+    onNoteOn: (m) => synth().noteOn(m, velocity / 127),
+    onNoteOff: (m) => synth().noteOff(m),
+    isHeld: (m) => synth().isNoteHeld(m),
+  });
+
+  group = new WidgetGroup([
+    dropDownWave,
+    sliderA, sliderD, sliderS, sliderR, sliderVol,
+    btnOctDown, btnOctUp,
+    keyboard,
   ]);
 
-  // ── 音量 ──
-  labelVolumeValue = new UI.Label(0, 0, formatPercent(50));
-  sliderVolume = new UI.Slider(0, 0, SLIDER_WIDTH, 0, 100, 50, (v) => {
-    labelVolumeValue.text = formatPercent(v);
-    synth().setVolume(v);
-  });
-
-  // ── 位相 ──
-  labelPhaseValue = new UI.Label(0, 0, formatDegrees(0));
-  sliderPhase = new UI.Slider(0, 0, SLIDER_WIDTH, 0, 359, 0, (v) => {
-    labelPhaseValue.text = formatDegrees(v);
-    synth().setStartPhase(v / 360);
-  });
-  sliderPhase.wheelStep = 5; // 1 ノッチ = 5°
-
-  synthRoot = UI.VBox([
-    UI.HBox([labelWaveform, dropDownWave]),
-    adsrGrid,
-    UI.HBox([new UI.Label(0, 0, "VOL:"), sliderVolume, labelVolumeValue]),
-    UI.HBox([new UI.Label(0, 0, "PHS:"), sliderPhase, labelPhaseValue]),
-  ]);
-
-  // ウィジェットは波形プレビューの下から並べる
-  allWidgets = new UI.WidgetGroup(synthRoot, {
-    x: UI.FOCUS_MARGIN,
-    y: UI.FOCUS_MARGIN + PREVIEW_HEIGHT + UI.GAP,
-  });
+  computeLayout();
 }
 
 /** ADSR の一部を更新して PolySynth に反映する */
 function applyADSR({ a, d, s, r }) {
-  const cur = synth().getADSR();
+  const c = synth().getADSR();
   synth().setADSR(
-    a !== undefined ? a : cur.a,
-    d !== undefined ? d : cur.d,
-    s !== undefined ? s : cur.s,
-    r !== undefined ? r : cur.r,
+    a !== undefined ? a : c.a,
+    d !== undefined ? d : c.d,
+    s !== undefined ? s : c.s,
+    r !== undefined ? r : c.r,
   );
 }
 
-/** ウィジェットの配置を再計算する */
-function relayout() {
-  synthRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN + PREVIEW_HEIGHT + UI.GAP);
+/** オクターブを設定する (クランプ)。鍵盤の表示範囲も追従する */
+function setOctave(n) {
+  octave = Math.max(OCTAVE_MIN, Math.min(OCTAVE_MAX, n));
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  レイアウト計算 (相対座標。ウィンドウは固定サイズ + スクロール)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function computeLayout() {
+  group.remeasureAll();
+
+  const bandH = GLYPH_H + SECTION_PAD * 2;
+  const sliderH = sliderA.h;
+  const rowH = sliderH + GAP;
+  const nameColW = textWidth("WAVE"); // 最長ラベルに合わせ、全コントロールの左端を揃える
+  const valueW = textWidth("0000 MS");
+
+  L.bandH = bandH;
+  L.textDy = (sliderH - GLYPH_H) >> 1;
+  L.trackX = PAD_X + nameColW + GAP;
+  L.valueX = PANEL_W - PAD_X - valueW;
+  const trackW = Math.max(20, L.valueX - GAP - L.trackX);
+
+  const setRow = (s, y) => {
+    s.x = L.trackX;
+    s.w = trackW;
+    s.y = y;
+  };
+
+  let y = FOCUS_MARGIN;
+
+  // ── OSC ── WAVE ラベル + 波形 DropDown (track 列に左端を合わせる)
+  L.oscBandY = y;
+  y += bandH + GAP;
+  L.oscRowY = y;
+  L.oscTextY = y + ((dropDownWave.h - GLYPH_H) >> 1);
+  dropDownWave.x = L.trackX;
+  dropDownWave.y = y;
+  y += dropDownWave.h + GAP;
+
+  // ── ENV ──
+  L.envBandY = y;
+  y += bandH + GAP;
+  L.rowAY = y; setRow(sliderA, y); y += rowH;
+  L.rowDY = y; setRow(sliderD, y); y += rowH;
+  L.rowSY = y; setRow(sliderS, y); y += rowH;
+  L.rowRY = y; setRow(sliderR, y); y += rowH;
+
+  // ── AMP ──
+  L.ampBandY = y;
+  y += bandH + GAP;
+  L.rowVolY = y; setRow(sliderVol, y); y += rowH;
+
+  // ── PLAY ──
+  L.playBandY = y;
+  y += bandH + GAP;
+  // コントロール行: [<] OCT n [>]   VEL nnn  POLY nn
+  btnOctDown.x = PAD_X;
+  btnOctDown.y = y;
+  L.octTextX = btnOctDown.x + btnOctDown.w + GAP;
+  btnOctUp.x = L.octTextX + textWidth("OCT 8") + GAP;
+  btnOctUp.y = y;
+  L.vpTextX = btnOctUp.x + btnOctUp.w + GAP * 2;
+  L.ctrlTextY = y + ((btnOctDown.h - GLYPH_H) >> 1);
+  y += Math.max(btnOctDown.h, GLYPH_H) + GAP;
+  // 鍵盤 (全幅)
+  keyboard.x = 0;
+  keyboard.y = y;
+  keyboard.w = PANEL_W;
+  keyboard.h = KEY_H;
+  y += KEY_H + FOCUS_MARGIN;
+
+  L.totalW = PANEL_W;
+  L.totalH = y;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/** 反転バンドのセクション見出しを描く (SectionLabel と同様式) */
+function drawBand(cr, label, y) {
+  fillRect(cr.x, cr.y + y, PANEL_W, L.bandH, 1);
+  drawText(cr.x + SECTION_PAD, cr.y + y + SECTION_PAD, label, 0);
+}
+
+/** スライダー行のラベル (左) と 値+単位 (右揃え列) を描く */
+function drawRow(cr, name, y, value, unit) {
+  const ty = cr.y + y + L.textDy;
+  drawText(cr.x + PAD_X, ty, name, 1);
+  const vs = String(value).padStart(4) + " " + unit.padEnd(2);
+  drawText(cr.x + L.valueX, ty, vs, 1);
+}
+
 function drawSynth(cr) {
   _initWidgets();
-
-  // 演奏入力 (毎フレーム)
   handleKeyboard();
 
-  // ── 波形プレビュー ──
-  drawWaveformPreview(cr.x + UI.FOCUS_MARGIN, cr.y + UI.FOCUS_MARGIN);
+  // セクション見出し
+  drawBand(cr, "OSC", L.oscBandY);
+  drawBand(cr, "ENV", L.envBandY);
+  drawBand(cr, "AMP", L.ampBandY);
+  drawBand(cr, "PLAY", L.playBandY);
 
-  // ── 音作りウィジェット ──
-  allWidgets.draw(cr);
+  // OSC の WAVE ラベル (DropDown 自体は group が描画)
+  drawText(cr.x + PAD_X, cr.y + L.oscTextY, "WAVE", 1);
 
-  // ── ステータス行 (オクターブ / ベロシティ / 発音数) ──
-  const widgetsBottom = allWidgets.measure().h - UI.FOCUS_MARGIN;
-  const statusY = cr.y + widgetsBottom + UI.GAP;
-  drawText(cr.x + UI.FOCUS_MARGIN, statusY, statusText(), 1);
-}
+  // ENV / AMP の値ラベル (スライダー値から毎フレーム)
+  drawRow(cr, "A", L.rowAY, sliderA.value, "MS");
+  drawRow(cr, "D", L.rowDY, sliderD.value, "MS");
+  drawRow(cr, "S", L.rowSY, sliderS.value, "%");
+  drawRow(cr, "R", L.rowRY, sliderR.value, "MS");
+  drawRow(cr, "VOL", L.rowVolY, sliderVol.value, "%");
 
-/** ステータス行の文字列 (値によらず幅が安定するよう桁を揃える) */
-function statusText() {
-  const oct = String(octave);
-  const vel = String(velocity).padStart(3);
-  const poly = String(synth().heldCount).padStart(2);
-  return `OCT ${oct}  VEL ${vel}  POLY ${poly}`;
-}
+  // PLAY コントロール行のテキスト
+  drawText(cr.x + L.octTextX, cr.y + L.ctrlTextY, "OCT " + octave, 1);
+  drawText(
+    cr.x + L.vpTextX,
+    cr.y + L.ctrlTextY,
+    "VEL " + String(velocity).padStart(3) + "  POLY " + String(synth().heldCount).padStart(2),
+    1,
+  );
 
-/** 波形プレビューを描画する (位相 0 が中央) */
-function drawWaveformPreview(ox, oy) {
-  const pw = PREVIEW_WIDTH;
-  const ph = PREVIEW_HEIGHT;
-  drawRoundRect(ox, oy, pw, ph, 1, 1);
-
-  // コンテンツ領域 (枠 1px + 余白 1px = 2px インセット)
-  const cx1 = ox + 2;
-  const cy1 = oy + 2;
-  const cw = pw - 4;
-  const ch = ph - 4;
-
-  // 水平中心線 (破線)
-  const mid = cy1 + (ch >> 1);
-  for (let x = cx1; x < cx1 + cw; x += 2) pset(x, mid, 1);
-  // 垂直中心線 (位相 0 = 再生開始位置, 破線)
-  const centerX = cx1 + (cw >> 1);
-  for (let y = cy1; y < cy1 + ch; y += 2) pset(centerX, y, 1);
-
-  // 波形 (位相 0 が中央に来るよう半周期ずらして描画)
-  const halfH = ch >> 1;
-  const samples = synth().getWaveformSamples(cw);
-  const half = cw >> 1;
-  for (let i = 0; i < cw; i++) {
-    const si = (i + half) % cw;
-    const sy = mid - Math.round(samples[si] * halfH);
-    pset(cx1 + i, sy, 1);
-  }
+  // 鍵盤の表示範囲を現オクターブの C に合わせてからウィジェット描画
+  keyboard.startMidi = 12 + octave * 12;
+  group.draw(cr);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  演奏入力 (ポリフォニック)
+//  PC キーボード演奏 (ポリフォニック)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function handleKeyboard() {
-  // フォーカスを失ったら全ノートを止める
   if (!wmIsFocused(APP_NAME)) {
     if (heldKeys.size > 0) {
       synth().allNotesOff();
@@ -293,9 +305,8 @@ function handleKeyboard() {
     return;
   }
 
-  // ── オクターブ / ベロシティ / 波形の切替 ──
-  if (keyDown("Comma")) octave = Math.max(OCTAVE_MIN, octave - 1);
-  if (keyDown("Period")) octave = Math.min(OCTAVE_MAX, octave + 1);
+  if (keyDown("Comma")) setOctave(octave - 1);
+  if (keyDown("Period")) setOctave(octave + 1);
   if (keyDown("BracketLeft")) velocity = Math.max(VEL_MIN, velocity - VEL_STEP);
   if (keyDown("BracketRight")) velocity = Math.min(VEL_MAX, velocity + VEL_STEP);
   if (keyDown("Slash")) {
@@ -303,7 +314,7 @@ function handleKeyboard() {
     dropDownWave.selectedIndex = waveIndexMap[wf] ?? 0;
   }
 
-  // ── 新規押下 → ノートオン (和音対応) ──
+  // 新規押下 → ノートオン (和音対応)
   for (const k of KEY_MAP) {
     if (keyDown(k.code) && !heldKeys.has(k.code)) {
       const midi = offsetToMidi(k.offset);
@@ -311,8 +322,7 @@ function handleKeyboard() {
       heldKeys.set(k.code, midi);
     }
   }
-
-  // ── 離鍵 → ノートオフ (押下時の音程で止める) ──
+  // 離鍵 → ノートオフ (押下時の音程で)
   for (const [code, midi] of heldKeys) {
     if (!keyHeld(code)) {
       synth().noteOff(midi);
@@ -322,67 +332,49 @@ function handleKeyboard() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  入力ルーティング
+//  入力 / 測定 / リセット
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function onSynthInput(ev) {
   _initWidgets();
-  allWidgets.update(ev);
+  group.update(ev);
 }
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  測定
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function measureSynth() {
   _initWidgets();
-  relayout();
-  const m = allWidgets.measure();
-  const statusW = UI.FOCUS_MARGIN + textWidth("OCT 8  VEL 127  POLY 16") + UI.FOCUS_MARGIN;
-  const w = Math.max(m.w, PREVIEW_WIDTH + UI.FOCUS_MARGIN * 2, statusW);
-  const h = m.h + UI.GAP + GLYPH_H; // ステータス行のぶんを追加
-  return { w, h };
+  return { w: L.totalW, h: L.totalH };
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  リセット / 閉じる
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/** 発音を止め演奏状態を初期化する (ウィンドウを閉じるとき) */
-function resetSynthState() {
+/** 発音を止め一時的な入力状態をクリアする (音作り・オクターブ等の設定は保持) */
+function silence() {
   if (_synth) _synth.allNotesOff();
+  if (keyboard) keyboard.reset();
   heldKeys.clear();
-  octave = 4;
-  velocity = 100;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  登録
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-let synthWinId = -1;
-
 wmRegister(
   APP_NAME,
   () => {
     _initWidgets();
-    synthWinId = wmOpen(-1, -1, 0, 0, APP_NAME, drawSynth, onSynthInput, measureSynth, {
+    return wmOpen(-1, -1, 0, 0, APP_NAME, drawSynth, onSynthInput, measureSynth, {
       about:
-        "A polyphonic software synthesizer. Shape a sound with the waveform, " +
-        "ADSR, volume and phase controls, then play chords on the PC keyboard " +
-        "(Z row = current octave, Q row = +1, I-P = +2). Use , . to change " +
-        "octave, [ ] for velocity, / to cycle the waveform.",
+        "A polyphonic software synthesizer. Pick a waveform, shape the ADSR " +
+        "envelope and volume, then play chords on the on-screen keyboard or the " +
+        "PC keyboard (Z row = current octave, Q row = +1, I-P = +2). Use , . to " +
+        "change octave, [ ] for velocity, / to cycle the waveform.",
       onBeforeClose: () => {
-        resetSynthState();
+        silence();
         return true;
       },
       onRelayout: () => {
-        if (!allWidgets) return;
-        allWidgets.remeasureAll();
-        relayout();
+        if (!group) return;
+        computeLayout();
       },
     });
-    return synthWinId;
   },
   { category: "CREATIVE", dev: true },
 );

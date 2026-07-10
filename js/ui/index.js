@@ -82,7 +82,7 @@ export {
 } from "./ui_helpers.js";
 
 // ── 定数 ──
-export { FOCUS_MARGIN, GAP, MIN_GAP } from "./ui_constants.js";
+export { FOCUS_MARGIN, GAP, MIN_GAP, SECTION_PAD } from "./ui_constants.js";
 
 // ── レイアウトコンテナ ──
 export { Box, HBox, VBox, measureWidgets } from "./layout.js";

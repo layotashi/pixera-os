@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.10",
-  hash: "4a17104",
-  count: 269,
+  hash: "e235c8e",
+  count: 271,
   notes: [
     { date: "2026-07-10", hash: "7b2ce0a", text: "New Matte option adds a margin to shots" },
     { date: "2026-07-10", hash: "e901879", text: "About now has clickable links to X and GitHub" },
