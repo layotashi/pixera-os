@@ -22,7 +22,7 @@ import { _computeDerivedConstants } from "./ui_helpers.js";
  * ホスト (例: kernel.js) がブート時に 1 回呼ぶ。
  *
  * @param {{
- *   gpu:      { fillRect, drawRoundRect, drawRect, hline, vline, pset, setClip, resetClip, pushClip, popClip },
+ *   gpu:      { fillRect, drawRoundRect, drawRect, drawCheckerboard, hline, vline, pset, setClip, resetClip, pushClip, popClip },
  *   font:     { GLYPH_W, GLYPH_H, drawText },
  *   icon:     { ICON_W, ICON_H, drawIcon },
  *   input:    { keyDown, keyHeld, getCharQueue, getPasteText, mouseHasShift, ctrlDown },

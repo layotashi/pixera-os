@@ -118,5 +118,13 @@ export class Widget {
   get hasPopup() {
     return false;
   }
+
+  /**
+   * フォーカス時の四隅カギ括弧インジケータを抑止するか。
+   * 自前で枠を描くウィジェット (例: 音楽系フェーダー) は true を返して二重枠を避ける。
+   */
+  get noFocusBracket() {
+    return false;
+  }
 }
 

@@ -46,6 +46,9 @@ export let drawRoundRect;
 /** @type {(x:number, y:number, w:number, h:number, c:number) => void} */
 export let drawRect;
 
+/** @type {(x:number, y:number, w:number, h:number, c:number, phase?:number) => void} */
+export let drawCheckerboard;
+
 /** @type {(x1:number, x2:number, y:number, c:number) => void} */
 export let hline;
 
@@ -147,7 +150,7 @@ export let BAYER_8x8;
  * または同じシグネチャを持つ互換実装を渡す。
  *
  * @param {{
- *   gpu:      { fillRect, drawRoundRect, drawRect, hline, vline, pset, setClip, resetClip, pushClip, popClip },
+ *   gpu:      { fillRect, drawRoundRect, drawRect, drawCheckerboard, hline, vline, pset, setClip, resetClip, pushClip, popClip },
  *   font:     { GLYPH_W, GLYPH_H, drawText },
  *   icon:     { ICON_W, ICON_H, drawIcon },
  *   input:    { keyDown, keyHeld, getCharQueue, getPasteText, mouseHasShift, ctrlDown },
@@ -160,6 +163,7 @@ export function _initPorts(ports) {
   fillRect = ports.gpu.fillRect;
   drawRoundRect = ports.gpu.drawRoundRect;
   drawRect = ports.gpu.drawRect;
+  drawCheckerboard = ports.gpu.drawCheckerboard;
   hline = ports.gpu.hline;
   vline = ports.gpu.vline;
   pset = ports.gpu.pset;
