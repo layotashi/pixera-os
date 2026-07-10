@@ -26,6 +26,7 @@ import * as WM from "../wm/index.js";
 import * as UI from "../ui/index.js";
 import { initAudio, getAudioStream } from "../core/audio.js";
 import { triggerDownload } from "../core/art_export.js";
+import { renderWallpaperBuffer } from "../wallpaper.js";
 
 const APP_NAME = "CAPTURE";
 
@@ -36,6 +37,15 @@ const GIF_MAX_DURATION = 10; // 最大撮影時間 (秒)
 const GIF_DEFAULT_DURATION = 3; // デフォルト撮影時間 (秒)
 const GIF_DEFAULT_FPS = 20; // デフォルト FPS (TESSERA 既定と一致)
 
+// ── マット (額装) 設定 ──
+// SNS (X 等) の角丸表示で外周デザインが欠けるのを防ぐため、ウィンドウ撮影時に
+// 四辺均等の余白を足し、対象を中央に額装する。余白は現在の壁紙をそのまま延長して敷く
+// (壁紙は解像度非依存＝拡大劣化なし)。Full screen はデスクトップ全体が既に額なので対象外。
+const MATTE_MIN_PAD = 4; // 最小余白 (px)
+const MATTE_MAX_PAD = 128; // 最大余白 (px)
+const MATTE_DEFAULT_PAD = 24; // デフォルト余白 (px)
+const MATTE_PAD_STEP = 4; // 余白の増減ステップ (px)
+
 // ── スクリーンショット状態 ──
 let screenshotPending = false;
 let screenshotCount = 0;
@@ -43,6 +53,8 @@ let screenshotTimerEnd = 0;
 let screenshotDelay = 0;
 let screenshotTargetId = -1; // -1 = Full screen
 let screenshotScale = 2; // 撮影倍率 (1-10 の整数)
+let matteEnabled = false; // マット (額装) の ON/OFF
+let mattePadding = MATTE_DEFAULT_PAD; // マット余白 (px, 各辺)
 
 // ── 動画撮影状態 ──
 let isRecording = false;
@@ -55,8 +67,9 @@ let recordTimerEnd = 0;
 let recordPending = false;
 let recordMimeType = "";
 let recordTargetId = -1; // 録画開始時にロック
-let recordCapW = 0; // 録画開始時のキャプチャ幅 (リサイズ検出用)
-let recordCapH = 0; // 録画開始時のキャプチャ高さ (リサイズ検出用)
+let recordCapW = 0; // 録画開始時のキャプチャ幅 (リサイズ検出用, コンテンツ実寸)
+let recordCapH = 0; // 録画開始時のキャプチャ高さ (リサイズ検出用, コンテンツ実寸)
+let recordPad = 0; // 録画開始時にロックしたマット余白 (px, 0 = マット無し)
 
 // ── GIF ループ撮影状態 ──
 let isGifRecording = false;
@@ -69,8 +82,9 @@ let gifTimerEnd = 0;
 let gifPending = false;
 let gifEncoding = false; // エンコード中フラグ
 let gifTargetId = -1; // 録画開始時にロック
-let gifFrameWidth = VRAM_WIDTH;
-let gifFrameHeight = VRAM_HEIGHT;
+let gifFrameWidth = VRAM_WIDTH; // コンテンツ実寸 (リサイズ検出用)
+let gifFrameHeight = VRAM_HEIGHT; // コンテンツ実寸 (リサイズ検出用)
+let gifPad = 0; // 録画開始時にロックしたマット余白 (px, 0 = マット無し)
 
 /**
  * 動画 / GIF いずれかの連続録画セッションが進行中か。
@@ -91,6 +105,32 @@ function _isContinuousRecordingBusy() {
   );
 }
 
+/** マットが有効か (ウィンドウ対象かつトグル ON)。Full screen では常に無効。 */
+function matteActive() {
+  return screenshotTargetId >= 0 && matteEnabled;
+}
+
+/**
+ * 対象ウィンドウをキャプチャバッファに描画する。pad>0 ならマット (額装) 付き:
+ * 壁紙を敷いた (w+2pad)×(h+2pad) の下地の上に、ウィンドウを (pad,pad) にずらして描く。
+ * 呼び出し後はキャプチャバッファがアクティブなので、呼び元で
+ * GPU.endCapture()/endCaptureRaw() を実行すること。
+ * @param {number} id  ウィンドウ ID
+ * @param {number} w  ウィンドウ幅 (コンテンツ実寸)
+ * @param {number} h  ウィンドウ高さ (コンテンツ実寸)
+ * @param {number} pad  マット余白 (px, 0 でマット無し)
+ */
+function beginWindowCapture(id, w, h, pad) {
+  if (pad > 0) {
+    const matte = renderWallpaperBuffer(w + pad * 2, h + pad * 2);
+    GPU.beginCapture(w + pad * 2, h + pad * 2, matte);
+    WM.wmDrawSingleWindow(id, pad, pad);
+  } else {
+    GPU.beginCapture(w, h);
+    WM.wmDrawSingleWindow(id);
+  }
+}
+
 /** 出力解像度ラベルを更新 */
 function refreshOutputLabel() {
   let w, h;
@@ -106,6 +146,10 @@ function refreshOutputLabel() {
       w = VRAM_WIDTH;
       h = VRAM_HEIGHT;
     }
+  }
+  if (matteActive()) {
+    w += mattePadding * 2;
+    h += mattePadding * 2;
   }
   lblOutput.text = `${w * screenshotScale}x${h * screenshotScale} px`;
 }
@@ -151,11 +195,11 @@ function doScreenshotDownload() {
     octx.imageSmoothingEnabled = false;
     octx.drawImage(src, 0, 0, srcW, srcH, 0, 0, outW, outH);
   } else {
-    // ── 個別ウィンドウ: オフスクリーンキャプチャ ──
+    // ── 個別ウィンドウ: オフスクリーンキャプチャ (マット付きなら額装) ──
     const r = WM.wmGetWindowRect(screenshotTargetId);
     if (!r) return;
-    GPU.beginCapture(r.w, r.h);
-    WM.wmDrawSingleWindow(screenshotTargetId);
+    const pad = matteActive() ? mattePadding : 0;
+    beginWindowCapture(screenshotTargetId, r.w, r.h, pad);
     resultCanvas = GPU.endCapture(screenshotScale);
   }
 
@@ -254,10 +298,12 @@ function doStartRecording() {
 
   recordCapW = capW;
   recordCapH = capH;
+  // マット余白を録画開始時にロック (Full screen は対象外)
+  recordPad = recordTargetId >= 0 && matteEnabled ? mattePadding : 0;
 
-  // 録画用オフスクリーン canvas (VRAM 1:1 + 追加スケーリング)
-  const outW = capW * screenshotScale;
-  const outH = capH * screenshotScale;
+  // 録画用オフスクリーン canvas (マット込みフレーム × 追加スケーリング)
+  const outW = (capW + recordPad * 2) * screenshotScale;
+  const outH = (capH + recordPad * 2) * screenshotScale;
   recordCanvas = document.createElement("canvas");
   recordCanvas.width = outW;
   recordCanvas.height = outH;
@@ -369,6 +415,8 @@ function doStartGifRecording() {
       gifFrameHeight = VRAM_HEIGHT;
     }
   }
+  // マット余白を録画開始時にロック (Full screen は対象外)
+  gifPad = gifTargetId >= 0 && matteEnabled ? mattePadding : 0;
 
   gifFrames = [];
   gifFrameInterval = 1000 / gifFps;
@@ -393,11 +441,12 @@ function stopGifRecording() {
   setTimeout(() => {
     // 純 2 色 1-bit で書き出す (Diagonal / Vignette は焼き込まない)。
     // palette.bg/fg は invert 反映済みなので、そのまま渡せば画面の明暗と一致する。
-    // フレームサイズは録画開始時にロックした値 (VRAM 等倍 or ウィンドウ実寸)。
+    // フレームサイズは録画開始時にロックした値 (VRAM 等倍 or ウィンドウ実寸 + マット余白)。
+    // マット (壁紙由来) は実 1-bit コンテンツなので純 2 色 GIF にそのまま焼ける。
     const blob = encodeGif(
       gifFrames,
-      gifFrameWidth,
-      gifFrameHeight,
+      gifFrameWidth + gifPad * 2,
+      gifFrameHeight + gifPad * 2,
       palette.bg,
       palette.fg,
       gifFps,
@@ -426,18 +475,19 @@ function captureVramSnapshot() {
     const len = VRAM_WIDTH * VRAM_HEIGHT;
     return GPU.vram.slice(0, len);
   }
-  // ウィンドウ単体: オフスクリーンキャプチャ (生 1-bit)
+  // ウィンドウ単体: オフスクリーンキャプチャ (生 1-bit, マット付きなら額装)
   const r = WM.wmGetWindowRect(gifTargetId);
-  // ウィンドウが閉じられた or リサイズされた
+  // ウィンドウが閉じられた or リサイズされた (比較はコンテンツ実寸で行う)
   if (!r || r.w !== gifFrameWidth || r.h !== gifFrameHeight) return null;
-  GPU.beginCapture(gifFrameWidth, gifFrameHeight);
-  WM.wmDrawSingleWindow(gifTargetId);
+  beginWindowCapture(gifTargetId, gifFrameWidth, gifFrameHeight, gifPad);
   return GPU.endCaptureRaw();
 }
 
 // ── ウィジェット (遅延初期化) ──
 let lblTarget, ddTarget;
 let lblScale, nbScale;
+let lblMatte, tglMatte;
+let lblMargin, nbMargin, lblMarginPx;
 let lblOutputHdr, lblOutput;
 let lblDelay, nbDelay, labelSeconds;
 let lblCapture, btnCapture, lblCountdown;
@@ -446,9 +496,38 @@ let lblGif, btnGif, labelGifStatus;
 let lblGifDuration, nbGifDuration, labelGifDurSec;
 let lblGifFps, ddGifFps;
 let sepScreenshot, sepRecord;
+let matteRow, marginRow; // 出し分け対象の行 Box (Full screen / トグル状態で表示切替)
 let screenshotWidgets;
 let captureRoot;
 let _ready = false;
+
+/** 左端を揃える対象ラベル一覧 (幅統一に使う) */
+function allCapLabels() {
+  return [
+    lblTarget,
+    lblScale,
+    lblMatte,
+    lblMargin,
+    lblDelay,
+    lblCapture,
+    lblRecord,
+    lblGifDuration,
+    lblGifFps,
+    lblGif,
+  ];
+}
+
+/**
+ * マット関連行の可視性を同期する。
+ * matteRow  : ウィンドウ対象のときのみ (Full screen はマット無し)。
+ * marginRow : さらにマット ON のときのみ。
+ * 1-bit UI ではグレーアウトできないため show/hide で表現する。
+ */
+function refreshMatteVisibility() {
+  const isWindow = screenshotTargetId >= 0;
+  matteRow.visible = isWindow;
+  marginRow.visible = isWindow && matteEnabled;
+}
 
 function _initWidgets() {
   if (_ready) return;
@@ -473,6 +552,37 @@ function _initWidgets() {
     refreshOutputLabel();
   });
   nbScale.tooltip = "Output magnification (1-10x)";
+
+  // Matte: [toggle] — ウィンドウ撮影時のみ表示 (Full screen はマット無し)
+  lblMatte = new UI.Label(0, 0, "Matte:");
+  tglMatte = new UI.ToggleButton(
+    0,
+    0,
+    "ON",
+    (v) => {
+      matteEnabled = v;
+      refreshOutputLabel();
+    },
+    matteEnabled,
+  );
+  tglMatte.tooltip = "Frame the window with a wallpaper margin (defeats SNS corner rounding)";
+
+  // Margin: [number] px — マット ON 時のみ表示
+  lblMargin = new UI.Label(0, 0, "Margin:");
+  nbMargin = new UI.NumberBox(
+    0,
+    0,
+    MATTE_MIN_PAD,
+    MATTE_MAX_PAD,
+    mattePadding,
+    MATTE_PAD_STEP,
+    (v) => {
+      mattePadding = v;
+      refreshOutputLabel();
+    },
+  );
+  nbMargin.tooltip = "Matte margin around the window (px per side)";
+  lblMarginPx = new UI.Label(0, 0, "px");
 
   // Row 3: Output: {dynamic} — フッターに移動
   lblOutputHdr = new UI.Label(0, 0, "Output:");
@@ -547,29 +657,20 @@ function _initWidgets() {
   sepRecord = new UI.HSep(0, 0, 0);
 
   // ── ラベル左端を揃えてレイアウト ──
-  const lblW = Math.max(
-    lblTarget.w,
-    lblScale.w,
-    lblDelay.w,
-    lblCapture.w,
-    lblRecord.w,
-    lblGifDuration.w,
-    lblGifFps.w,
-    lblGif.w,
-  );
-  lblTarget.w = lblW;
-  lblScale.w = lblW;
-  lblDelay.w = lblW;
-  lblCapture.w = lblW;
-  lblRecord.w = lblW;
-  lblGifDuration.w = lblW;
-  lblGifFps.w = lblW;
-  lblGif.w = lblW;
+  const capLabels = allCapLabels();
+  const lblW = Math.max(...capLabels.map((l) => l.w));
+  for (const l of capLabels) l.w = lblW;
+
+  // ── 出し分け対象の行 Box (可視性は refreshMatteVisibility が制御) ──
+  matteRow = UI.HBox([lblMatte, tglMatte]);
+  marginRow = UI.HBox([lblMargin, nbMargin, lblMarginPx]);
 
   // ── Box レイアウト ──
   captureRoot = UI.VBox([
     UI.HBox([lblTarget, ddTarget]),
     UI.HBox([lblScale, nbScale]),
+    matteRow,
+    marginRow,
     UI.HBox([lblDelay, nbDelay, labelSeconds]),
     sepScreenshot,
     UI.HBox([lblCapture, btnCapture, lblCountdown]),
@@ -581,6 +682,8 @@ function _initWidgets() {
   ]);
 
   refreshOutputLabel();
+  // 初期可視性を確定させる (初回 measure が正しい行数を返すよう WidgetGroup 生成前に)
+  refreshMatteVisibility();
 
   // フォーマットラベル初期化
   labelRecordStatus.text = recordFormatLabel();
@@ -592,6 +695,7 @@ function _initWidgets() {
 function onSshotDraw(contentRect) {
   _initWidgets();
   refreshTargetItems();
+  refreshMatteVisibility();
   // 録画状態に応じてアイコンを動的切り替え
   btnRecord.icon = isRecording ? "stop" : "rec";
   btnGif.icon = isGifRecording ? "stop" : "rec";
@@ -621,16 +725,7 @@ WM.wmRegister(APP_NAME, () => {
       onRelayout: () => {
         screenshotWidgets.remeasureAll();
         // ラベル幅再統一
-        const capLabels = [
-          lblTarget,
-          lblScale,
-          lblDelay,
-          lblCapture,
-          lblRecord,
-          lblGifDuration,
-          lblGifFps,
-          lblGif,
-        ];
+        const capLabels = allCapLabels();
         const lblW = Math.max(...capLabels.map((l) => l.w));
         for (const l of capLabels) l.w = lblW;
         captureRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
@@ -734,14 +829,13 @@ export function commitRecording() {
       const src = GPU.getCanvas();
       recordCtx.drawImage(src, 0, 0, recordCanvas.width, recordCanvas.height);
     } else {
-      // ウィンドウ単体: オフスクリーンキャプチャ
+      // ウィンドウ単体: オフスクリーンキャプチャ (マット付きなら額装)
       const r = WM.wmGetWindowRect(recordTargetId);
       if (!r || r.w !== recordCapW || r.h !== recordCapH) {
         stopRecording(); // ウィンドウが閉じられた or リサイズされた
         return;
       }
-      GPU.beginCapture(recordCapW, recordCapH);
-      WM.wmDrawSingleWindow(recordTargetId);
+      beginWindowCapture(recordTargetId, recordCapW, recordCapH, recordPad);
       const frameCanvas = GPU.endCapture(1);
       recordCtx.drawImage(
         frameCanvas,

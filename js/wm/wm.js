@@ -2490,20 +2490,26 @@ export function wmDraw() {
 }
 
 /**
- * 指定ウィンドウだけを原点 (0,0) に描画する。
+ * 指定ウィンドウだけを原点 (offX, offY) に描画する。
  * スクリーンショット用キャプチャバッファへの単独描画に使う。
  * 通常の wmDraw() とは異なり、メニュー等は描画しない。
+ *
+ * offX/offY は CAPTURE のマット合成で使う: 壁紙を敷いた下地の上に
+ * ウィンドウを余白 (pad) 分だけずらして描くことで、四辺均等の額装を作る。
+ * 省略時は原点 (0,0) = マット無しの従来動作。
  * @param {number} id  ウィンドウ ID
+ * @param {number} [offX=0]  描画左上 X (マット余白)
+ * @param {number} [offY=0]  描画左上 Y (マット余白)
  */
-export function wmDrawSingleWindow(id) {
+export function wmDrawSingleWindow(id, offX = 0, offY = 0) {
   const win = windows.find((w) => w.id === id);
   if (!win) return;
 
-  // 座標を一時的にオフセット (ウィンドウ左上 → 0,0)
+  // 座標を一時的にオフセット (ウィンドウ左上 → offX,offY)
   const origX = win.x;
   const origY = win.y;
-  win.x = 0;
-  win.y = 0;
+  win.x = offX;
+  win.y = offY;
   recalcLayout(win); // 一時座標用レイアウトを再計算
 
   drawWindowFrame(win);

@@ -140,17 +140,52 @@ function loadImageFromVfs(path) {
 // 壁紙は結果から seed/period/fps/view のみ使う。
 
 /**
- * 場を時刻 t で 1 フレーム描く。壁紙は常に画面いっぱい (Fill)＝画面解像度・
+ * 場を時刻 t で 1 フレーム描く。壁紙は常に画面いっぱい (Fill)＝指定解像度・
  * アスペクトで場を再評価する。場の座標は canvas 寸法に依らず x,y ∈ [0,1] なので
  * (lang/runtime.js)、これはラスタ画像の引き伸ばしと違いネイティブ解像度の再描画で
  * 劣化しない。canvas ディレクティブの縦横比はプレビュー/書き出し枠であり壁紙では無視。
- * @returns {Uint8Array} VRAM サイズの 1-bit (毎回新規バッファ)
+ *
+ * w/h は既定で VRAM サイズ。CAPTURE のマット合成時は余白込みの拡大サイズを渡す
+ * (座標が正規化系なのでネイティブ解像度描画＝拡大劣化なし)。
+ * @param {number} t  時刻 (秒)
+ * @param {number} [w=VRAM_WIDTH]  描画幅
+ * @param {number} [h=VRAM_HEIGHT]  描画高さ
+ * @returns {Uint8Array} w×h サイズの 1-bit (毎回新規バッファ)
  */
-function renderTessFrame(t) {
+function renderTessFrame(t, w = VRAM_WIDTH, h = VRAM_HEIGHT) {
   const { seed, viewMode, viewParams } = tessConfig;
-  const surf = makeFieldSurface(VRAM_WIDTH, VRAM_HEIGHT, viewMode, viewParams);
+  const surf = makeFieldSurface(w, h, viewMode, viewParams);
   tessProgram.render(surf, t, seed);
   return surf.buf;
+}
+
+/**
+ * solid (Bayer ディザ階調) を任意サイズのバッファに書き込む。
+ * drawWallpaper の solid 分岐と同一のしきい値判定 (mat[r][x] < solidLevel)。
+ * @param {Uint8Array} buf  出力バッファ (w*h)
+ * @param {number} w
+ * @param {number} h
+ */
+function fillSolidBuffer(buf, w, h) {
+  const maxLevel = solidBayerMode === "8x8" ? 64 : 16;
+  if (solidLevel <= 0) {
+    buf.fill(0);
+    return;
+  }
+  if (solidLevel >= maxLevel) {
+    buf.fill(1);
+    return;
+  }
+  const is8 = solidBayerMode === "8x8";
+  const mat = is8 ? BAYER_8x8 : BAYER_4x4;
+  const mask = is8 ? 7 : 3;
+  for (let y = 0; y < h; y++) {
+    const row = mat[y & mask];
+    const base = y * w;
+    for (let x = 0; x < w; x++) {
+      buf[base + x] = row[x & mask] < solidLevel ? 1 : 0;
+    }
+  }
 }
 
 const eqBits = (a, b) => {
@@ -276,6 +311,40 @@ export function drawWallpaper() {
   } else {
     vram.fill(imageFillBit);
   }
+}
+
+/**
+ * 現在の壁紙を任意サイズの 1-bit バッファとして生成して返す (CAPTURE のマット用)。
+ *
+ * drawWallpaper() が VRAM を直接更新するのに対し、こちらは指定サイズの新規バッファを
+ * 返す。デスクトップ描画状態 (tessBits/tessFrame 等のキャッシュ) は一切変更しない。
+ * - solid   : Bayer 階調を w×h にタイル展開
+ * - tessera : 場を w×h でネイティブ再評価 (現在のアニメ時刻。拡大劣化なし)
+ * - image   : マットは下地ビット (imageFillBit) で一様に塗る。中央画像は背景テクスチャ
+ *             ではなく前景オブジェクトなので額装 (マット) には含めない。
+ * @param {number} w
+ * @param {number} h
+ * @returns {Uint8Array} w*h の 1-bit バッファ (新規)
+ */
+export function renderWallpaperBuffer(w, h) {
+  if (wallpaperMode === "tessera") {
+    if (!tessProgram) return new Uint8Array(w * h);
+    let t = 0;
+    if (!tessStatic) {
+      const { fps, period } = tessConfig;
+      const frameIdx = Math.floor(((performance.now() - tessT0) / 1000) * fps);
+      t = (frameIdx / fps) % period;
+    }
+    return renderTessFrame(t, w, h);
+  }
+  const buf = new Uint8Array(w * h);
+  if (wallpaperMode === "image") {
+    buf.fill(imageFillBit);
+    return buf;
+  }
+  // solid (デフォルト)
+  fillSolidBuffer(buf, w, h);
+  return buf;
 }
 
 /** initWallpaper が完了したかどうかを返す */

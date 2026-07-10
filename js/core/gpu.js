@@ -729,11 +729,18 @@ export function getCanvas() {
  * 一時バッファにオフスクリーン描画を開始する。
  * 全描画プリミティブの出力先がキャプチャバッファに切り替わる。
  * VRAM サイズに依存しない任意サイズの描画が可能になる。
+ *
+ * initBuf を渡すと、それをキャプチャバッファの初期内容として採用する
+ * (ゼロ初期化の代わり)。CAPTURE のマット合成で、壁紙を敷いた下地の上に
+ * ウィンドウを描くために使う。長さが w*h と一致しない場合は無視してゼロ初期化する。
+ * initBuf はコピーせずそのまま採用するため、呼び元は使い捨ての新規バッファを渡すこと。
  * @param {number} w  キャプチャ幅 (px)
  * @param {number} h  キャプチャ高さ (px)
+ * @param {Uint8Array} [initBuf]  下地バッファ (省略時はゼロ初期化)
  */
-export function beginCapture(w, h) {
-  activeBuffer = new Uint8Array(w * h);
+export function beginCapture(w, h, initBuf = null) {
+  activeBuffer =
+    initBuf && initBuf.length === w * h ? initBuf : new Uint8Array(w * h);
   activeW = w;
   activeH = h;
   clipX0 = 0;
