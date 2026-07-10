@@ -22,6 +22,10 @@ import {
   SamplePlayer,
   playSample,
   dcBlock,
+  computeMidiAudioTime,
+  currentMidiLookahead,
+  MIDI_LOOKAHEAD,
+  MIDI_LOOKAHEAD_RECORDING,
 } from "@/core/audio.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -988,6 +992,68 @@ describe("playSample", () => {
   it("バッファなしの SamplePlayer を渡しても例外を投げない", () => {
     const p = new SamplePlayer();
     expect(() => playSample(p)).not.toThrow();
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  MIDI 発音スケジューリング (ジッタ吸収)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("computeMidiAudioTime", () => {
+  it("timeStamp が無ければ now + lookahead (即時 + 一定遅延)", () => {
+    expect(computeMidiAudioTime(10, 0, 12345, 0.008)).toBeCloseTo(10.008, 6);
+    expect(computeMidiAudioTime(10, undefined, 12345, 0.008)).toBeCloseTo(
+      10.008,
+      6,
+    );
+  });
+
+  it("perfNow が無ければ (null) now + lookahead", () => {
+    expect(computeMidiAudioTime(10, 1000, null, 0.02)).toBeCloseTo(10.02, 6);
+  });
+
+  it("ハンドラ遅延が lookahead 未満なら、その遅延ぶん前倒しして発音時刻をイベント時刻に固定", () => {
+    // イベント 1000ms、ハンドラ実行 1005ms → 遅延 5ms、lookahead 20ms
+    // → now + 0.020 - 0.005 = now + 0.015 (イベント時刻 + lookahead に一致)
+    expect(computeMidiAudioTime(2, 1000, 1005, 0.02)).toBeCloseTo(2.015, 6);
+  });
+
+  it("ハンドラ遅延が lookahead を超えると now にクランプ (過去にはしない)", () => {
+    // 遅延 40ms > lookahead 20ms → now + 0.02 - 0.04 = now - 0.02 → now に丸め
+    expect(computeMidiAudioTime(2, 1000, 1040, 0.02)).toBe(2);
+  });
+
+  it("遅延がちょうど lookahead なら now", () => {
+    expect(computeMidiAudioTime(2, 1000, 1020, 0.02)).toBeCloseTo(2, 6);
+  });
+
+  it("負の遅延 (時刻巻き戻り) は 0 に丸め now + lookahead", () => {
+    expect(computeMidiAudioTime(2, 1000, 990, 0.02)).toBeCloseTo(2.02, 6);
+  });
+
+  // 録画中の広いルックアヘッドの効果: 同じ滞留 (フレーム負荷) でも、通常 8ms だと
+  // 過去にスケジュールできず now に丸められ発音が遅れる (ジッタ源) が、20ms なら
+  // まだ未来に置けるので発音を「イベント時刻 + lookahead」に固定できジッタが出ない。
+  it("録画中の広い lookahead は同じ滞留でも発音を未来に保ち、ジッタを吸収する", () => {
+    const now = 5;
+    const ev = 1000;
+    const perf = 1015; // 滞留 15ms
+    const tight = computeMidiAudioTime(now, ev, perf, MIDI_LOOKAHEAD); // 8ms < 15ms → now
+    const wide = computeMidiAudioTime(now, ev, perf, MIDI_LOOKAHEAD_RECORDING); // 20ms > 15ms
+    expect(tight).toBe(now); // 過去に置けず now に丸め = 遅延
+    expect(wide).toBeCloseTo(now + 0.005, 6); // イベント時刻 + 20ms に固定
+    expect(wide).toBeGreaterThan(tight);
+  });
+});
+
+describe("currentMidiLookahead", () => {
+  it("非録画時 (Node = PCM 収録なし) は通常ルックアヘッド 8ms", () => {
+    expect(currentMidiLookahead()).toBe(MIDI_LOOKAHEAD);
+    expect(MIDI_LOOKAHEAD).toBe(0.008);
+  });
+
+  it("録画中ルックアヘッドは通常より広い (ジッタ吸収のため)", () => {
+    expect(MIDI_LOOKAHEAD_RECORDING).toBeGreaterThan(MIDI_LOOKAHEAD);
   });
 });
 

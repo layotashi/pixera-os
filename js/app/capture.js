@@ -81,8 +81,14 @@ let matteEnabled = false; // マット (額装) の ON/OFF
 let mattePadding = MATTE_DEFAULT_PAD; // マット余白 (px, 各辺)
 
 // ── 動画撮影設定 ──
-/** 録画フレームレート (固定)。録画の時間軸はこの値で刻む (CFR) */
-const RECORD_FPS = 60;
+/** 録画フレームレート (固定)。録画の時間軸はこの値で刻む (CFR)。
+ *  30fps にしているのは、録画の毎フレーム処理 (合成 + new VideoFrame スナップショット +
+ *  エンコード投入 + GC) がメインスレッドを占有し、同じスレッドで捌く MIDI 入力・演奏の
+ *  発音スケジューリングを遅らせてジッタを生むため。fps を下げるとこの毎フレーム負荷が
+ *  そのまま比例して減り、リアルタイム演奏の余地が広がる。30fps は画面録画として標準的で
+ *  1-bit UI では見た目の劣化もほぼ無い。A/V 同期は fps 非依存 (core/av_sync.js) なので
+ *  この値を変えても映像と音声のずれは生じない。 */
+const RECORD_FPS = 30;
 /** 1 tick で追いつかせる最大フレーム数 (タブ復帰直後の暴走を防ぐ。数 tick で収束する) */
 const RECORD_MAX_CATCHUP = RECORD_FPS * 5;
 

@@ -343,33 +343,63 @@ export function getAudioContext() {
   return ctx;
 }
 
-/** MIDI 入力のジッタ吸収用ルックアヘッド (秒)。メインスレッドの描画ループで
+/** MIDI 入力のジッタ吸収用ルックアヘッド (秒・通常時)。メインスレッドの描画ループで
  *  ハンドラ実行が遅れても、この幅ぶん未来にずらすことで発音時刻をイベント時刻に
  *  固定できる。大きいほどジッタに強いが固定レイテンシが増える (8ms は聴感上の妥協点)。 */
 export const MIDI_LOOKAHEAD = 0.008;
+
+/** 録画中の MIDI ルックアヘッド (秒)。録画中はメインスレッドが毎フレーム、録画フレームの
+ *  合成・スナップショット (new VideoFrame)・エンコード投入で 1 フレームぶん塞がり、MIDI
+ *  ハンドラの実行が通常より遅れる。8ms のままだと「本来もう鳴っているべき時刻」を過去に
+ *  はスケジュールできず ctx.currentTime に丸められて発音が遅れ、遅れ量がフレームごとに
+ *  ばらつくためジッタになる。録画中だけルックアヘッドを広げると、この滞留を一定のレイテンシ
+ *  として吸収でき、ジッタが消える (演奏体感を損なわない範囲の固定遅延)。RECORD_FPS を下げて
+ *  フレーム負荷自体も半減させてあるので、実測の滞留はこの幅で概ねカバーできる。 */
+export const MIDI_LOOKAHEAD_RECORDING = 0.020;
+
+/**
+ * 現在有効な MIDI ルックアヘッド (秒) を返す。録画 (PCM 収録) 中は広い値を使い、
+ * 録画フレーム処理でメインスレッドが塞がることによる発音ジッタを吸収する。
+ * @returns {number}
+ */
+export function currentMidiLookahead() {
+  return isPcmCapturing() ? MIDI_LOOKAHEAD_RECORDING : MIDI_LOOKAHEAD;
+}
+
+/**
+ * 発音時刻を求める純関数 (DOM/AudioContext 非依存 — 単体テスト対象)。
+ *   ハンドラ遅延 delay = perfNowMs - eventTimeStampMs   (負なら 0 に丸め)
+ *   発音時刻     = now + lookahead - delay               (now より過去にはしない)
+ * イベント時刻 or perfNow が無ければ now + lookahead を返す。
+ *
+ * @param {number} now              AudioContext.currentTime (秒)
+ * @param {number} eventTimeStampMs MIDIMessageEvent.timeStamp (ms, performance.now 系)
+ * @param {number|null} perfNowMs   現在の performance.now() (ms)。無ければ null
+ * @param {number} lookahead        ルックアヘッド (秒)
+ * @returns {number} 発音時刻 (秒)
+ */
+export function computeMidiAudioTime(now, eventTimeStampMs, perfNowMs, lookahead) {
+  if (!eventTimeStampMs || perfNowMs == null) return now + lookahead;
+  const delay = Math.max(0, (perfNowMs - eventTimeStampMs) / 1000);
+  return Math.max(now, now + lookahead - delay);
+}
 
 /**
  * Web MIDI イベントの timeStamp (performance.now 系・ms) を AudioContext の発音時刻
  * (秒) に変換する。OS の毎フレーム描画でハンドラ実行が遅れても、ノート開始を
  * 「イベント発生時刻 + ルックアヘッド」に固定し、フレーム境界起因のジッタを吸収する。
  *
- *   ハンドラ遅延 delay = performance.now() - eventTimeStamp
- *   発音時刻     = now + LOOKAHEAD - delay   (現在時刻より過去にはしない)
- *
- * timeStamp が無い/0 の環境では now + LOOKAHEAD を返す (従来どおり即時＋一定遅延)。
+ * ルックアヘッドを省略すると録画状態に応じた値 (currentMidiLookahead) を使う。
+ * timeStamp が無い/0 の環境では now + ルックアヘッド を返す (従来どおり即時＋一定遅延)。
  *
  * @param {number} eventTimeStampMs  MIDIMessageEvent.timeStamp (ms)
- * @param {number} [lookahead=MIDI_LOOKAHEAD]  ルックアヘッド (秒)
+ * @param {number} [lookahead]  ルックアヘッド (秒)。省略時は currentMidiLookahead()
  * @returns {number} AudioContext.currentTime ベースの発音時刻 (秒)。ctx 無しは 0
  */
-export function midiEventAudioTime(eventTimeStampMs, lookahead = MIDI_LOOKAHEAD) {
+export function midiEventAudioTime(eventTimeStampMs, lookahead = currentMidiLookahead()) {
   if (!ctx) return 0;
-  const now = ctx.currentTime;
-  if (!eventTimeStampMs || typeof performance === "undefined") {
-    return now + lookahead;
-  }
-  const delay = Math.max(0, (performance.now() - eventTimeStampMs) / 1000);
-  return Math.max(now, now + lookahead - delay);
+  const perfNowMs = typeof performance !== "undefined" ? performance.now() : null;
+  return computeMidiAudioTime(ctx.currentTime, eventTimeStampMs, perfNowMs, lookahead);
 }
 
 /**
