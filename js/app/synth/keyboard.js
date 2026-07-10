@@ -191,6 +191,9 @@ export class Keyboard extends Widget {
 
     fillRect(ox, oy, w, h, 0); // 背景で初期化
 
+    // 市松模様は鍵盤ローカル座標 (rx, ry) の偶奇で決める。絶対座標だとウィンドウ位置で
+    // 位相がずれて角の見え方が変わるため。偶数パリティを前景色にすると、塗り領域の角
+    // (rx/ry とも偶数から始まる) が前景色に落ち、余白の角が綺麗に見える。
     for (let ry = 0; ry < h; ry++) {
       const ay = oy + ry;
       const base = ry * w;
@@ -198,15 +201,16 @@ export class Keyboard extends Widget {
         const c = cls[base + rx];
         if (c === CLS_BG) continue;
         const ax = ox + rx;
+        const checkerOn = ((rx + ry) & 1) === 0;
         if (c === CLS_BORDER) {
           pset(ax, ay, 1);
         } else if (c === CLS_WHITE_FILL) {
           // 未押下: 背景 (何もしない) / 押下: 市松
-          if (wPressed[keyof[base + rx]] && ((ax + ay) & 1) === 0) pset(ax, ay, 1);
+          if (wPressed[keyof[base + rx]] && checkerOn) pset(ax, ay, 1);
         } else {
           // 黒鍵 — 未押下: 塗り / 押下: 市松
           if (bPressed[keyof[base + rx]]) {
-            if (((ax + ay) & 1) === 0) pset(ax, ay, 1);
+            if (checkerOn) pset(ax, ay, 1);
           } else {
             pset(ax, ay, 1);
           }
