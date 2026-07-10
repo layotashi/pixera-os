@@ -14,7 +14,9 @@ import {
   sampleWaveformFn,
   fourierCoeff,
   SynthChannel,
+  PolySynth,
   createChannel,
+  createPolySynth,
   getDefaultChannel,
   createSfxChannels,
   SamplePlayer,
@@ -618,6 +620,160 @@ describe("SynthChannel", () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  PolySynth (AudioContext 不要な操作 = 帳簿 + パラメータ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("PolySynth", () => {
+  // ── パラメータ (SynthChannel と同一 API) ──
+  describe("パラメータ", () => {
+    it("デフォルト波形は saw", () => {
+      expect(new PolySynth().getWaveform()).toBe("saw");
+    });
+
+    it("setWaveform / getWaveform", () => {
+      const p = new PolySynth();
+      p.setWaveform("sine");
+      expect(p.getWaveform()).toBe("sine");
+    });
+
+    it("cycleWaveform で順送り + ラップアラウンド", () => {
+      const p = new PolySynth();
+      const seen = [p.getWaveform()];
+      for (let i = 0; i < WAVEFORM_LIST.length; i++) seen.push(p.cycleWaveform());
+      // 1 周して先頭に戻る
+      expect(seen[0]).toBe("saw");
+      expect(seen[WAVEFORM_LIST.length]).toBe("saw");
+      expect(new Set(seen.slice(0, WAVEFORM_LIST.length))).toEqual(
+        new Set(WAVEFORM_LIST),
+      );
+    });
+
+    it("setStartPhase は 0〜1 にクランプ", () => {
+      const p = new PolySynth();
+      p.setStartPhase(0.5);
+      expect(p.getStartPhase()).toBe(0.5);
+      p.setStartPhase(-1);
+      expect(p.getStartPhase()).toBe(0);
+      p.setStartPhase(2);
+      expect(p.getStartPhase()).toBe(1);
+    });
+
+    it("setADSR は ms→秒 / %→比率 に変換", () => {
+      const p = new PolySynth();
+      p.setADSR(10, 200, 80, 500);
+      expect(p._adsrA).toBeCloseTo(0.01, 5);
+      expect(p._adsrD).toBeCloseTo(0.2, 5);
+      expect(p._adsrS).toBeCloseTo(0.8, 5);
+      expect(p._adsrR).toBeCloseTo(0.5, 5);
+      // getADSR は ms/% で往復一致
+      expect(p.getADSR()).toEqual({ a: 10, d: 200, s: 80, r: 500 });
+    });
+
+    it("setVolume は 0〜100 を 0.0〜1.0 に変換", () => {
+      const p = new PolySynth();
+      p.setVolume(50);
+      expect(p._volume).toBeCloseTo(0.5, 5);
+      expect(p.getVolume()).toBeCloseTo(50, 5);
+    });
+
+    it("getWaveformSamples は指定長の Float32Array (saw 先頭=1)", () => {
+      const p = new PolySynth();
+      const s = p.getWaveformSamples(64);
+      expect(s).toBeInstanceOf(Float32Array);
+      expect(s).toHaveLength(64);
+      expect(s[0]).toBe(1);
+    });
+  });
+
+  // ── 発音数管理 (帳簿) ──
+  describe("押鍵状態の管理", () => {
+    it("初期状態は押鍵ゼロ", () => {
+      const p = new PolySynth();
+      expect(p.heldCount).toBe(0);
+      expect(p.getHeldNotes()).toEqual([]);
+    });
+
+    it("noteOn で押鍵に追加、noteOff で除去", () => {
+      const p = new PolySynth();
+      p.noteOn(60, 1);
+      expect(p.isNoteHeld(60)).toBe(true);
+      expect(p.heldCount).toBe(1);
+      p.noteOff(60);
+      expect(p.isNoteHeld(60)).toBe(false);
+      expect(p.heldCount).toBe(0);
+    });
+
+    it("和音: 複数ノートを同時に保持し、getHeldNotes は昇順", () => {
+      const p = new PolySynth();
+      p.noteOn(64);
+      p.noteOn(60);
+      p.noteOn(67);
+      expect(p.heldCount).toBe(3);
+      expect(p.getHeldNotes()).toEqual([60, 64, 67]);
+    });
+
+    it("同ノートの再 noteOn は retrigger (重複しない)", () => {
+      const p = new PolySynth();
+      p.noteOn(60);
+      p.noteOn(60);
+      expect(p.heldCount).toBe(1);
+      expect(p.getHeldNotes()).toEqual([60]);
+    });
+
+    it("未押鍵ノートの noteOff は no-op", () => {
+      const p = new PolySynth();
+      expect(() => p.noteOff(99)).not.toThrow();
+      expect(p.heldCount).toBe(0);
+    });
+
+    it("allNotesOff で全ノート解放", () => {
+      const p = new PolySynth();
+      p.noteOn(60);
+      p.noteOn(64);
+      p.allNotesOff();
+      expect(p.heldCount).toBe(0);
+      expect(p.getHeldNotes()).toEqual([]);
+    });
+  });
+
+  // ── ボイススティール ──
+  describe("ボイススティール", () => {
+    it("setMaxVoices は 1 以上にクランプ + 小数切り捨て", () => {
+      const p = new PolySynth();
+      p.setMaxVoices(4);
+      expect(p.getMaxVoices()).toBe(4);
+      p.setMaxVoices(0);
+      expect(p.getMaxVoices()).toBe(1);
+      p.setMaxVoices(3.9);
+      expect(p.getMaxVoices()).toBe(3);
+    });
+
+    it("上限を超えて押鍵すると最古がスティールされ heldCount は上限を保つ", () => {
+      const p = new PolySynth();
+      p.setMaxVoices(2);
+      p.noteOn(60);
+      p.noteOn(62);
+      p.noteOn(64); // 60 がスティールされる
+      expect(p.heldCount).toBe(2);
+      expect(p.isNoteHeld(60)).toBe(false);
+      expect(p.getHeldNotes()).toEqual([62, 64]);
+    });
+  });
+
+  // ── AudioContext なしでの安全性 ──
+  describe("AudioContext 未初期化での安全性", () => {
+    it("noteOn / noteOff / allNotesOff は例外を投げない", () => {
+      const p = new PolySynth();
+      expect(() => {
+        p.noteOn(60, 0.8);
+        p.noteOff(60);
+        p.allNotesOff();
+      }).not.toThrow();
+    });
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ファクトリ関数
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -630,6 +786,13 @@ describe("ファクトリ関数", () => {
   it("createChannel は毎回新しいインスタンスを返す", () => {
     const a = createChannel();
     const b = createChannel();
+    expect(a).not.toBe(b);
+  });
+
+  it("createPolySynth は新しい PolySynth インスタンスを返す", () => {
+    const a = createPolySynth();
+    const b = createPolySynth();
+    expect(a).toBeInstanceOf(PolySynth);
     expect(a).not.toBe(b);
   });
 

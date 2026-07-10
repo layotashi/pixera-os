@@ -11,10 +11,12 @@
  *   Windows の WASAPI / Mac の CoreAudio に相当するレイヤー。
  *   SYNESTA (DAW) 固有のスケジューラ・UI は audio/ に残る。
  *
- * ── 音声合成 (SynthChannel) ──
+ * ── 音声合成 (SynthChannel / PolySynth) ──
  *   波形: SAW, TRI, SQ50, SQ25, SQ12, SINE, NOISE
  *   簡易 ADSR エンベロープ付き。発音位相 (startPhase) 制御可能。
- *   SynthChannel クラスで per-channel 状態を管理。
+ *   SynthChannel   — モノフォニック (1 ボイス)。SFX・トラック再生の基盤。
+ *   PolySynth      — ポリフォニック (voice pool)。鍵盤/MIDI からの和音演奏用。
+ *   両者は帯域制限合成ノード生成 (_computePeriodicWave / _createSourceNode) を共有する。
  *
  * ── サンプル再生 (SamplePlayer) ──
  *   AudioBuffer (PCM データ) のワンショット再生。
@@ -209,6 +211,73 @@ export function fourierCoeff(wf, n) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  合成ノード生成 (SynthChannel / PolySynth 共有)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * 波形 + startPhase から PeriodicWave を生成する (非 noise のみ)。
+ *
+ * 帯域制限: 倍音は PERIODIC_WAVE_HARMONICS (=1024) まで含めるが、OscillatorNode が
+ * 発音周波数に応じて Nyquist 以上を自動カットするため高音でもエイリアシングしない。
+ * startPhase は Fourier 係数の phase rotation で表現する:
+ *   new_a_n = a_n cos(2πn·sp) + b_n sin(2πn·sp)
+ *   new_b_n = b_n cos(2πn·sp) − a_n sin(2πn·sp)
+ * real[0] (DC) は 0 のまま (sq25/sq12 の DC オフセットは後段 dcBlocker が除去)。
+ *
+ * @param {string} waveform
+ * @param {number} startPhase  0.0〜1.0
+ * @returns {PeriodicWave|null}  ctx 未初期化 or noise のとき null
+ */
+function _computePeriodicWave(waveform, startPhase) {
+  if (!ctx || waveform === "noise") return null;
+  const N = PERIODIC_WAVE_HARMONICS;
+  const real = new Float32Array(N + 1);
+  const imag = new Float32Array(N + 1);
+  const usePhase = startPhase !== 0;
+  for (let n = 1; n <= N; n++) {
+    const { a, b } = fourierCoeff(waveform, n);
+    if (!usePhase) {
+      real[n] = a;
+      imag[n] = b;
+    } else {
+      const phi = 2 * Math.PI * n * startPhase;
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
+      real[n] = a * cosPhi + b * sinPhi;
+      imag[n] = b * cosPhi - a * sinPhi;
+    }
+  }
+  // disableNormalization: true で解析的振幅を保つ (sq25/sq12 の音量感を揃える)
+  return ctx.createPeriodicWave(real, imag, { disableNormalization: true });
+}
+
+/**
+ * 波形に応じた AudioScheduledSourceNode を生成する。
+ * - noise: AudioBufferSourceNode + 共有ノイズバッファ (playbackRate でピッチ制御)
+ * - その他: OscillatorNode + PeriodicWave (ブラウザネイティブの帯域制限合成)
+ *
+ * @param {string} waveform
+ * @param {PeriodicWave|null} periodicWave  非 noise 波形用 (事前に構築済みであること)
+ * @param {number} freq  周波数 (Hz)
+ * @param {number} time  開始時刻
+ * @returns {AudioScheduledSourceNode}
+ */
+function _createSourceNode(waveform, periodicWave, freq, time) {
+  if (waveform === "noise") {
+    const source = ctx.createBufferSource();
+    source.buffer = noiseBuffer;
+    source.loop = true;
+    // A4 (440Hz) を基準に playbackRate でピッチを変化 (高音→速い/ブライト)
+    source.playbackRate.setValueAtTime(freq / 440, time);
+    return source;
+  }
+  const source = ctx.createOscillator();
+  source.setPeriodicWave(periodicWave);
+  source.frequency.setValueAtTime(freq, time);
+  return source;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  初期化
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -365,34 +434,7 @@ export class SynthChannel {
    * dcBlocker フィルタが後段で除去するため、AudioBuffer 実装時と最終出力が一致)。
    */
   _buildPeriodicWave() {
-    if (!ctx || this._waveform === "noise") {
-      this._periodicWave = null;
-      return;
-    }
-    const N = PERIODIC_WAVE_HARMONICS;
-    const real = new Float32Array(N + 1);
-    const imag = new Float32Array(N + 1);
-    const sp = this._startPhase;
-    const usePhase = sp !== 0;
-
-    for (let n = 1; n <= N; n++) {
-      const { a, b } = fourierCoeff(this._waveform, n);
-      if (!usePhase) {
-        real[n] = a;
-        imag[n] = b;
-      } else {
-        const phi = 2 * Math.PI * n * sp;
-        const cosPhi = Math.cos(phi);
-        const sinPhi = Math.sin(phi);
-        real[n] = a * cosPhi + b * sinPhi;
-        imag[n] = b * cosPhi - a * sinPhi;
-      }
-    }
-    // disableNormalization: true で解析的振幅を保つ
-    // (AudioBuffer 実装時と sq25/sq12 の音量感を揃えるため)
-    this._periodicWave = ctx.createPeriodicWave(real, imag, {
-      disableNormalization: true,
-    });
+    this._periodicWave = _computePeriodicWave(this._waveform, this._startPhase);
   }
 
   /**
@@ -404,21 +446,10 @@ export class SynthChannel {
    * @returns {AudioScheduledSourceNode}
    */
   _createSource(freq, time) {
-    if (this._waveform === "noise") {
-      const source = ctx.createBufferSource();
-      source.buffer = noiseBuffer;
-      source.loop = true;
-      // ノイズ音程制御: A4 (440Hz) を基準に playbackRate でピッチを変化させる
-      // 高音→ブライト (速い), 低音→ダーク (遅い)
-      const rate = freq / 440;
-      source.playbackRate.setValueAtTime(rate, time);
-      return source;
+    if (this._waveform !== "noise" && !this._periodicWave) {
+      this._buildPeriodicWave();
     }
-    if (!this._periodicWave) this._buildPeriodicWave();
-    const source = ctx.createOscillator();
-    source.setPeriodicWave(this._periodicWave);
-    source.frequency.setValueAtTime(freq, time);
-    return source;
+    return _createSourceNode(this._waveform, this._periodicWave, freq, time);
   }
 
   /** 現在のノートを即座に停止する (anti-click 指数フェード付き) */
@@ -733,6 +764,351 @@ export class SynthChannel {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  PolySynth クラス — ポリフォニック・シンセ
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/** ポリフォニーのデフォルト最大同時発音数 */
+const DEFAULT_MAX_VOICES = 16;
+
+/**
+ * ポリフォニック・シンセサイザ。1 つのパラメータセット (波形・ADSR・音量・位相) を
+ * 共有しつつ、押鍵ごとに独立したボイスを割り当てて和音を発音する。鍵盤 / MIDI からの
+ * リアルタイム演奏用 (SYNTH アプリ)。
+ *
+ * 信号チェーン (ボイスごと): envGain → channelGain → masterGain → dcBlocker → limiter
+ *
+ * SynthChannel との違い:
+ *   - noteOn/noteOff は MIDI ノート番号でボイスを識別する (周波数ではなく)。
+ *   - 複数ノートを同時に保持する (_held Map)。上限超過時はボイススティール。
+ *   - getHeldNotes() で押鍵中ノートを取得できる (オンスクリーン鍵盤の点灯に使用)。
+ *
+ * パラメータ API は SynthChannel と同一シグネチャで揃えてある (音作り UI を共通化するため)。
+ *
+ * テスト容易性: AudioContext を生成できない環境 (Node) では音ノードを作らず、
+ * ボイスの帳簿 (_held) のみ更新する。発音数管理・スティール・retrigger はこの帳簿で検証できる。
+ */
+export class PolySynth {
+  constructor() {
+    /** @type {string} 波形タイプ */
+    this._waveform = "saw";
+    /** @type {number} 発音開始位相 (0.0〜1.0) */
+    this._startPhase = 0;
+    /** @type {number} ADSR Attack (秒) */
+    this._adsrA = 0.01;
+    /** @type {number} ADSR Decay (秒) */
+    this._adsrD = 0.1;
+    /** @type {number} ADSR Sustain (0.0〜1.0) */
+    this._adsrS = 0.8;
+    /** @type {number} ADSR Release (秒) */
+    this._adsrR = 0.2;
+    /** @type {number} チャンネル音量 (0.0〜1.0) */
+    this._volume = 0.5;
+    /** @type {PeriodicWave|null} 全ボイス共有の帯域制限波形 */
+    this._periodicWave = null;
+    /** @type {GainNode|null} 全ボイス共通のチャンネルゲイン */
+    this._channelGain = null;
+    /** @type {number} 最大同時発音数 (超過時は最古ボイスをスティール) */
+    this._maxVoices = DEFAULT_MAX_VOICES;
+    /** @type {Map<number, {source:AudioScheduledSourceNode|null, envGain:GainNode|null, startTime:number}>}
+     *  押鍵中のノート (midi → ボイス) */
+    this._held = new Map();
+    /** @type {Set<{source:AudioScheduledSourceNode, envGain:GainNode}>} リリース中ボイス */
+    this._releasing = new Set();
+  }
+
+  /** AudioContext を必要時に生成する。生成不能な環境 (Node) では false を返す。 */
+  _ensureAudio() {
+    if (ctx) {
+      if (ctx.state === "suspended") ctx.resume();
+      return true;
+    }
+    if (typeof AudioContext === "undefined") return false;
+    initAudio();
+    return !!ctx;
+  }
+
+  /** チャンネルゲインノードを遅延生成する */
+  _ensureChannelGain() {
+    if (!this._channelGain && ctx && masterGain) {
+      this._channelGain = ctx.createGain();
+      this._channelGain.gain.value = this._volume;
+      this._channelGain.connect(masterGain);
+    }
+  }
+
+  /** 波形 + 位相から共有 PeriodicWave を再構築する */
+  _buildPeriodicWave() {
+    this._periodicWave = _computePeriodicWave(this._waveform, this._startPhase);
+  }
+
+  /** ボイスのノードを anti-click フェード付きで即停止する (null / ctx なしは無視) */
+  _hardStop(voice) {
+    if (!ctx || !voice) return;
+    const now = ctx.currentTime;
+    const { source, envGain } = voice;
+    try {
+      if (envGain) {
+        envGain.gain.cancelScheduledValues(now);
+        envGain.gain.setTargetAtTime(0.001, now, FADE_TIME_CONSTANT);
+      }
+      if (source) {
+        source.stop(now + FADE_TIME_CONSTANT * 5 + FADE_TAIL);
+        source.onended = () => {
+          try {
+            source.disconnect();
+            if (envGain) envGain.disconnect();
+          } catch (_) {
+            /* already disconnected */
+          }
+        };
+      }
+    } catch (_) {
+      /* already stopped */
+    }
+  }
+
+  /** 現在のボイス総数 (押鍵中 + リリース中) */
+  _voiceCount() {
+    return this._held.size + this._releasing.size;
+  }
+
+  /** ボイスを 1 つスティールする。リリース中を優先し、無ければ最古の押鍵を奪う。 */
+  _steal() {
+    if (this._releasing.size > 0) {
+      const victim = this._releasing.values().next().value;
+      this._releasing.delete(victim);
+      this._hardStop(victim);
+      return;
+    }
+    let oldestMidi = -1;
+    let oldestTime = Infinity;
+    for (const [midi, v] of this._held) {
+      if (v.startTime < oldestTime) {
+        oldestTime = v.startTime;
+        oldestMidi = midi;
+      }
+    }
+    if (oldestMidi >= 0) {
+      const victim = this._held.get(oldestMidi);
+      this._held.delete(oldestMidi);
+      this._hardStop(victim);
+    }
+  }
+
+  // ── ノートオン / オフ ──
+
+  /**
+   * ノートオン。指定 MIDI ノートのボイスを開始する。
+   * 同ノートが既に発音中なら retrigger (旧ボイスを停止してから開始)。
+   * ボイス数が上限に達していればスティールする。
+   * @param {number} midi  MIDI ノート番号 (0〜127)
+   * @param {number} [vel=1.0]  ベロシティ (0.0〜1.0)
+   */
+  noteOn(midi, vel) {
+    const v = vel !== undefined ? Math.max(0, Math.min(1, vel)) : 1.0;
+
+    // retrigger: 同ノートが押鍵中なら旧ボイスを停止
+    if (this._held.has(midi)) {
+      this._hardStop(this._held.get(midi));
+      this._held.delete(midi);
+    }
+    // ボイススティール (上限まで空ける)
+    while (this._voiceCount() >= this._maxVoices) this._steal();
+
+    const hasAudio = this._ensureAudio();
+    const startTime = ctx ? ctx.currentTime : 0;
+    let source = null;
+    let envGain = null;
+
+    if (hasAudio) {
+      this._ensureChannelGain();
+      const now = startTime;
+
+      // エンベロープ (Attack=リニア, Decay=指数で Sustain へ)
+      envGain = ctx.createGain();
+      if (this._adsrA < 0.001) {
+        envGain.gain.setValueAtTime(v, now);
+      } else {
+        envGain.gain.setValueAtTime(0.001, now);
+        envGain.gain.linearRampToValueAtTime(v, now + this._adsrA);
+      }
+      envGain.gain.setTargetAtTime(
+        Math.max(this._adsrS * v, 0.001),
+        now + this._adsrA,
+        Math.max(this._adsrD * 0.33, 0.001),
+      );
+      envGain.connect(this._channelGain);
+
+      if (this._waveform !== "noise" && !this._periodicWave) {
+        this._buildPeriodicWave();
+      }
+      source = _createSourceNode(
+        this._waveform,
+        this._periodicWave,
+        midiToFreq(midi),
+        now,
+      );
+      source.connect(envGain);
+      source.start(now);
+    }
+
+    this._held.set(midi, { source, envGain, startTime });
+  }
+
+  /**
+   * ノートオフ。指定 MIDI ノートのボイスに Release を適用して停止する。
+   * @param {number} midi  MIDI ノート番号
+   */
+  noteOff(midi) {
+    const voice = this._held.get(midi);
+    if (!voice) return;
+    this._held.delete(midi);
+
+    // 音ノードが無い (テスト環境) なら帳簿更新のみ
+    if (!ctx || !voice.source || !voice.envGain) return;
+
+    const now = ctx.currentTime;
+    const { source, envGain } = voice;
+
+    if (typeof envGain.gain.cancelAndHoldAtTime === "function") {
+      envGain.gain.cancelAndHoldAtTime(now);
+    } else {
+      envGain.gain.cancelScheduledValues(now);
+    }
+    envGain.gain.setTargetAtTime(0.001, now, Math.max(this._adsrR * 0.33, 0.001));
+    source.stop(now + this._adsrR + 0.05);
+
+    const rel = { source, envGain };
+    this._releasing.add(rel);
+    const releasing = this._releasing;
+    source.onended = () => {
+      try {
+        source.disconnect();
+        envGain.disconnect();
+      } catch (_) {
+        /* already disconnected */
+      }
+      releasing.delete(rel);
+    };
+  }
+
+  /** 全ノートを即座に停止する (フォーカス喪失・パニック時)。 */
+  allNotesOff() {
+    for (const [, voice] of this._held) this._hardStop(voice);
+    this._held.clear();
+    for (const rel of this._releasing) this._hardStop(rel);
+    this._releasing.clear();
+  }
+
+  // ── 押鍵状態の取得 (オンスクリーン鍵盤用) ──
+
+  /** @returns {number[]} 押鍵中ノートの昇順配列 */
+  getHeldNotes() {
+    return [...this._held.keys()].sort((a, b) => a - b);
+  }
+
+  /** @param {number} midi @returns {boolean} 指定ノートが押鍵中か */
+  isNoteHeld(midi) {
+    return this._held.has(midi);
+  }
+
+  /** @returns {number} 押鍵中ノート数 */
+  get heldCount() {
+    return this._held.size;
+  }
+
+  // ── パラメータ設定 (SynthChannel と同一シグネチャ) ──
+
+  /** @param {"saw"|"tri"|"sq50"|"sq25"|"sq12"|"sine"|"noise"} type */
+  setWaveform(type) {
+    this._waveform = type;
+    this._buildPeriodicWave();
+  }
+
+  /** @returns {string} 現在の波形タイプ */
+  getWaveform() {
+    return this._waveform;
+  }
+
+  /**
+   * 波形を順送りで切り替え、新しい波形名を返す。
+   * @returns {string}
+   */
+  cycleWaveform() {
+    const idx = WAVEFORM_LIST.indexOf(this._waveform);
+    this._waveform = WAVEFORM_LIST[(idx + 1) % WAVEFORM_LIST.length];
+    this._buildPeriodicWave();
+    return this._waveform;
+  }
+
+  /** @param {number} phase  0.0〜1.0 */
+  setStartPhase(phase) {
+    this._startPhase = Math.max(0, Math.min(1, phase));
+    this._buildPeriodicWave();
+  }
+
+  /** @returns {number} 発音開始位相 (0.0〜1.0) */
+  getStartPhase() {
+    return this._startPhase;
+  }
+
+  /** ADSR を設定する (単位: ミリ秒 / Sustain は 0〜100%)。 */
+  setADSR(a, d, s, r) {
+    this._adsrA = a / 1000;
+    this._adsrD = d / 1000;
+    this._adsrS = s / 100;
+    this._adsrR = r / 1000;
+  }
+
+  /** @returns {{ a:number, d:number, s:number, r:number }} ADSR (ms / %) */
+  getADSR() {
+    return {
+      a: this._adsrA * 1000,
+      d: this._adsrD * 1000,
+      s: this._adsrS * 100,
+      r: this._adsrR * 1000,
+    };
+  }
+
+  /** @param {number} vol  0〜100 */
+  setVolume(vol) {
+    this._volume = vol / 100;
+    if (this._channelGain && ctx) {
+      this._channelGain.gain.setValueAtTime(this._volume, ctx.currentTime);
+    }
+  }
+
+  /** @returns {number} チャンネル音量 (0〜100) */
+  getVolume() {
+    return this._volume * 100;
+  }
+
+  /** @param {number} n  最大同時発音数 (1 以上) */
+  setMaxVoices(n) {
+    this._maxVoices = Math.max(1, n | 0);
+  }
+
+  /** @returns {number} 最大同時発音数 */
+  getMaxVoices() {
+    return this._maxVoices;
+  }
+
+  /**
+   * 現在の波形の 1 周期分を n サンプルで返す (startPhase 適用済み)。波形プレビュー用。
+   * @param {number} n
+   * @returns {Float32Array}  -1.0〜+1.0
+   */
+  getWaveformSamples(n) {
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = (i / n + this._startPhase) % 1;
+      out[i] = sampleWaveformFn(this._waveform, t);
+    }
+    return out;
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  デフォルトチャンネル + 後方互換 API
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -748,6 +1124,11 @@ export function getDefaultChannel() {
 /** 新しいチャンネルを生成する (マルチトラック用) */
 export function createChannel() {
   return new SynthChannel();
+}
+
+/** 新しいポリフォニックシンセを生成する (鍵盤 / MIDI 演奏用) */
+export function createPolySynth() {
+  return new PolySynth();
 }
 
 /**
