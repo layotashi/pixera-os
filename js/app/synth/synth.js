@@ -3,23 +3,34 @@
  * synth.js — SYNTH ウィンドウ (ポリフォニック・ソフトシンセ)
  *
  * 音楽制作機能の再設計・第 1 弾。単体で完結するソフトシンセサイザ。
- * 音色を作り (波形 / ADSR / 音量)、PC キーボード・オンスクリーン鍵盤で和音を演奏する。
- * 音源は core/audio.js の PolySynth。SYNESTA には依存しない完全な新規アプリ。
+ * 音色を作り (波形 / 発音数 / ADSR / 音量)、PC キーボード・オンスクリーン鍵盤で
+ * 和音を演奏する。音源は core/audio.js の PolySynth。SYNESTA には依存しない。
+ *
+ * ── レイアウト (横長 2 段) ──
+ *   上段: OSC / ENV / AMP / PLAY を左から右へ横並び (各セクション幅の反転バンド見出し)。
+ *   下段: 演奏用の鍵盤プレビュー (見出しなし、上段バンド幅に合わせた全幅)。
+ *
+ *     [   OSC   ] [    ENV    ] [AMP] [ PLAY ]
+ *     WAVE   [▼]  ATT DEC SUS REL VOL  VEL[#]
+ *     VOICES [▼]   |   |   |   |   |   OCT[#]
+ *     ###################################### (鍵盤)
  *
  * ── UI 設計 (CRAP) ──
- *   Proximity : 機能で OSC / ENV / AMP / PLAY の 4 セクションに分割 (反転バンド見出し)。
- *   Repetition: ENV(A/D/S/R) は同型の縦フェーダーを横並びにしたバンク、
- *               AMP(VOL) は水平スライダー。ラベルはフェーダー上に中央寄せ。
- *   Alignment : 見出し帯は全幅。フェーダーは等間隔の 1 バンクに揃え、
- *               VOL スライダーは track の左端・幅を統一、値+単位を右揃え列に。
+ *   Proximity : 機能で OSC / ENV / AMP / PLAY の 4 セクションに分割。
+ *   Repetition: ENV(A/D/S/R) と AMP(VOL) は同型の縦フェーダー。
+ *               OSC(WAVE/VOICES) は DropDown、PLAY(VEL/OCT) は NumberBox の 2 行組。
+ *   Alignment : 見出し帯は各セクション幅・ラベル中央寄せ。ラベルは上段の同一行に揃え、
+ *               フェーダーは 1 バンクの等間隔、鍵盤は上段バンドと中央で揃える。
  *   Contrast  : 見出しは反転帯、鍵盤の押下キーは反転で強調 (1-bit の on/off)。
  *
- * ENV フェーダーで調整中 (最後に触れた) パラメータの値はウィンドウフッタに表示する
- * (フェーダー自身には数値を出さない)。将来は調整中パラメータ専用の値表示窓を追加予定。
+ * ENV / AMP フェーダーで調整中 (最後に触れた) パラメータの値はフッタ左に表示する
+ * (フェーダー自身には数値を出さない)。フッタ右には現在の発音数 / 最大同時発音数
+ * (VOICES) と、MIDI デバイス接続時はその台数を表示する。
  *
  * 演奏キー (フォーカス時):
  *   Z 段 = 現オクターブ, Q 段 = +1oct, I〜P = +2oct
  *   , / .  … オクターブ ∓    [ / ]  … ベロシティ ± 10    /  … 波形順送り
+ *   (OCT / VEL は上段の NumberBox でも直接編集でき、値は相互に同期する)
  */
 
 import { fillRect, isCapturing } from "../../core/gpu.js";
@@ -30,9 +41,8 @@ import { createPolySynth, midiEventAudioTime } from "../../core/audio.js";
 import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
 import {
   WidgetGroup,
-  Slider,
-  PushButton,
   DropDown,
+  NumberBox,
   FOCUS_MARGIN,
   GAP,
   SECTION_PAD,
@@ -46,16 +56,16 @@ import { Keyboard } from "./keyboard.js";
 
 export const APP_NAME = "SYNTH";
 
-/** 鍵盤: 白鍵ピッチ・高さ・表示白鍵数 (2 オクターブ) */
+/** 鍵盤: 白鍵ピッチ・高さ・表示白鍵数 (3 オクターブ) */
 const KEY_W = 14;
 const KEY_H = 42;
-const NUM_WHITE = 14;
-/** コンテンツ幅 (鍵盤幅に合わせる。仕切り共有のため +1)。全セクション共通の基準幅 */
-const PANEL_W = KEY_W * NUM_WHITE + 1;
-/** セクション内コントロールの左インセット */
-const PAD_X = 3;
+const NUM_WHITE = 21;
+/** 鍵盤の全幅 (px)。仕切り共有のため +1 */
+const KEYBOARD_W = KEY_W * NUM_WHITE + 1;
 /** ENV フェーダーの高さ (可動域)。間隔は連結バンクにするため FADER_GAP (=1px) */
 const FADER_H = FADER_DEFAULT_H;
+/** 上段セクション間の間隔 (px)。セクション内の GAP より広げて区切りを明確にする */
+const SEC_GAP = GAP * 2;
 
 /** オクターブ / ベロシティの範囲 */
 const OCTAVE_MIN = 1;
@@ -68,6 +78,11 @@ const VEL_STEP = 10;
 const WAVE_ITEMS = ["SAW", "TRI", "SQ50", "SQ25", "SQ12", "SINE", "NOISE"];
 const WAVE_IDS = ["saw", "tri", "sq50", "sq25", "sq12", "sine", "noise"];
 const waveIndexMap = Object.fromEntries(WAVE_IDS.map((id, i) => [id, i]));
+
+/** 最大同時発音数 (VOICES) の選択肢。既定 16 は PolySynth の DEFAULT_MAX_VOICES に一致 */
+const VOICE_VALUES = [4, 8, 16, 32];
+const VOICE_ITEMS = VOICE_VALUES.map(String);
+const VOICE_DEFAULT_INDEX = VOICE_VALUES.indexOf(16);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  音源 (遅延生成)
@@ -121,11 +136,11 @@ const KEY_MAP = [
 //  ウィジェット + レイアウト (遅延初期化)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-let dropDownWave;
-let faderA, faderD, faderS, faderR, sliderVol;
+let dropDownWave, dropDownVoices;
+let faderA, faderD, faderS, faderR, faderVol;
 /** ENV フェーダーを左→右順に保持 (ENV_FADERS と添字対応) */
 let envFaders = [];
-let btnOctDown, btnOctUp;
+let numVel, numOct;
 let keyboard;
 let group;
 let _ready = false;
@@ -138,8 +153,8 @@ const ENV_FADERS = [
   { key: "r", label: "REL", unit: "MS" },
 ];
 
-/** フッタに出す「最後に触れた ENV パラメータ」の表示文字列 */
-let envFooterText = "";
+/** フッタに出す「最後に触れたアナログパラメータ (ENV / VOL)」の表示文字列 */
+let paramFooterText = "";
 
 /** レイアウト結果 (draw / 測定で共有する相対座標) */
 const L = {};
@@ -151,6 +166,9 @@ function _initWidgets() {
   dropDownWave = new DropDown(0, 0, WAVE_ITEMS, 0, (idx) => {
     synth().setWaveform(WAVE_IDS[idx]);
   });
+  dropDownVoices = new DropDown(0, 0, VOICE_ITEMS, VOICE_DEFAULT_INDEX, (idx) => {
+    synth().setMaxVoices(VOICE_VALUES[idx]);
+  });
 
   // ENV: A/D/S/R は同型の縦フェーダー。初期値は PolySynth の既定に一致させる
   faderA = new Fader(0, 0, FADER_H, 0, 2000, 10, (v) => onEnvChange(0, v));
@@ -159,13 +177,21 @@ function _initWidgets() {
   faderR = new Fader(0, 0, FADER_H, 0, 2000, 200, (v) => onEnvChange(3, v));
   envFaders = [faderA, faderD, faderS, faderR];
   // フッタ初期表示 = 先頭 (ATTACK) の値
-  setEnvFooter(0, faderA.value);
+  setParamFooter("ATT", faderA.value, "MS");
 
-  // AMP: VOL は水平スライダーのまま
-  sliderVol = new Slider(0, 0, 0, 0, 100, 50, (v) => synth().setVolume(v));
+  // AMP: VOL は ENV と同型の縦フェーダー (数値はフッタに表示)
+  faderVol = new Fader(0, 0, FADER_H, 0, 100, 50, (v) => {
+    synth().setVolume(v);
+    setParamFooter("VOL", v, "%");
+  });
 
-  btnOctDown = new PushButton(0, 0, "<", () => setOctave(octave - 1));
-  btnOctUp = new PushButton(0, 0, ">", () => setOctave(octave + 1));
+  // PLAY: VEL / OCT は NumberBox (キーボードショートカットと相互同期する)
+  numVel = new NumberBox(0, 0, VEL_MIN, VEL_MAX, velocity, VEL_STEP, (v) => {
+    velocity = v;
+  });
+  numOct = new NumberBox(0, 0, OCTAVE_MIN, OCTAVE_MAX, octave, 1, (v) => {
+    setOctave(v);
+  });
 
   keyboard = new Keyboard(KEY_W, KEY_H, NUM_WHITE, {
     onNoteOn: (m) => synth().noteOn(m, velocity / 127),
@@ -174,9 +200,9 @@ function _initWidgets() {
   });
 
   group = new WidgetGroup([
-    dropDownWave,
-    faderA, faderD, faderS, faderR, sliderVol,
-    btnOctDown, btnOctUp,
+    dropDownWave, dropDownVoices,
+    faderA, faderD, faderS, faderR, faderVol,
+    numVel, numOct,
     keyboard,
   ]);
 
@@ -203,13 +229,12 @@ function _initWidgets() {
 /** ENV フェーダー変更: ADSR に反映し、フッタ表示を更新する */
 function onEnvChange(i, v) {
   applyADSR({ [ENV_FADERS[i].key]: v });
-  setEnvFooter(i, v);
+  setParamFooter(ENV_FADERS[i].label, v, ENV_FADERS[i].unit);
 }
 
-/** フッタ用の「ラベル 値 単位」文字列を組み立てる (最後に触れた ENV パラメータ) */
-function setEnvFooter(i, v) {
-  const m = ENV_FADERS[i];
-  envFooterText = m.label + "  " + String(v).padStart(4) + " " + m.unit;
+/** フッタ用の「ラベル 値 単位」文字列を組み立てる (最後に触れたアナログパラメータ) */
+function setParamFooter(label, v, unit) {
+  paramFooterText = label + "  " + String(v).padStart(4) + " " + unit;
 }
 
 /** ADSR の一部を更新して PolySynth に反映する */
@@ -236,112 +261,123 @@ function computeLayout() {
   group.remeasureAll();
 
   const bandH = GLYPH_H + SECTION_PAD * 2;
-  const sliderH = sliderVol.h;
-  const rowH = sliderH + GAP;
-  const nameColW = textWidth("WAVE"); // 最長ラベルに合わせ、全コントロールの左端を揃える
-  const valueW = textWidth("0000 MS");
+  const dropH = dropDownWave.h; // BUTTON_AUTO_HEIGHT
+  const rowTextDy = (dropH - GLYPH_H) >> 1; // ラベルを行コントロールの高さ中央に置く
+  const pitch = FADER_W + FADER_GAP;
+
+  // ── 縦グリッド (上段) ── バンド → 1 行目 → 2 行目 (= フェーダー上端)
+  const y0 = FOCUS_MARGIN;
+  const row1Y = y0 + bandH + GAP;
+  const row2Y = row1Y + dropH + GAP;
+  const faderTop = row2Y;
+  const contentBottom = faderTop + FADER_H;
 
   L.bandH = bandH;
-  L.textDy = (sliderH - GLYPH_H) >> 1;
-  L.trackX = PAD_X + nameColW + GAP;
-  L.valueX = PANEL_W - PAD_X - valueW;
-  const trackW = Math.max(20, L.valueX - GAP - L.trackX);
+  L.bandY = y0;
+  L.row1TextY = row1Y + rowTextDy; // WAVE / ATT.. / VOL / VEL のラベル行
+  L.row2TextY = row2Y + rowTextDy; // VOICES / OCT のラベル行
 
-  const setRow = (s, y) => {
-    s.x = L.trackX;
-    s.w = trackW;
-    s.y = y;
-  };
+  // ── 各セクションの幅 ──
+  const labelWOsc = Math.max(textWidth("WAVE"), textWidth("VOICES"));
+  const oscW = labelWOsc + GAP + Math.max(dropDownWave.w, dropDownVoices.w);
+  const envW = envFaders.length * pitch - FADER_GAP;
+  const ampW = FADER_W;
+  const labelWPlay = Math.max(textWidth("VEL"), textWidth("OCT"));
+  const playW = labelWPlay + GAP + Math.max(numVel.w, numOct.w);
 
-  let y = FOCUS_MARGIN;
+  const topW = oscW + SEC_GAP + envW + SEC_GAP + ampW + SEC_GAP + playW;
+  const panelW = Math.max(topW + FOCUS_MARGIN * 2, KEYBOARD_W);
 
-  // ── OSC ── WAVE ラベル + 波形 DropDown (track 列に左端を合わせる)
-  L.oscBandY = y;
-  y += bandH + GAP;
-  L.oscRowY = y;
-  L.oscTextY = y + ((dropDownWave.h - GLYPH_H) >> 1);
-  dropDownWave.x = L.trackX;
-  dropDownWave.y = y;
-  y += dropDownWave.h + GAP;
+  // 上段バンドをパネル幅の中央に配置 (鍵盤幅の方が広い場合に中央で揃える)
+  let x = (panelW - topW) >> 1;
 
-  // ── ENV ── ATT/DEC/SUS/REL の縦フェーダーを 1px 間隔で連結したバンク。ラベルは各上に中央寄せ
-  L.envBandY = y;
-  y += bandH + GAP;
-  L.envLabelY = y; // ラベル行 (ATT/DEC/SUS/REL)
-  y += GLYPH_H + 2;
-  L.envFaderY = y; // フェーダー上端
-  const pitch = FADER_W + FADER_GAP;
-  const bankW = envFaders.length * pitch - FADER_GAP; // 末尾に間隔は付かない
-  const bankX = (PANEL_W - bankW) >> 1; // パネル中央に配置
-  L.faderX = [];
+  // ── OSC ── WAVE / VOICES ラベル + DropDown (ラベル列に左端を揃える)
+  const oscX = x;
+  const oscCtrlX = oscX + labelWOsc + GAP;
+  dropDownWave.x = oscCtrlX; dropDownWave.y = row1Y;
+  dropDownVoices.x = oscCtrlX; dropDownVoices.y = row2Y;
+  L.oscLabelX = oscX;
+  x += oscW + SEC_GAP;
+
+  // ── ENV ── ATT/DEC/SUS/REL の縦フェーダーを 1px 間隔で連結したバンク
+  const envX = x;
+  L.faderLabelX = [];
   for (let i = 0; i < envFaders.length; i++) {
-    const fx = bankX + i * pitch;
-    L.faderX.push(fx);
+    const fx = envX + i * pitch;
+    L.faderLabelX.push(fx);
     envFaders[i].x = fx;
-    envFaders[i].y = L.envFaderY;
+    envFaders[i].y = faderTop;
     envFaders[i].h = FADER_H;
   }
-  y += FADER_H + GAP;
+  x += envW + SEC_GAP;
 
-  // ── AMP ──
-  L.ampBandY = y;
-  y += bandH + GAP;
-  L.rowVolY = y; setRow(sliderVol, y); y += rowH;
+  // ── AMP ── VOL の縦フェーダー 1 本 (ラベルはフェーダー上に中央寄せ)
+  const ampX = x;
+  faderVol.x = ampX;
+  faderVol.y = faderTop;
+  faderVol.h = FADER_H;
+  L.volLabelX = ampX + ((FADER_W - textWidth("VOL")) >> 1);
+  x += ampW + SEC_GAP;
 
-  // ── PLAY ──
-  L.playBandY = y;
-  y += bandH + GAP;
-  // コントロール行: [<] OCT n [>]   VEL nnn  POLY nn
-  btnOctDown.x = PAD_X;
-  btnOctDown.y = y;
-  L.octTextX = btnOctDown.x + btnOctDown.w + GAP;
-  btnOctUp.x = L.octTextX + textWidth("OCT 8") + GAP;
-  btnOctUp.y = y;
-  L.vpTextX = btnOctUp.x + btnOctUp.w + GAP * 2;
-  L.ctrlTextY = y + ((btnOctDown.h - GLYPH_H) >> 1);
-  y += Math.max(btnOctDown.h, GLYPH_H) + GAP;
-  // 鍵盤 (全幅)
-  keyboard.x = 0;
-  keyboard.y = y;
-  keyboard.w = PANEL_W;
+  // ── PLAY ── VEL / OCT の NumberBox (ラベル列に左端を揃える)
+  const playX = x;
+  const playCtrlX = playX + labelWPlay + GAP;
+  numVel.x = playCtrlX; numVel.y = row1Y;
+  numOct.x = playCtrlX; numOct.y = row2Y;
+  L.playLabelX = playX;
+  x += playW;
+
+  // ── セクション見出しバンド (各セクション幅・ラベル中央寄せ) ──
+  L.bands = [
+    { label: "OSC", x: oscX, w: oscW },
+    { label: "ENV", x: envX, w: envW },
+    { label: "AMP", x: ampX, w: ampW },
+    { label: "PLAY", x: playX, w: playW },
+  ];
+
+  // ── 下段 鍵盤 (全幅・パネル中央) ──
+  keyboard.x = (panelW - KEYBOARD_W) >> 1;
+  keyboard.y = contentBottom + GAP;
+  keyboard.w = KEYBOARD_W;
   keyboard.h = KEY_H;
-  y += KEY_H + FOCUS_MARGIN;
 
-  L.totalW = PANEL_W;
-  L.totalH = y;
+  L.totalW = panelW;
+  L.totalH = keyboard.y + KEY_H + FOCUS_MARGIN;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 反転バンドのセクション見出しを描く (SectionLabel と同様式) */
-function drawBand(cr, label, y) {
-  fillRect(cr.x, cr.y + y, PANEL_W, L.bandH, 1);
-  drawText(cr.x + SECTION_PAD, cr.y + y + SECTION_PAD, label, 0);
-}
-
-/** スライダー行のラベル (左) と 値+単位 (右揃え列) を描く */
-function drawRow(cr, name, y, value, unit) {
-  const ty = cr.y + y + L.textDy;
-  drawText(cr.x + PAD_X, ty, name, 1);
-  const vs = String(value).padStart(4) + " " + unit.padEnd(2);
-  drawText(cr.x + L.valueX, ty, vs, 1);
+/** 反転バンドのセクション見出しを描く (ラベルはバンド内で中央寄せ) */
+function drawBand(cr, label, x, y, w) {
+  fillRect(cr.x + x, cr.y + y, w, L.bandH, 1);
+  const tx = cr.x + x + ((w - textWidth(label)) >> 1);
+  drawText(tx, cr.y + y + SECTION_PAD, label, 0);
 }
 
 /** ENV フェーダーのラベル (ATT/DEC/SUS/REL) を各フェーダーの上に中央寄せで描く */
 function drawFaderLabels(cr) {
   for (let i = 0; i < envFaders.length; i++) {
     const name = ENV_FADERS[i].label;
-    const lx = cr.x + L.faderX[i] + ((FADER_W - textWidth(name)) >> 1);
-    drawText(lx, cr.y + L.envLabelY, name, 1);
+    const lx = cr.x + L.faderLabelX[i] + ((FADER_W - textWidth(name)) >> 1);
+    drawText(lx, cr.y + L.row1TextY, name, 1);
   }
 }
 
-/** フッタに最後に触れた ENV パラメータの値を描く */
+/** フッタ: 左に最後に触れたパラメータ値、右に発音数 / 最大同時発音数 (+ MIDI) を描く */
 function drawSynthFooter(fr) {
   _initWidgets();
-  if (envFooterText) drawText(fr.x, fr.y, envFooterText, 1);
+  if (paramFooterText) drawText(fr.x, fr.y, paramFooterText, 1);
+
+  let right =
+    "POLY " +
+    String(synth().heldCount).padStart(2) +
+    "/" +
+    String(synth().getMaxVoices()).padStart(2);
+  const midiN = getMidiInputCount();
+  if (midiN > 0) right += "  MIDI " + midiN;
+  drawText(fr.x + fr.w - textWidth(right), fr.y, right, 1);
 }
 
 function drawSynth(cr) {
@@ -350,41 +386,26 @@ function drawSynth(cr) {
   // keyDown() はフレーム単位のラッチなので、そこで演奏キーを読むと , . [ ] / が二度発火する。
   if (!isCapturing()) handleKeyboard();
 
-  // セクション見出し
-  drawBand(cr, "OSC", L.oscBandY);
-  drawBand(cr, "ENV", L.envBandY);
-  drawBand(cr, "AMP", L.ampBandY);
-  drawBand(cr, "PLAY", L.playBandY);
+  // セクション見出し (各セクション幅の反転バンド)
+  for (const b of L.bands) drawBand(cr, b.label, b.x, L.bandY, b.w);
 
-  // MIDI デバイス接続時、PLAY 見出しバンドの右端に表示 (接続時のみ = show/hide)
-  const midiN = getMidiInputCount();
-  if (midiN > 0) {
-    const t = "MIDI " + midiN;
-    drawText(
-      cr.x + PANEL_W - SECTION_PAD - textWidth(t),
-      cr.y + L.playBandY + SECTION_PAD,
-      t,
-      0,
-    );
-  }
-
-  // OSC の WAVE ラベル (DropDown 自体は group が描画)
-  drawText(cr.x + PAD_X, cr.y + L.oscTextY, "WAVE", 1);
+  // OSC の WAVE / VOICES ラベル (DropDown 本体は group が描画)
+  drawText(cr.x + L.oscLabelX, cr.y + L.row1TextY, "WAVE", 1);
+  drawText(cr.x + L.oscLabelX, cr.y + L.row2TextY, "VOICES", 1);
 
   // ENV フェーダーのラベル (数値は出さず、フッタに表示)
   drawFaderLabels(cr);
 
-  // AMP の値ラベル (スライダー値から毎フレーム)
-  drawRow(cr, "VOL", L.rowVolY, sliderVol.value, "%");
+  // AMP の VOL ラベル (フェーダー上・中央寄せ)
+  drawText(cr.x + L.volLabelX, cr.y + L.row1TextY, "VOL", 1);
 
-  // PLAY コントロール行のテキスト
-  drawText(cr.x + L.octTextX, cr.y + L.ctrlTextY, "OCT " + octave, 1);
-  drawText(
-    cr.x + L.vpTextX,
-    cr.y + L.ctrlTextY,
-    "VEL " + String(velocity).padStart(3) + "  POLY " + String(synth().heldCount).padStart(2),
-    1,
-  );
+  // PLAY の VEL / OCT ラベル (NumberBox 本体は group が描画)
+  drawText(cr.x + L.playLabelX, cr.y + L.row1TextY, "VEL", 1);
+  drawText(cr.x + L.playLabelX, cr.y + L.row2TextY, "OCT", 1);
+
+  // NumberBox とキーボード演奏状態を同期 (, . [ ] で変えた値を表示に反映)
+  if (numOct.value !== octave) numOct.value = octave;
+  if (numVel.value !== velocity) numVel.value = velocity;
 
   // 鍵盤の表示範囲を現オクターブの C に合わせてからウィジェット描画
   keyboard.startMidi = 12 + octave * 12;
@@ -463,11 +484,11 @@ wmRegister(
     winOpen = true;
     return wmOpen(-1, -1, 0, 0, APP_NAME, drawSynth, onSynthInput, measureSynth, {
       about:
-        "A polyphonic software synthesizer. Pick a waveform, shape the ADSR " +
-        "envelope and volume, then play chords on the on-screen keyboard or the " +
-        "PC keyboard (Z row = current octave, Q row = +1, I-P = +2). Use , . to " +
-        "change octave, [ ] for velocity, / to cycle the waveform.",
-      // ENV フェーダーで調整中のパラメータ値をフッタに表示する
+        "A polyphonic software synthesizer. Pick a waveform and voice count, " +
+        "shape the ADSR envelope and volume, then play chords on the on-screen " +
+        "keyboard or the PC keyboard (Z row = current octave, Q row = +1, I-P = " +
+        "+2). Use , . to change octave, [ ] for velocity, / to cycle the waveform.",
+      // ENV / AMP フェーダーで調整中のパラメータ値をフッタに表示する
       footer: true,
       onDrawFooter: (fr) => drawSynthFooter(fr),
       onBeforeClose: () => {

@@ -8,11 +8,12 @@
 
 export const BUILD = {
   date: "2026.07.11",
-  hash: "baebb9f",
-  count: 279,
+  hash: "a1371fe",
+  count: 281,
   notes: [
     { date: "2026-07-11", hash: "217e3d9", text: "MIDI keyboard timing is now steady" },
     { date: "2026-07-11", hash: "15cf8c5", text: "SYNTH ADSR now uses vertical faders" },
+    { date: "2026-07-11", hash: "7fd8b89", text: "SYNTH ADSR now uses vertical faders" },
     { date: "2026-07-10", hash: "7b2ce0a", text: "New Matte option adds a margin to shots" },
     { date: "2026-07-10", hash: "e901879", text: "About now has clickable links to X and GitHub" },
     { date: "2026-07-10", hash: "d5137b8", text: "A WELCOME window now greets you at startup with what's new" },
