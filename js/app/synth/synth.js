@@ -10,15 +10,16 @@
  *   上段: OSC / ENV / AMP / PLAY を左から右へ横並び (各セクション幅の反転バンド見出し)。
  *   下段: 演奏用の鍵盤プレビュー (見出しなし、上段バンド幅に合わせた全幅)。
  *
- *     [   OSC   ] [    ENV    ] [AMP] [ PLAY ]
- *     WAVE   [▼]  ATT DEC SUS REL VOL  VEL[#]
+ *     [   OSC   ] [    ENV    ] [AMP] [   PLAY    ]
+ *     WAVE   [▼]  ATT DEC SUS REL VOL  VEL[#] [FIX]
  *     VOICES [▼]   |   |   |   |   |   OCT[#]
  *     ###################################### (鍵盤)
  *
  * ── UI 設計 (CRAP) ──
  *   Proximity : 機能で OSC / ENV / AMP / PLAY の 4 セクションに分割。
  *   Repetition: ENV(A/D/S/R) と AMP(VOL) は同型の縦フェーダー。
- *               OSC(WAVE/VOICES) は DropDown、PLAY(VEL/OCT) は NumberBox の 2 行組。
+ *               OSC(WAVE/VOICES) は DropDown、PLAY(VEL/OCT) は NumberBox の 2 行組
+ *               (VEL 行に固定ベロシティの ON/OFF トグル FIX を並置)。
  *   Alignment : 見出し帯は各セクション幅・ラベル中央寄せ。ラベルは上段の同一行に揃え、
  *               フェーダーは 1 バンクの等間隔、鍵盤は上段バンドと中央で揃える。
  *   Contrast  : 見出しは反転帯、鍵盤の押下キーは反転で強調 (1-bit の on/off)。
@@ -30,7 +31,8 @@
  * 演奏キー (フォーカス時):
  *   Z 段 = 現オクターブ, Q 段 = +1oct, I〜P = +2oct
  *   , / .  … オクターブ ∓    [ / ]  … ベロシティ ± 10    /  … 波形順送り
- *   (OCT / VEL は上段の NumberBox でも直接編集でき、値は相互に同期する)
+ *   \  … ベロシティ固定 (FIX) の切替。ON のとき MIDI も VEL 値で一律発音する
+ *   (OCT / VEL は上段の NumberBox、FIX はトグルでも操作でき、値は相互に同期する)
  */
 
 import { fillRect, isCapturing } from "../../core/gpu.js";
@@ -43,6 +45,7 @@ import {
   WidgetGroup,
   DropDown,
   NumberBox,
+  ToggleButton,
   FOCUS_MARGIN,
   GAP,
   SECTION_PAD,
@@ -101,6 +104,9 @@ function synth() {
 
 let octave = 4;
 let velocity = 100;
+/** ベロシティ固定 (FIX)。ON のとき MIDI の受信ベロシティを無視し全入力を VEL 値で発音する
+ *  (オルガン / Chiptune 的な一定音量の演奏用)。PC / オンスクリーン鍵盤は元々 VEL 固定。 */
+let velFixed = false;
 /** 押下中の物理キー → 発音した MIDI (押下時の音程で noteOff するため保持) */
 const heldKeys = new Map();
 /** SYNTH ウィンドウが開いているか。MIDI 入力のゲート (外部デバイスはフォーカスに依らず有効) */
@@ -140,7 +146,7 @@ let dropDownWave, dropDownVoices;
 let faderA, faderD, faderS, faderR, faderVol;
 /** ENV フェーダーを左→右順に保持 (ENV_FADERS と添字対応) */
 let envFaders = [];
-let numVel, numOct;
+let numVel, numOct, toggleFix;
 let keyboard;
 let group;
 let _ready = false;
@@ -192,6 +198,10 @@ function _initWidgets() {
   numOct = new NumberBox(0, 0, OCTAVE_MIN, OCTAVE_MAX, octave, 1, (v) => {
     setOctave(v);
   });
+  // FIX: ベロシティ固定トグル (VEL 行に並置)。ON で MIDI も VEL 値で一律発音する
+  toggleFix = new ToggleButton(0, 0, "FIX", (v) => {
+    velFixed = v;
+  }, velFixed);
 
   keyboard = new Keyboard(KEY_W, KEY_H, NUM_WHITE, {
     onNoteOn: (m) => synth().noteOn(m, velocity / 127),
@@ -202,7 +212,7 @@ function _initWidgets() {
   group = new WidgetGroup([
     dropDownWave, dropDownVoices,
     faderA, faderD, faderS, faderR, faderVol,
-    numVel, numOct,
+    numVel, numOct, toggleFix,
     keyboard,
   ]);
 
@@ -216,7 +226,9 @@ function _initWidgets() {
     onNoteOn: (m, v, t) => {
       if (!winOpen) return;
       midiHeld.add(m);
-      synth().noteOn(m, v, midiEventAudioTime(t));
+      // FIX 時は受信ベロシティを捨て VEL 値で発音 (PC / オンスクリーン鍵盤と一律に揃う)
+      const vel = velFixed ? velocity / 127 : v;
+      synth().noteOn(m, vel, midiEventAudioTime(t));
     },
     onNoteOff: (m, t) => {
       if (!winOpen) return;
@@ -283,7 +295,8 @@ function computeLayout() {
   const envW = envFaders.length * pitch - FADER_GAP;
   const ampW = FADER_W;
   const labelWPlay = Math.max(textWidth("VEL"), textWidth("OCT"));
-  const playW = labelWPlay + GAP + Math.max(numVel.w, numOct.w);
+  // 上段 (VEL 行) は NumberBox + FIX トグルで最も広い → これがセクション幅を決める
+  const playW = labelWPlay + GAP + numVel.w + GAP + toggleFix.w;
 
   const topW = oscW + SEC_GAP + envW + SEC_GAP + ampW + SEC_GAP + playW;
   const panelW = Math.max(topW + FOCUS_MARGIN * 2, KEYBOARD_W);
@@ -319,11 +332,12 @@ function computeLayout() {
   L.volLabelX = ampX + ((FADER_W - textWidth("VOL")) >> 1);
   x += ampW + SEC_GAP;
 
-  // ── PLAY ── VEL / OCT の NumberBox (ラベル列に左端を揃える)
+  // ── PLAY ── VEL / OCT の NumberBox (ラベル列に左端を揃える)。VEL 行に FIX トグルを並置
   const playX = x;
   const playCtrlX = playX + labelWPlay + GAP;
   numVel.x = playCtrlX; numVel.y = row1Y;
   numOct.x = playCtrlX; numOct.y = row2Y;
+  toggleFix.x = playCtrlX + numVel.w + GAP; toggleFix.y = row1Y;
   L.playLabelX = playX;
   x += playW;
 
@@ -403,9 +417,10 @@ function drawSynth(cr) {
   drawText(cr.x + L.playLabelX, cr.y + L.row1TextY, "VEL", 1);
   drawText(cr.x + L.playLabelX, cr.y + L.row2TextY, "OCT", 1);
 
-  // NumberBox とキーボード演奏状態を同期 (, . [ ] で変えた値を表示に反映)
+  // NumberBox / トグルとキーボード演奏状態を同期 (, . [ ] \ で変えた値を表示に反映)
   if (numOct.value !== octave) numOct.value = octave;
   if (numVel.value !== velocity) numVel.value = velocity;
+  if (toggleFix.value !== velFixed) toggleFix.value = velFixed;
 
   // 鍵盤の表示範囲を現オクターブの C に合わせてからウィジェット描画
   keyboard.startMidi = 12 + octave * 12;
@@ -429,6 +444,7 @@ function handleKeyboard() {
   if (keyDown("Period")) setOctave(octave + 1);
   if (keyDown("BracketLeft")) velocity = Math.max(VEL_MIN, velocity - VEL_STEP);
   if (keyDown("BracketRight")) velocity = Math.min(VEL_MAX, velocity + VEL_STEP);
+  if (keyDown("Backslash")) velFixed = !velFixed;
   if (keyDown("Slash")) {
     const wf = synth().cycleWaveform();
     dropDownWave.selectedIndex = waveIndexMap[wf] ?? 0;
@@ -487,7 +503,9 @@ wmRegister(
         "A polyphonic software synthesizer. Pick a waveform and voice count, " +
         "shape the ADSR envelope and volume, then play chords on the on-screen " +
         "keyboard or the PC keyboard (Z row = current octave, Q row = +1, I-P = " +
-        "+2). Use , . to change octave, [ ] for velocity, / to cycle the waveform.",
+        "+2). Use , . to change octave, [ ] for velocity, / to cycle the waveform, " +
+        "and \\ to toggle FIX (fixed velocity — plays every note, including MIDI, at " +
+        "the VEL value for organ / chiptune style).",
       // ENV / AMP フェーダーで調整中のパラメータ値をフッタに表示する
       footer: true,
       onDrawFooter: (fr) => drawSynthFooter(fr),

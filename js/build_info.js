@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.11",
-  hash: "a1371fe",
-  count: 281,
+  hash: "b96d3f3",
+  count: 282,
   notes: [
+    { date: "2026-07-11", hash: "b96d3f3", text: "SYNTH gets a wide layout and voice count" },
     { date: "2026-07-11", hash: "217e3d9", text: "MIDI keyboard timing is now steady" },
     { date: "2026-07-11", hash: "15cf8c5", text: "SYNTH ADSR now uses vertical faders" },
     { date: "2026-07-11", hash: "7fd8b89", text: "SYNTH ADSR now uses vertical faders" },
