@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.11",
-  hash: "217e3d9",
-  count: 278,
+  hash: "baebb9f",
+  count: 279,
   notes: [
     { date: "2026-07-11", hash: "217e3d9", text: "MIDI keyboard timing is now steady" },
     { date: "2026-07-11", hash: "15cf8c5", text: "SYNTH ADSR now uses vertical faders" },
