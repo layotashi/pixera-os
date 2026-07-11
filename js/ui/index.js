@@ -88,8 +88,20 @@ export { FOCUS_MARGIN, GAP, MIN_GAP, SECTION_PAD } from "./ui_constants.js";
 export { Box, HBox, VBox, measureWidgets } from "./layout.js";
 
 // ── スクロールバー プリミティブ ──
-// scrollbar.js は内部モジュール。ウィジェットクラスおよび wm.js が
-// 直接 import して使用する。consumer (app/) からの利用は不要。
-// 各ウィジェットに setContentLength() / scrollToTop() / ensureVisible()
-// メソッドを提供しているため、consumer はこれらを使うこと。
+// scrollbar.js の描画/入力プリミティブは内部モジュール (wm.js・各ウィジェットが直接
+// import)。標準ウィジェットの consumer は各ウィジェットの setContentLength() /
+// scrollToTop() / ensureVisible() を使うこと。
+//
+// ただし独自のスクロールビュー (例: ROLL のピアノロールグリッド) は、WM 標準バーへ
+// wmAttachScroll で接続するため ScrollState を自前で生成・操作する必要がある。
+// その最小 API のみをここで公開する (行/桁単位の viewport/content を持つ状態オブジェクト)。
+export {
+  createScrollState,
+  scrollBy,
+  scrollTo,
+  scrollMaxOffset,
+  scrollNeeded,
+  scrollSetViewport,
+  scrollSetContent,
+} from "./scrollbar.js";
 

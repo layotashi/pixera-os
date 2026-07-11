@@ -22,6 +22,7 @@ import "./notepad.js";
 // capture.js は上で named import 済み
 // SYNESTA (旧 DAW) はアーカイブ済み。app/synesta/ と audio/ は参照用に残すが読み込まない。
 import "./synth/synth.js"; // SYNTH — ポリフォニック・ソフトシンセ (音楽機能の再設計・第1弾)
+import "./roll/roll.js"; // ROLL — ステップグリッド MIDI フレーズエディタ (音楽機能の再設計・第2弾)
 // WELCOME / ABOUT はランチャ最下部の system セクションに並ぶ。
 // import 順が並び順を決めるため、WELCOME を先に読み込む (メニュー: WELCOME → ABOUT)。
 import "./welcome.js";
