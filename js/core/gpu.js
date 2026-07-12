@@ -329,6 +329,61 @@ export function fillRect(x0, y0, w, h, c) {
 }
 
 /**
+ * 破線の選択矩形 (ラバーバンド/マーキー) を描く。
+ *
+ * ダッシュは「3px 実線 + 3px 空白」の 6px 周期。線は 1px の前景色 (黒) で、各実線
+ * ぶんを 1px の背景色 (白) ハローで囲って背景から分離する。アニメーションや色反転は
+ * 行わない (静的)。2 点 (x0,y0)-(x1,y1) から矩形を正規化し、外周に沿って描く。
+ * デスクトップと ROLL のラバー選択で共有する。
+ *
+ * ハロー(白)は全エッジぶんを先に敷いてから実線(黒)を上に重ねる。こうすると角で
+ * 隣接エッジのハローが実線を消さず、四隅が繋がって見える。空白部分は描かない
+ * (透過 = 背景がそのまま残る)。
+ *
+ * @param {number} x0  始点 X
+ * @param {number} y0  始点 Y
+ * @param {number} x1  終点 X
+ * @param {number} y1  終点 Y
+ */
+export function drawDashedRect(x0, y0, x1, y1) {
+  const left = Math.min(x0, x1) | 0;
+  const top = Math.min(y0, y1) | 0;
+  const right = Math.max(x0, x1) | 0;
+  const bottom = Math.max(y0, y1) | 0;
+  const DASH = 3;
+  const PERIOD = 6; // 実線 3 + 空白 3
+
+  // 各エッジの実線ダッシュ位置を集める (末尾は矩形内へクランプ)。
+  const hDashes = []; // [x, w] 上下辺
+  for (let x = left; x <= right; x += PERIOD) {
+    hDashes.push([x, Math.min(DASH, right - x + 1)]);
+  }
+  const vDashes = []; // [y, h] 左右辺
+  for (let y = top; y <= bottom; y += PERIOD) {
+    vDashes.push([y, Math.min(DASH, bottom - y + 1)]);
+  }
+
+  // ── パス1: 白ハロー (実線の 1px 外周) ──
+  for (const [x, w] of hDashes) {
+    fillRect(x - 1, top - 1, w + 2, 3, 0); // 上辺
+    fillRect(x - 1, bottom - 1, w + 2, 3, 0); // 下辺
+  }
+  for (const [y, h] of vDashes) {
+    fillRect(left - 1, y - 1, 3, h + 2, 0); // 左辺
+    fillRect(right - 1, y - 1, 3, h + 2, 0); // 右辺
+  }
+  // ── パス2: 黒の実線 (ハローの上に重ねる) ──
+  for (const [x, w] of hDashes) {
+    fillRect(x, top, w, 1, 1); // 上辺
+    fillRect(x, bottom, w, 1, 1); // 下辺
+  }
+  for (const [y, h] of vDashes) {
+    fillRect(left, y, 1, h, 1); // 左辺
+    fillRect(right, y, 1, h, 1); // 右辺
+  }
+}
+
+/**
  * 角丸矩形の枠線のみ描画 (幅1px)。
  * r=0 は drawRect と等価。r=1 は四隅を 1px 欠く。r=2 は Midpoint 弧。
  * @param {number} r  角丸の半径 (px)。0 で通常矩形。

@@ -29,9 +29,15 @@
  *   作り直さずに済む。FILES から `.roll` をダブルクリックで開く (rollOpenFile)。
  */
 
-import { fillRect, isCapturing } from "../../core/gpu.js";
+import { fillRect, drawDashedRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth } from "../../core/font.js";
-import { createPolySynth, getAudioContext, initAudio } from "../../core/audio.js";
+import {
+  createPolySynth,
+  getAudioContext,
+  initAudio,
+  keepAudioAwake,
+  releaseAudioAwake,
+} from "../../core/audio.js";
 import * as tracks from "../music/tracks.js";
 import * as transport from "../music/transport.js";
 import * as VFS from "../../core/vfs.js";
@@ -169,13 +175,61 @@ function ensureCtx() {
   if (ctx && ctx.state === "suspended") ctx.resume();
   return ctx;
 }
-/** ピッチ確認の短い試聴 (発音先は毎回の最新ターゲット) */
-function audition(midi) {
+
+// ── モノフォニック試聴 / プレビュー ──
+//
+// 一度に鳴るプレビュー音は常に 1 つだけ。次の音を鳴らす前に必ず直前の音を止めるので
+// 多重発音しない。単発 (audition: 配置/選択時) は AUDITION_SEC 後に自動消音、ドラッグ
+// 移動中のグリッサンド (previewPlay sustain=true) は指を離すまで持続する。
+// 発音は「今すぐ」(ctx.currentTime) にスケジュールしてクリック→発音の遅延を最小化する。
+
+/** 現在鳴っているプレビュー音の MIDI (null = 無音) */
+let _previewMidi = null;
+/** その音を鳴らした発音先 (停止に使う。途中でターゲットが変わっても正しく止める) */
+let _previewInst = null;
+/** 自動消音の期限 (ms, performance.now 基準)。0 = 持続 (自動消音しない) */
+let _previewOffAt = 0;
+
+/** 現在のプレビュー音を止める (直前の音を停止 = 多重発音の防止) */
+function previewStop() {
+  if (_previewMidi == null) return;
+  if (_previewInst && getAudioContext()) _previewInst.noteOff(_previewMidi);
+  _previewMidi = null;
+  _previewInst = null;
+  _previewOffAt = 0;
+}
+
+/**
+ * プレビュー発音。直前の音を必ず止めてから鳴らす (モノフォニック)。
+ * @param {number} midi
+ * @param {boolean} sustain  true=持続 (グリッサンド)、false=単発 (AUDITION_SEC で自動消音)
+ */
+function previewPlay(midi, sustain) {
   const ctx = ensureCtx();
   if (!ctx) return;
+  const off = sustain ? 0 : performance.now() + AUDITION_SEC * 1000;
+  if (_previewMidi === midi) {
+    _previewOffAt = off; // 同じ音は鳴らし直さず、消音期限だけ更新
+    return;
+  }
+  previewStop();
   const inst = targetInstrument();
   inst.noteOn(midi, DEFAULT_VEL / 127, ctx.currentTime);
-  inst.noteOff(midi, ctx.currentTime + AUDITION_SEC);
+  _previewMidi = midi;
+  _previewInst = inst;
+  _previewOffAt = off;
+}
+
+/** 単発試聴 (配置/選択時のピッチ確認) */
+function audition(midi) {
+  previewPlay(midi, false);
+}
+
+/** 毎フレーム: 単発プレビューが期限に達していたら消音する */
+function updatePreview() {
+  if (_previewMidi != null && _previewOffAt !== 0 && performance.now() >= _previewOffAt) {
+    previewStop();
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -324,6 +378,33 @@ function selectOnly(note) {
 }
 function selected() {
   return notes.filter((n) => n.selected);
+}
+
+/**
+ * ラバー矩形 (コンテンツ空間の 2 点) に触れているノートを選択する。ノート全体が矩形内に
+ * 収まっている必要はなく、矩形とノート描画箱が少しでも重なれば選択する。additive (Shift)
+ * のときは base (開始時の選択) にマージする。毎フレーム全ノートを再判定して反映する。
+ * @param {{x0:number,y0:number,x1:number,y1:number,base:Set|null}} d
+ */
+function applyRubberSelection(d) {
+  const vl = vLayout();
+  const rx0 = Math.min(d.x0, d.x1);
+  const rx1 = Math.max(d.x0, d.x1);
+  const ry0 = Math.min(d.y0, d.y1);
+  const ry1 = Math.max(d.y0, d.y1);
+  for (const n of notes) {
+    const di = vl.rowToDi.get(n.row);
+    if (di === undefined) {
+      n.selected = d.base ? d.base.has(n) : false; // FOLD で非表示の行は base のみ
+      continue;
+    }
+    const nx0 = colInnerX(n.col);
+    const nx1 = colInnerX(n.col + n.len - 1) + cellW; // drawNoteAt と同じ描画範囲
+    const ny0 = vl.interiorY[di];
+    const ny1 = ny0 + cellH;
+    const hit = nx0 < rx1 && nx1 > rx0 && ny0 < ry1 && ny1 > ry0;
+    n.selected = hit || (d.base ? d.base.has(n) : false);
+  }
 }
 
 /**
@@ -650,6 +731,15 @@ function endDrag() {
   if (!drag) return;
   const d = drag;
   drag = null;
+  // ドラッグ由来の持続プレビュー (グリッサンド) を止める。単発 (自動消音) はそのまま鳴らす。
+  if (_previewMidi != null && _previewOffAt === 0) previewStop();
+
+  if (d.mode === "rubber") {
+    // 動かして離した場合は held で選択反映済み。動かさず離した (単なる空クリック) は
+    // 非 Shift なら全解除、Shift なら選択維持。
+    if (!d.moved && !d.additive) deselectAll();
+    return;
+  }
   if (d.mode === "resize") {
     resolveOverlaps([d.note]); // 端ドラッグはノートを実時間で伸縮済み。確定時に重なり解決
     if (d.resized) markDirty();
@@ -704,8 +794,19 @@ function onInput(ev) {
 
     const n = cell ? noteAt(cell.col, cell.row) : null;
     if (!n) {
-      if (!ev.shift) deselectAll(); // 空クリック: plain=全解除、Shift=維持
-      drag = null;
+      // 空セル: ラバー選択を開始。ドラッグすれば矩形に触れたノートを一括選択し、
+      // 動かさず離せば単なる空クリック (plain=全解除 / Shift=維持) になる。選択の
+      // 変更は確定 (endDrag) まで遅延する。base = Shift 時の合成元 (既存選択)。
+      drag = {
+        mode: "rubber",
+        x0: ev.localX,
+        y0: ev.localY,
+        x1: ev.localX,
+        y1: ev.localY,
+        additive: !!ev.shift,
+        base: ev.shift ? new Set(selected()) : null,
+        moved: false,
+      };
       return;
     }
 
@@ -757,6 +858,15 @@ function onInput(ev) {
 
   if (ev.type === "held") {
     if (!drag) return;
+    if (drag.mode === "rubber") {
+      // ラバー矩形を更新し、触れているノートをリアルタイム選択する。cellAt に依らず
+      // localX/localY をそのまま使う (表の外まで広げても矩形を追従させるため)。
+      drag.x1 = ev.localX;
+      drag.y1 = ev.localY;
+      if (Math.abs(drag.x1 - drag.x0) > 2 || Math.abs(drag.y1 - drag.y0) > 2) drag.moved = true;
+      applyRubberSelection(drag);
+      return;
+    }
     const cell = cellAt(ev.localX, ev.localY);
     if (!cell) return;
     if (drag.mode === "resize") {
@@ -776,6 +886,9 @@ function onInput(ev) {
     drag.dCol = dCol;
     drag.dRow = dRow;
     drag.moved = dCol !== 0 || dRow !== 0;
+    // 移動先のピッチを持続プレビュー (グリッサンド)。掴んだセルの新しい行の音高を鳴らす。
+    // 通常/Shift/Ctrl ドラッグとも同じ move 経路なので一括で対応する。
+    if (drag.moved) previewPlay(rowToMidi(drag.grabRow + dRow), true);
     return;
   }
 
@@ -865,6 +978,7 @@ function drawNoteAt(cr, col, row, len, hollow, vl) {
 function onDraw(cr) {
   if (!isCapturing()) handleKeys(); // CAPTURE の二度描きでキー二重発火を抑止
   updatePlayback(); // 発音・位置更新はフォーカスに依らず継続
+  updatePreview(); // 単発プレビューの自動消音
   const vl = vLayout();
   const tw = tableW();
   const th = vl.totalH;
@@ -892,6 +1006,11 @@ function onDraw(cr) {
   if (moving) {
     for (const n of drag.sel) drawNoteAt(cr, n.col + drag.dCol, n.row + drag.dRow, n.len, false, vl);
   }
+
+  // ラバー選択の矩形 (破線マーキー。コンテンツ空間 → 画面座標へ cr で変換)
+  if (drag && drag.mode === "rubber" && drag.moved) {
+    drawDashedRect(cr.x + drag.x0, cr.y + drag.y0, cr.x + drag.x1, cr.y + drag.y1);
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -915,6 +1034,12 @@ function onDrawFooter(fr) {
     drawText(fr.x, fr.y, "EMPTY", 1);
     return;
   }
+  // 移動ドラッグ中は確定前でも移動先を即時反映する (PITCH/TIME をライブ更新)。
+  // 選択集合は一括して同じ量だけ動くので、scope 全体に dCol/dRow を足せばよい。
+  // 音価変更 (resize) はノートを実時間で書き換えるため LEN/TIME はそのまま反映される。
+  const moving = drag && drag.mode === "move" && drag.moved;
+  const dC = moving ? drag.dCol : 0;
+  const dR = moving ? drag.dRow : 0;
   let loM = Infinity;
   let hiM = -Infinity;
   let loL = Infinity;
@@ -924,15 +1049,16 @@ function onDrawFooter(fr) {
   let loC = Infinity;
   let hiE = -Infinity;
   for (const n of scope) {
-    const m = rowToMidi(n.row);
+    const col = n.col + dC;
+    const m = rowToMidi(n.row + dR);
     loM = Math.min(loM, m);
     hiM = Math.max(hiM, m);
     loL = Math.min(loL, n.len);
     hiL = Math.max(hiL, n.len);
     loV = Math.min(loV, n.vel);
     hiV = Math.max(hiV, n.vel);
-    loC = Math.min(loC, n.col);
-    hiE = Math.max(hiE, n.col + n.len);
+    loC = Math.min(loC, col);
+    hiE = Math.max(hiE, col + n.len);
   }
   const rng = (a, b, f) => (a === b ? f(a) : `${f(a)}-${f(b)}`);
   const str = (x) => `${x}`;
@@ -957,6 +1083,7 @@ const ABOUT_TEXT = [
   "- Click a note: select it",
   "- Shift+click a note: toggle",
   "- Click empty: clear selection",
+  "- Drag empty: rubber-band select",
   "- Drag a note: move selection",
   "- Drag a note edge: change length",
   "- Ctrl+drag: duplicate selection",
@@ -992,6 +1119,8 @@ function cleanupOnClose() {
   _activeInst = null;
   _wasPlaying = false;
   sounding.clear();
+  previewStop(); // プレビュー音を止める
+  releaseAudioAwake(); // キープアライブ解放 (開いた時の keepAudioAwake と対)
   winId = -1;
 }
 
@@ -1023,6 +1152,9 @@ wmRegister(
       about: ABOUT_TEXT,
     });
     refreshTitle(); // 再オープン時もファイル名 / dirty をタイトルに反映
+    // 起動 (ユーザー操作) の時点でオーディオを用意/起こしておく。1 音目や放置後の
+    // 復帰時に出る余分な発音遅延を防ぐ (クローズ時に releaseAudioAwake で解放)。
+    keepAudioAwake();
     return winId;
   },
   { category: "CREATIVE", dev: true },

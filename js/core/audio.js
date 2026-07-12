@@ -343,6 +343,66 @@ export function getAudioContext() {
   return ctx;
 }
 
+// ── オーディオ「起こしておく」 (発音レイテンシ対策) ──
+//
+// ブラウザ/OS は無音が続くと出力デバイスをスリープさせ、AudioContext も
+// suspended へ落とすことがある。その状態から最初の音を鳴らすと、resume と
+// デバイス復帰のぶん通常より大きな発音遅延が出る (「起動直後の 1 音目」「放置後の
+// 復帰直後」の遅延の主因)。無音のキープアライブソースを常時流しておくと出力が
+// 途切れずデバイスが起きたままになり、この復帰遅延を無くせる。
+//
+// 参照カウントで管理し、複数アプリが同時に要求しても最後の 1 つが release する
+// まで生かす。
+
+/** @type {{src:ConstantSourceNode, gain:GainNode}|null} 無音キープアライブ */
+let _keepAlive = null;
+/** キープアライブの参照カウント (keepAudioAwake/releaseAudioAwake で増減) */
+let _keepAliveRefs = 0;
+
+/**
+ * オーディオ出力を「起こしておく」。AudioContext を用意して resume し、無音の
+ * キープアライブソースを流してデバイスがスリープしないようにする。ユーザー操作
+ * 起点 (アプリ起動クリック等) で呼ぶこと。参照カウント式なので、対で
+ * releaseAudioAwake() を呼ぶ。
+ */
+export function keepAudioAwake() {
+  if (!ctx) initAudio();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume();
+  _keepAliveRefs++;
+  if (_keepAlive) return;
+  try {
+    // ConstantSource(offset=0) → gain(0) → destination。完全な無音だが、能動的な
+    // ソースが繋がっている間はレンダリングが継続しデバイスが起きたままになる。
+    const src = ctx.createConstantSource();
+    src.offset.value = 0;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start();
+    _keepAlive = { src, gain };
+  } catch (_) {
+    /* ConstantSource 非対応環境などは無視 (キープアライブ無しでも動作する) */
+  }
+}
+
+/**
+ * keepAudioAwake() の参照を 1 つ解放する。参照が 0 になったらキープアライブを止める。
+ */
+export function releaseAudioAwake() {
+  if (_keepAliveRefs > 0) _keepAliveRefs--;
+  if (_keepAliveRefs > 0 || !_keepAlive) return;
+  try {
+    _keepAlive.src.stop();
+    _keepAlive.src.disconnect();
+    _keepAlive.gain.disconnect();
+  } catch (_) {
+    /* already stopped */
+  }
+  _keepAlive = null;
+}
+
 /** MIDI 入力のジッタ吸収用ルックアヘッド (秒・通常時)。メインスレッドの描画ループで
  *  ハンドラ実行が遅れても、この幅ぶん未来にずらすことで発音時刻をイベント時刻に
  *  固定できる。大きいほどジッタに強いが固定レイテンシが増える (8ms は聴感上の妥協点)。 */

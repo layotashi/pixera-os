@@ -27,8 +27,8 @@
  *   ドラッグ: 選択中アイコンを一括移動 (グリッドスナップ、衝突時交換)
  *   Ctrl+A: 全アイコン選択 (デスクトップにフォーカスがある場合のみ)
  *   デスクトップ空白クリック: 選択解除
- *   ラッソ選択: デスクトップ空白をドラッグすると marching ants 風の
- *     選択矩形が表示され、矩形内のアイコンが選択される。
+ *   ラッソ選択: デスクトップ空白をドラッグすると破線の選択矩形 (gpu.drawDashedRect)
+ *     が表示され、矩形内のアイコンが選択される。ROLL のラバー選択と見た目を共通化。
  */
 
 import { VRAM_WIDTH, VRAM_HEIGHT, onFontChange } from "../config.js";
@@ -259,12 +259,6 @@ let _lassoY1 = 0;
  */
 const _lassoBaseSet = new Set();
 
-/** マーチングアンツのアニメーションフレームカウンタ */
-let _antsFrame = 0;
-
-/** マーチングアンツのアニメーション間隔 (フレーム) */
-const ANTS_INTERVAL = 8;
-
 // ── 公開 API ──
 
 /**
@@ -434,9 +428,6 @@ export function desktopHandleInput(mx, my, openByName) {
  * @param {function} [openByName]  wmOpenByName 関数参照 (Enter によるアプリ起動用)
  */
 export function desktopUpdate(mx, my, openByName) {
-  // ── マーチングアンツ アニメーションカウンタ (毎フレーム進行) ──
-  _antsFrame++;
-
   // ── Ctrl+A: 全選択 (デスクトップにフォーカスがある場合のみ) ──
   if (_desktopFocused && Input.ctrlDown("KeyA") && iconEntries.length > 0) {
     for (let i = 0; i < iconEntries.length; i++) selectedSet.add(i);
@@ -733,9 +724,9 @@ export function desktopDraw() {
     }
   }
 
-  // ── ラッソ選択中: マーチングアンツ描画 ──
+  // ── ラッソ選択中: 破線の選択矩形 (ROLL と共通の見た目) ──
   if (_lassoMode === "selecting") {
-    drawMarchingAnts(_lassoX0, _lassoY0, _lassoX1, _lassoY1);
+    GPU.drawDashedRect(_lassoX0, _lassoY0, _lassoX1, _lassoY1);
   }
 }
 
@@ -782,37 +773,6 @@ function updateLassoSelection() {
     const cy = pos.y + (CELL_H >> 1);
     if (cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h) {
       selectedSet.add(i);
-    }
-  }
-}
-
-/**
- * マーチングアンツ (行進する蟻) 風の選択矩形を描画する。
- * 偶数/奇数フレームでドット位相を反転させ、アニメーション効果を出す。
- * paint.js の実装パターンを踏襲する。
- * @param {number} x0  始点 X
- * @param {number} y0  始点 Y
- * @param {number} x1  終点 X
- * @param {number} y1  終点 Y
- */
-function drawMarchingAnts(x0, y0, x1, y1) {
-  const r = normalizeRect(x0, y0, x1, y1);
-  const phase = ((_antsFrame / ANTS_INTERVAL) | 0) & 1;
-  const ax = r.x;
-  const ay = r.y;
-
-  // 上辺・下辺
-  for (let i = 0; i < r.w; i++) {
-    if (((i + phase) & 1) === 0) {
-      GPU.pset(ax + i, ay, GPU.pget(ax + i, ay) ^ 1);
-      GPU.pset(ax + i, ay + r.h - 1, GPU.pget(ax + i, ay + r.h - 1) ^ 1);
-    }
-  }
-  // 左辺・右辺 (角は上辺・下辺で処理済み)
-  for (let j = 1; j < r.h - 1; j++) {
-    if (((j + phase) & 1) === 0) {
-      GPU.pset(ax, ay + j, GPU.pget(ax, ay + j) ^ 1);
-      GPU.pset(ax + r.w - 1, ay + j, GPU.pget(ax + r.w - 1, ay + j) ^ 1);
     }
   }
 }

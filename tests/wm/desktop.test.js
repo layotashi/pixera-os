@@ -20,6 +20,7 @@ vi.mock("@/core/gpu.js", () => ({
   drawRect: vi.fn(),
   drawRoundRect: vi.fn(),
   drawCheckerboard: vi.fn(),
+  drawDashedRect: vi.fn(),
   invertRect: vi.fn(),
   invertRoundRect: vi.fn(),
   pset: vi.fn(),
