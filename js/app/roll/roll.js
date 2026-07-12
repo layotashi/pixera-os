@@ -31,6 +31,7 @@
  */
 
 import { fillRect, isCapturing } from "../../core/gpu.js";
+import { drawText, textWidth } from "../../core/font.js";
 import {
   wmOpen,
   wmRegister,
@@ -71,6 +72,25 @@ const ZOOM_STEP = 1;
 const REPEAT_DELAY = 300;
 const REPEAT_RATE = 45;
 
+/** 既定ベロシティ (0..127)。v1 は固定。将来の編集に備えノートに保持する */
+const DEFAULT_VEL = 100;
+
+/** 音名 (フッタのピッチ表示用) */
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+/** row → MIDI ノート番号 (上端 row 0 = 127) */
+const rowToMidi = (row) => ROWS - 1 - row;
+/** MIDI → 音名 + オクターブ (MIDI 60 = C4) */
+const midiName = (m) => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+/** 列 → 小節.拍.ステップ (1 始まり) */
+function timePos(col) {
+  const inBar = ((col % STEPS_PER_BAR) + STEPS_PER_BAR) % STEPS_PER_BAR;
+  const bar = Math.floor(col / STEPS_PER_BAR) + 1;
+  const beat = Math.floor(inBar / 4) + 1;
+  const step = (inBar % 4) + 1;
+  return `${bar}.${beat}.${step}`;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  状態
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -81,7 +101,7 @@ let winId = -1;
 let cellW = CELL_DEFAULT; // 横 (列) 方向の内寸
 let cellH = CELL_DEFAULT; // 縦 (行) 方向の内寸
 
-/** ノート一覧。@type {{col:number,row:number,len:number,selected:boolean}[]} */
+/** ノート一覧。@type {{col:number,row:number,len:number,vel:number,selected:boolean}[]} */
 let notes = [];
 
 /**
@@ -262,23 +282,32 @@ function duplicateAt(sel, dCol, dRow) {
     col: n.col + dCol,
     row: n.row + dRow,
     len: n.len,
+    vel: n.vel,
     selected: true,
   }));
   for (const n of sel) n.selected = false;
   notes.push(...copies);
 }
-/** Ctrl+D: 選択を各ノートの直後 (col+len・音高そのまま) へ複製する */
+/**
+ * Ctrl+D: 選択を「ノート群の末尾の次のセル」から複製する (音高そのまま)。
+ * 群の占有幅 = max(col+len) - min(col) を全ノートへ加算し、相対位置を保つ。
+ * 例: セル 1〜5 の群 → セル 6〜10 へ。
+ */
 function duplicateAfter() {
   const sel = selected();
   if (!sel.length) return;
-  const copies = sel.map((n) => ({
-    col: n.col + n.len,
-    row: n.row,
-    len: n.len,
-    selected: true,
-  }));
-  for (const n of sel) n.selected = false;
-  notes.push(...copies);
+  let minCol = Infinity;
+  let maxEnd = -Infinity;
+  for (const n of sel) {
+    minCol = Math.min(minCol, n.col);
+    maxEnd = Math.max(maxEnd, n.col + n.len);
+  }
+  duplicateAt(sel, maxEnd - minCol, 0);
+}
+/** 選択中のノートを削除する (ドラッグ中でも安全に打ち切る) */
+function deleteSelected() {
+  notes = notes.filter((n) => !n.selected);
+  drag = null;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -295,16 +324,18 @@ function zoomWheel(ev) {
   const dir = -Math.sign(ev.deltaY || 0); // WheelUp = 拡大 / Down = 縮小
   if (dir === 0) return;
   const s0 = wmGetScroll(winId);
+  // スクロール補正は整数へ丸めてグリッドをピクセル境界に合わせる (滲みを防ぎ、
+  // カーソル下のセルが厳密に留まる)。
   if (ev.shift) {
     const f = anchorCol(ev.localX);
     const old = cellW;
     cellW = clampCell(cellW + dir * ZOOM_STEP); // Shift+Ctrl = 水平 (幅)
-    wmSetScroll(winId, s0.x + f * (cellW - old), null);
+    wmSetScroll(winId, Math.round(s0.x + f * (cellW - old)), null);
   } else {
     const f = anchorRow(ev.localY);
     const old = cellH;
     cellH = clampCell(cellH + dir * ZOOM_STEP); // Ctrl = 垂直 (高さ)
-    wmSetScroll(winId, null, s0.y + f * (cellH - old));
+    wmSetScroll(winId, null, Math.round(s0.y + f * (cellH - old)));
   }
   ev.consumed = true;
 }
@@ -346,7 +377,7 @@ function onInput(ev) {
     if (n) {
       removeNote(n); // 既存ノート → 削除
     } else {
-      const nn = { col: cell.col, row: cell.row, len: 1, selected: false };
+      const nn = { col: cell.col, row: cell.row, len: 1, vel: DEFAULT_VEL, selected: false };
       notes.push(nn);
       selectOnly(nn); // 配置直後は選択状態 (排他)
     }
@@ -453,6 +484,7 @@ function handleKeys() {
   if (ctrlDown("KeyA")) selectAll();
   if (ctrlDown("KeyD")) duplicateAfter();
   if (keyDown("Escape")) deselectAll();
+  if (keyDown("Delete")) deleteSelected();
   handleArrows(performance.now(), keyHeld("ShiftLeft") || keyHeld("ShiftRight"));
 }
 
@@ -517,6 +549,56 @@ function onDraw(cr) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  フッタ (選択 / 全体の統計)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * フッタ: 右にノート総数、左に統計 (選択があれば選択、なければ全体)。
+ * SEL 数 / ピッチ範囲 / ベロシティ範囲 / 音価範囲 / 先頭の時間位置。
+ * 単一値なら範囲表記を畳む (例 PITCH C4)。
+ */
+function onDrawFooter(fr) {
+  const total = notes.length;
+  const sel = selected();
+  // 右: 件数の文脈 (選択あり = SEL n/total、なし = total NOTES)
+  const right = sel.length
+    ? `SEL ${sel.length}/${total}`
+    : total + (total === 1 ? " NOTE" : " NOTES");
+  drawText(fr.x + fr.w - textWidth(right), fr.y, right, 1);
+
+  const scope = sel.length ? sel : notes;
+  if (!scope.length) {
+    drawText(fr.x, fr.y, "EMPTY", 1);
+    return;
+  }
+  let loM = Infinity;
+  let hiM = -Infinity;
+  let loL = Infinity;
+  let hiL = -Infinity;
+  let loV = Infinity;
+  let hiV = -Infinity;
+  let loC = Infinity;
+  for (const n of scope) {
+    const m = rowToMidi(n.row);
+    loM = Math.min(loM, m);
+    hiM = Math.max(hiM, m);
+    loL = Math.min(loL, n.len);
+    hiL = Math.max(hiL, n.len);
+    loV = Math.min(loV, n.vel);
+    hiV = Math.max(hiV, n.vel);
+    loC = Math.min(loC, n.col);
+  }
+  const rng = (a, b, f) => (a === b ? f(a) : `${f(a)}-${f(b)}`);
+  const str = (x) => `${x}`;
+  const left =
+    `PITCH ${rng(loM, hiM, midiName)}  ` +
+    `VEL ${rng(loV, hiV, str)}  ` +
+    `LEN ${rng(loL, hiL, str)}  ` +
+    `TIME ${timePos(loC)}`;
+  drawText(fr.x, fr.y, left, 1);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ABOUT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -541,7 +623,8 @@ const ABOUT_TEXT = [
   "KEYS",
   "- Ctrl+A: select all",
   "- Esc: clear selection",
-  "- Ctrl+D: duplicate after",
+  "- Delete: delete selection",
+  "- Ctrl+D: duplicate after group",
   "- Arrows: move 1 cell (held repeats)",
   "- Shift+Up/Down: move 1 octave",
   "- Shift+Left: shorten note",
@@ -558,6 +641,8 @@ wmRegister(
     // w=0/h=0: onMeasure から初期外寸を自動算出 (表が work area より大きければ
     // クランプされ、スクロールで巡る = fixed-size + scroll)
     winId = wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
+      footer: true,
+      onDrawFooter,
       onBeforeClose: () => {
         winId = -1;
         return true;
