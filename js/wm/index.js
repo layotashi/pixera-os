@@ -38,6 +38,7 @@ export {
   wmFocus,
   wmSetContentSize,
   wmGetScroll,
+  wmSetScroll,
   wmAttachScroll,
   wmSetFullscreen,
   wmToggleFullscreen,

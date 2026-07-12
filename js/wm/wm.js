@@ -1520,6 +1520,22 @@ export function wmGetScroll(id) {
 }
 
 /**
+ * WM 管理スクロール窓のスクロール位置を設定する (px)。null の軸は据え置き。
+ * クランプ前に onMeasure でコンテンツ/ビューポート寸法を同期するため、コンテンツ寸法を
+ * 変えた直後 (例: カーソル基準ズーム) に呼んでも新寸法で正しくクランプされる。
+ * @param {number} id  ウィンドウ ID
+ * @param {number|null} x  横スクロール位置 (null で据え置き)
+ * @param {number|null} y  縦スクロール位置 (null で据え置き)
+ */
+export function wmSetScroll(id, x, y) {
+  const win = windows.find((w) => w.id === id);
+  if (!win || !win._scrollable) return;
+  syncScrollContent(win);
+  if (x != null && win._hScroll) Scroll.scrollTo(win._hScroll, x);
+  if (y != null && win._vScroll) Scroll.scrollTo(win._vScroll, y);
+}
+
+/**
  * アプリ管理のスクロール状態を標準スクロールバー chrome に接続する。
  *
  * 自前のスクロール (行・桁単位など) を持つアプリ (例: NOTEPAD) が、WM の縦横バーへ
