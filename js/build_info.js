@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.12",
-  hash: "6d1e1a0",
-  count: 290,
+  hash: "fb9bab6",
+  count: 291,
   notes: [
     { date: "2026-07-11", hash: "6699d81", text: "SYNTH: fixed velocity mode (FIX toggle)" },
     { date: "2026-07-11", hash: "b96d3f3", text: "SYNTH gets a wide layout and voice count" },

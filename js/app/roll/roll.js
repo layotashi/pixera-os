@@ -14,21 +14,30 @@
  * ── ノート ──
  *   セル内寸 (span) いっぱいに置き、最外周 1px を白枠、その内側を黒ノートにする
  *   (罫線との視認性確保。ノート + 白枠 = セル内寸)。
- *   非選択 = 黒枠 + 黒塗り。選択 = 黒枠 + 白塗り。移動中は移動先へゴースト (非選択と同外観)。
+ *   非選択 = 黒枠 + 黒塗り。選択 = 黒枠 + 白塗り。
+ *   ドラッグ/複製中は移動先へゴースト (非選択と同外観) を表示する。
  *
  * ── 操作 (ABOUT パネルにも記載。実装済みのもののみ) ──
  *   ダブルクリック(空/ノート) … 配置 / 削除。クリック … 単一選択 (空は解除)。
- *   Ctrl+クリック … 選択トグル。ドラッグ … 移動 (掴んだ位置を保つ)。
- *   Ctrl+ホイール / Shift+Ctrl+ホイール … セル高さ / 幅のズーム。
- *   Ctrl+A / Esc … 全選択 / 全解除。矢印 … 選択を 1 セル移動。
- *   Shift+↑↓ … 1 オクターブ移動。Shift+←→ … 1 セル短縮 / 伸長 (最小 1 セル・上限なし)。
+ *   Ctrl+クリック … 選択トグル。ドラッグ … 選択を移動。Ctrl+ドラッグ … 選択を複製
+ *     (ドラッグ中の Ctrl 押下/解放で複製/移動をリアルタイム切替)。
+ *   Ctrl+ホイール / Shift+Ctrl+ホイール … セル高さ / 幅のズーム (カーソル基準)。
+ *   Ctrl+A / Esc … 全選択 / 全解除。Ctrl+D … 各ノートの直後に複製。
+ *   矢印 … 選択を 1 セル移動 (長押しでリピート)。Shift+↑↓ … 1 オクターブ移動。
+ *   Shift+←→ … 1 セル短縮 / 伸長 (最小 1 セル・上限なし)。
  *
  * 音名・小節番号・鍵盤・再生は、この段階では未実装。
  * ノートモデルや再生ロジックは grid.js に温存 (このウィンドウからは未接続) してある。
  */
 
-import { fillRect } from "../../core/gpu.js";
-import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
+import { fillRect, isCapturing } from "../../core/gpu.js";
+import {
+  wmOpen,
+  wmRegister,
+  wmIsFocused,
+  wmGetScroll,
+  wmSetScroll,
+} from "../../wm/index.js";
 import { keyDown, keyHeld, ctrlDown } from "../../core/input.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -58,6 +67,10 @@ const CELL_DEFAULT = 15;
 /** ホイール 1 ノッチあたりのズーム量 (DOT) */
 const ZOOM_STEP = 1;
 
+/** キーリピート: 押下後この待機 (ms) を経てから、この間隔 (ms) で連続処理 */
+const REPEAT_DELAY = 300;
+const REPEAT_RATE = 45;
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  状態
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -72,16 +85,22 @@ let cellH = CELL_DEFAULT; // 縦 (行) 方向の内寸
 let notes = [];
 
 /**
- * ドラッグ移動の状態。grabD* は掴んだセルのノート先頭からのオフセット (掴み位置維持用)。
- * @type {{note:object,grabDCol:number,grabDRow:number,startCol:number,startRow:number,targetCol:number,targetRow:number}|null}
+ * ドラッグ状態。sel = 対象ノート (down 時の選択スナップショット)、dCol/dRow = 現在のデルタ、
+ * pending = クリック確定時 (未移動) の選択変更。移動/複製は Ctrl の実時間状態で切替える。
+ * @type {{grabCol:number,grabRow:number,dCol:number,dRow:number,moved:boolean,sel:object[],pending:(()=>void)|null}|null}
  */
 let drag = null;
+
+/** キーリピート: 対象コードと次回発火時刻 (ms) */
+let repeatCode = null;
+let repeatNext = 0;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  寸法 / 座標 (コンテンツ空間。原点 = 表の左上)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const ctrlHeld = () => keyHeld("ControlLeft") || keyHeld("ControlRight");
 
 /** 列境界 (縦罫線) の太さ。小節境界 (16 列ごと・両端含む) = 太線 */
 const vThick = (c) => (c % STEPS_PER_BAR === 0 ? BOLD : THIN);
@@ -112,6 +131,31 @@ function rowInnerY(r) {
   let y = 0;
   for (let i = 0; i < r; i++) y += hThick(i) + cellH;
   return y + hThick(r);
+}
+
+/** コンテンツ空間 X → 連続列座標 (col + セル内フラクション)。ズームのカーソル基準に使う */
+function anchorCol(lx) {
+  if (lx <= 0) return 0;
+  let x = 0;
+  for (let c = 0; c < COLS; c++) {
+    const ix = x + vThick(c);
+    const end = ix + cellW;
+    if (lx < end) return c + Math.max(0, Math.min(1, (lx - ix) / cellW));
+    x = end;
+  }
+  return COLS;
+}
+/** コンテンツ空間 Y → 連続行座標 */
+function anchorRow(ly) {
+  if (ly <= 0) return 0;
+  let y = 0;
+  for (let r = 0; r < ROWS; r++) {
+    const iy = y + hThick(r);
+    const end = iy + cellH;
+    if (ly < end) return r + Math.max(0, Math.min(1, (ly - iy) / cellH));
+    y = end;
+  }
+  return ROWS;
 }
 
 /**
@@ -172,60 +216,125 @@ function selectAll() {
 function selectOnly(note) {
   for (const n of notes) n.selected = n === note;
 }
+function selected() {
+  return notes.filter((n) => n.selected);
+}
 /** 選択中の全ノートの長さを d セル変える (最小 1・上限なし) */
 function changeLen(d) {
   for (const n of notes) if (n.selected) n.len = Math.max(1, n.len + d);
 }
 /**
- * 選択中の全ノートを (dCol,dRow) だけ動かす。相対位置を保つため、1 つでも
- * グリッド枠外へ出る場合は全体を動かさない (all-or-nothing)。
+ * (dCol,dRow) を、選択集合が全てグリッド枠内に収まる範囲へクランプして返す。
+ * 先頭セルを [0,COLS-1]×[0,ROWS-1] に保つ (末尾は len で枠外可)。
  */
-function moveSelected(dCol, dRow) {
-  const sel = notes.filter((n) => n.selected);
-  if (!sel.length) return;
+function clampDelta(sel, dCol, dRow) {
+  if (!sel.length) return [0, 0];
+  let minC = Infinity;
+  let maxC = -Infinity;
+  let minR = Infinity;
+  let maxR = -Infinity;
   for (const n of sel) {
-    const c = n.col + dCol;
-    const r = n.row + dRow;
-    if (c < 0 || c > COLS - 1 || r < 0 || r > ROWS - 1) return;
+    minC = Math.min(minC, n.col);
+    maxC = Math.max(maxC, n.col);
+    minR = Math.min(minR, n.row);
+    maxR = Math.max(maxR, n.row);
   }
+  return [
+    clampInt(dCol, -minC, COLS - 1 - maxC),
+    clampInt(dRow, -minR, ROWS - 1 - maxR),
+  ];
+}
+/** 選択を (dCol,dRow) 動かす。全体が枠内のときだけ (相対位置を保つ all-or-nothing) */
+function moveSelected(dCol, dRow) {
+  const sel = selected();
+  if (!sel.length) return;
+  const [cc, rr] = clampDelta(sel, dCol, dRow);
+  if (cc !== dCol || rr !== dRow) return; // 1 つでも枠外 → 動かさない
   for (const n of sel) {
     n.col += dCol;
     n.row += dRow;
   }
 }
+/** sel を各ノートの (dCol,dRow) 平行移動位置へ複製し、選択をコピーへ移す (元は残す) */
+function duplicateAt(sel, dCol, dRow) {
+  if (!sel.length) return;
+  const copies = sel.map((n) => ({
+    col: n.col + dCol,
+    row: n.row + dRow,
+    len: n.len,
+    selected: true,
+  }));
+  for (const n of sel) n.selected = false;
+  notes.push(...copies);
+}
+/** Ctrl+D: 選択を各ノートの直後 (col+len・音高そのまま) へ複製する */
+function duplicateAfter() {
+  const sel = selected();
+  if (!sel.length) return;
+  const copies = sel.map((n) => ({
+    col: n.col + n.len,
+    row: n.row,
+    len: n.len,
+    selected: true,
+  }));
+  for (const n of sel) n.selected = false;
+  notes.push(...copies);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  入力
+//  入力 — ホイール (カーソル基準ズーム)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const clampCell = (v) => Math.max(CELL_MIN, Math.min(CELL_MAX, v));
 
-/** ドラッグが実際に別セルへ動いているか (= ゴースト表示中か) */
-function dragMoved() {
-  return (
-    drag && (drag.targetCol !== drag.startCol || drag.targetRow !== drag.startRow)
-  );
+/**
+ * ズームでセル内寸が old→new に変わったとき、カーソル下 (連続座標 f) の点が画面上で
+ * 動かないよう、スクロール量の補正 = f * (new - old) を返す (境界線は不変なので相殺)。
+ */
+function zoomWheel(ev) {
+  const dir = -Math.sign(ev.deltaY || 0); // WheelUp = 拡大 / Down = 縮小
+  if (dir === 0) return;
+  const s0 = wmGetScroll(winId);
+  if (ev.shift) {
+    const f = anchorCol(ev.localX);
+    const old = cellW;
+    cellW = clampCell(cellW + dir * ZOOM_STEP); // Shift+Ctrl = 水平 (幅)
+    wmSetScroll(winId, s0.x + f * (cellW - old), null);
+  } else {
+    const f = anchorRow(ev.localY);
+    const old = cellH;
+    cellH = clampCell(cellH + dir * ZOOM_STEP); // Ctrl = 垂直 (高さ)
+    wmSetScroll(winId, null, s0.y + f * (cellH - old));
+  }
+  ev.consumed = true;
 }
 
-/** ドラッグ確定: ノートが残っていればゴースト位置へ移動する */
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  入力 — マウス (配置 / 選択 / ドラッグ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/** ドラッグ確定: 未移動ならクリック扱い、移動なら Ctrl の状態で複製 / 移動 */
 function endDrag() {
   if (!drag) return;
-  if (notes.includes(drag.note)) {
-    drag.note.col = drag.targetCol;
-    drag.note.row = drag.targetRow;
-  }
+  const d = drag;
   drag = null;
+  if (!d.moved) {
+    if (d.pending) d.pending();
+    return;
+  }
+  if (ctrlHeld()) {
+    duplicateAt(d.sel, d.dCol, d.dRow); // Ctrl 押下中 = 複製 (元を残す)
+  } else {
+    for (const n of d.sel) {
+      n.col += d.dCol;
+      n.row += d.dRow;
+    }
+  }
 }
 
 function onInput(ev) {
   if (ev.type === "wheel") {
-    if (!ev.ctrl) return; // 通常/Shift ホイールは WM のスクロールへ委ねる
-    // WheelUp (deltaY<0) = 拡大 / WheelDown (deltaY>0) = 縮小
-    const dir = -Math.sign(ev.deltaY || 0);
-    if (dir === 0) return;
-    if (ev.shift) cellW = clampCell(cellW + dir * ZOOM_STEP); // Shift+Ctrl = 水平 (幅)
-    else cellH = clampCell(cellH + dir * ZOOM_STEP); //           Ctrl = 垂直 (高さ)
-    ev.consumed = true;
+    if (ev.ctrl) zoomWheel(ev); // 通常/Shift ホイールは WM のスクロールへ委ねる
     return;
   }
 
@@ -247,36 +356,45 @@ function onInput(ev) {
   if (ev.type === "down") {
     const cell = cellAt(ev.localX, ev.localY);
     const n = cell ? noteAt(cell.col, cell.row) : null;
-    // 選択
-    if (ev.ctrl) {
-      if (n) n.selected = !n.selected; // Ctrl+クリック = トグル。空セルは維持
-    } else if (n) {
-      selectOnly(n); // クリック = 単一選択
-    } else {
-      deselectAll(); // 空セルのクリック = 全解除
+    if (!n) {
+      if (!ev.ctrl) deselectAll(); // plain 空クリック = 全解除、Ctrl 空クリック = 維持
+      drag = null;
+      return;
     }
-    // ノート上ならドラッグ開始。掴んだ位置のオフセットを保持し、移動時に瞬間移動させない
-    drag = n
-      ? {
-          note: n,
-          grabDCol: cell.col - n.col,
-          grabDRow: cell.row - n.row,
-          startCol: n.col,
-          startRow: n.row,
-          targetCol: n.col,
-          targetRow: n.row,
-        }
-      : null;
+    // 選択変更。ドラッグで意味が変わる操作 (選択中ノートの掴み) は pending に遅延する
+    let pending = null;
+    if (ev.ctrl) {
+      if (n.selected) pending = () => (n.selected = false); // Ctrl+クリック=トグルOff / ドラッグ=複製
+      else n.selected = true; //                              Ctrl+down(非選択)=選択に追加
+    } else if (n.selected) {
+      pending = () => selectOnly(n); // クリック=単一化 / ドラッグ=グループ移動
+    } else {
+      selectOnly(n); //               plain down(非選択)=単一選択
+    }
+    drag = {
+      grabCol: cell.col,
+      grabRow: cell.row,
+      dCol: 0,
+      dRow: 0,
+      moved: false,
+      sel: selected(),
+      pending,
+    };
     return;
   }
 
   if (ev.type === "held") {
     if (!drag) return;
     const cell = cellAt(ev.localX, ev.localY);
-    if (!cell) return; // グリッド外は移動先を据え置き
-    // 掴んだ位置を保ったまま先頭セルを求める (枠内にクランプ)
-    drag.targetCol = clampInt(cell.col - drag.grabDCol, 0, COLS - 1);
-    drag.targetRow = clampInt(cell.row - drag.grabDRow, 0, ROWS - 1);
+    if (!cell) return; // グリッド外は据え置き
+    const [dCol, dRow] = clampDelta(
+      drag.sel,
+      cell.col - drag.grabCol,
+      cell.row - drag.grabRow,
+    );
+    drag.dCol = dCol;
+    drag.dRow = dRow;
+    drag.moved = dCol !== 0 || dRow !== 0;
     return;
   }
 
@@ -285,24 +403,57 @@ function onInput(ev) {
   else if (ev.type === "hover" && drag) endDrag();
 }
 
-/** キーボード (毎フレーム onDraw から。最前面のときだけ拾う) */
-function handleKeys() {
-  if (!wmIsFocused(APP_NAME)) return;
-  if (ctrlDown("KeyA")) selectAll();
-  if (keyDown("Escape")) deselectAll();
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  入力 — キーボード (最前面時のみ。長押しリピート対応)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  const shift = keyHeld("ShiftLeft") || keyHeld("ShiftRight");
-  if (shift) {
-    if (keyDown("ArrowRight")) changeLen(+1); // 伸長
-    if (keyDown("ArrowLeft")) changeLen(-1); //  短縮
-    if (keyDown("ArrowUp")) moveSelected(0, -OCTAVE); // 1 オクターブ上 (row 減 = 高音)
-    if (keyDown("ArrowDown")) moveSelected(0, +OCTAVE); // 1 オクターブ下
-  } else {
-    if (keyDown("ArrowLeft")) moveSelected(-1, 0);
-    if (keyDown("ArrowRight")) moveSelected(+1, 0);
-    if (keyDown("ArrowUp")) moveSelected(0, -1); // 上 = 高音 = row 減
-    if (keyDown("ArrowDown")) moveSelected(0, +1);
+const ARROWS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
+
+/** 矢印コード + Shift 状態 → 適用する操作 */
+function arrowAction(code, shift) {
+  switch (code) {
+    case "ArrowLeft":
+      return shift ? () => changeLen(-1) : () => moveSelected(-1, 0);
+    case "ArrowRight":
+      return shift ? () => changeLen(+1) : () => moveSelected(+1, 0);
+    case "ArrowUp":
+      return shift ? () => moveSelected(0, -OCTAVE) : () => moveSelected(0, -1);
+    case "ArrowDown":
+      return shift ? () => moveSelected(0, +OCTAVE) : () => moveSelected(0, +1);
+    default:
+      return null;
   }
+}
+
+/** 矢印: 押下直後に 1 段階、その後 REPEAT_DELAY を経て REPEAT_RATE ごとに連続処理 */
+function handleArrows(now, shift) {
+  for (const code of ARROWS) {
+    if (keyDown(code)) {
+      arrowAction(code, shift)?.();
+      repeatCode = code;
+      repeatNext = now + REPEAT_DELAY;
+      return;
+    }
+  }
+  if (repeatCode && keyHeld(repeatCode)) {
+    if (now >= repeatNext) {
+      arrowAction(repeatCode, shift)?.();
+      repeatNext = now + REPEAT_RATE;
+    }
+  } else {
+    repeatCode = null;
+  }
+}
+
+function handleKeys() {
+  if (!wmIsFocused(APP_NAME)) {
+    repeatCode = null;
+    return;
+  }
+  if (ctrlDown("KeyA")) selectAll();
+  if (ctrlDown("KeyD")) duplicateAfter();
+  if (keyDown("Escape")) deselectAll();
+  handleArrows(performance.now(), keyHeld("ShiftLeft") || keyHeld("ShiftRight"));
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -310,9 +461,8 @@ function handleKeys() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * ノート (col,row から len セル) を描く。cr はコンテンツ矩形。
- * セル内寸いっぱいを白枠 (最外周 1px) にし、その内側を黒ノートにする。
- * selected=true で内部をさらに白へ (黒枠 + 白塗り)、false で黒塗り (べた)。
+ * ノート (col,row から len セル) を描く。セル内寸いっぱいを白枠 (最外周 1px) にし、
+ * その内側を黒ノートに。selected=true で内部をさらに白へ (黒枠 + 白塗り)。
  */
 function drawNoteAt(cr, col, row, len, selected) {
   const x0 = colInnerX(col);
@@ -320,9 +470,9 @@ function drawNoteAt(cr, col, row, len, selected) {
   const ox = cr.x + x0;
   const oy = cr.y + rowInnerY(row);
   const ow = x1 - x0; // セル内寸の span 幅 (白枠込みのノート全体)
-  const oh = cellH; // セル内寸の高さ
+  const oh = cellH;
   if (ow <= 0 || oh <= 0) return;
-  fillRect(ox, oy, ow, oh, 0); // 白枠 (最外周 1px ぶんを含めた白地)
+  fillRect(ox, oy, ow, oh, 0); // 白枠 (最外周 1px を含む白地)
   if (ow > 2 && oh > 2) {
     fillRect(ox + 1, oy + 1, ow - 2, oh - 2, 1); // 黒ノート本体 (白枠の内側)
     if (selected && ow > 4 && oh > 4) {
@@ -332,7 +482,7 @@ function drawNoteAt(cr, col, row, len, selected) {
 }
 
 function onDraw(cr) {
-  handleKeys();
+  if (!isCapturing()) handleKeys(); // CAPTURE の二度描きでキーが二重発火しないよう抑止
   // 背景 (ペーパー) は WM がボディを毎フレーム塗るのでここでは不要。
   // cr はスクロール量ぶん原点がずれた自然座標系 (WM が平行移動 + クリップする)。
   const tw = tableW();
@@ -351,14 +501,19 @@ function onDraw(cr) {
     y += t + (r < ROWS ? cellH : 0);
   }
 
-  // ノート (罫線の上に重ねる。白枠が罫線との境を確保する)
-  const moving = dragMoved();
+  // ノート + ドラッグ/複製プレビュー (Ctrl の実時間状態で切替)
+  const moving = !!(drag && drag.moved);
+  const dup = moving && ctrlHeld();
   for (const n of notes) {
-    if (moving && n === drag.note) continue; // 移動中の実体は隠しゴーストだけ描く
+    if (moving && !dup && drag.sel.includes(n)) continue; // 移動: 掴んだ実体は隠す
     drawNoteAt(cr, n.col, n.row, n.len, n.selected);
   }
-  // ゴースト (移動先。非選択と同じ外観)
-  if (moving) drawNoteAt(cr, drag.targetCol, drag.targetRow, drag.note.len, false);
+  if (moving) {
+    // ゴースト (移動先。非選択と同じ外観)。複製時は元も残るので二重に見える
+    for (const n of drag.sel) {
+      drawNoteAt(cr, n.col + drag.dCol, n.row + drag.dRow, n.len, false);
+    }
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -377,15 +532,17 @@ const ABOUT_TEXT = [
   "- Click a note: select it",
   "- Ctrl+click a note: toggle",
   "- Click empty: clear selection",
-  "- Drag a note: move it",
-  "- Ctrl+wheel: resize height",
-  "- Shift+Ctrl+wheel: resize width",
+  "- Drag: move selection",
+  "- Ctrl+drag: duplicate selection",
+  "- Ctrl+wheel: zoom height (at cursor)",
+  "- Shift+Ctrl+wheel: zoom width",
   "- Wheel / Shift+wheel: scroll",
   "",
   "KEYS",
   "- Ctrl+A: select all",
   "- Esc: clear selection",
-  "- Arrows: move 1 cell",
+  "- Ctrl+D: duplicate after",
+  "- Arrows: move 1 cell (held repeats)",
   "- Shift+Up/Down: move 1 octave",
   "- Shift+Left: shorten note",
   "- Shift+Right: lengthen note",
