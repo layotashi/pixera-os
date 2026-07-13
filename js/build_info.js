@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.13",
-  hash: "81d348c",
-  count: 305,
+  hash: "174fec4",
+  count: 306,
   notes: [
     { date: "2026-07-13", hash: "19acb05", text: "App content stays inside the window body" },
     { date: "2026-07-13", hash: "bc4ab41", text: "ROLL cursor now reflects the action" },

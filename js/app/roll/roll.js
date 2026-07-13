@@ -8,7 +8,13 @@
  *   ノートは開始セル (col,row)・長さ len (セル数)・ベロシティ vel を持つ。
  *
  * ── 罫線 / ノート ──
- *   小節境界 (16 列ごと) とオクターブ境界 (B/C)・上端 = 2px、他は 1px。
+ *   縦 (時間) は 3 段階の階層で役割を判別しやすくする:
+ *     小節線 (16 列ごと)   = 2px 実線
+ *     拍線   (4 列ごと)     = 1px 実線
+ *     ステップ (拍より細かい) = 1px 点線 (1px 描画 + 1px 間隔の交互)
+ *   点線は各セル内寸の上端から 1px おきに点を打つため、隙間が必ず横罫線の行に重なる。
+ *   これにより交点で横線が途切れず、ズーム (cellH 可変) でもこの位相関係は保たれる。
+ *   横 (音高) はオクターブ境界 (B/C)・上端/下端 = 2px、他は 1px 実線。
  *   ノートはセル内寸いっぱいに置き、最外周 1px を白枠・内側を黒に (罫線との視認性)。
  *   非選択 = 黒枠+黒塗り。選択/発音中 = 黒枠+白塗り。
  *
@@ -29,7 +35,7 @@
  *   作り直さずに済む。FILES から `.roll` をダブルクリックで開く (rollOpenFile)。
  */
 
-import { fillRect, drawDashedRect, isCapturing } from "../../core/gpu.js";
+import { fillRect, pset, drawDashedRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth } from "../../core/font.js";
 import {
   createPolySynth,
@@ -1019,6 +1025,23 @@ function handleKeys() {
 //  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/**
+ * ステップ (拍より細かい) の縦点線を 1 本描く。各セル内寸の上端 (interiorY) から 1px おきに
+ * 点を打つ。横罫線は内寸の「外」にあるため点が乗らず、点線の隙間が必ず横線の行に重なる
+ * (ASCII 仕様の位相)。内寸基準なので cellH や罫線厚がズームで変わっても位相は保たれる。
+ * @param {number} x   線の X (画面座標)
+ * @param {number} oy  表上端の Y (画面座標。interiorY はこの原点からのオフセット)
+ * @param {number[]} interiorY  各表示行の内寸上端 Y (コンテンツ空間)
+ * @param {number} rows 表示行数 (interiorY の有効長)
+ * @param {number} ch  セル行高
+ */
+export function drawStepDots(x, oy, interiorY, rows, ch) {
+  for (let di = 0; di < rows; di++) {
+    const y0 = oy + interiorY[di];
+    for (let k = 0; k < ch; k += 2) pset(x, y0 + k, 1);
+  }
+}
+
 /** 1 ノートを描く。hollow=true で内部を白抜き (選択/発音中) */
 function drawNoteAt(cr, col, row, len, hollow, vl) {
   const di = vl.rowToDi.get(row);
@@ -1045,10 +1068,13 @@ function onDraw(cr) {
   const tw = tableW();
   const th = vl.totalH;
 
-  // 縦罫線 (列境界)
+  // 縦罫線 (列境界) — 時間方向の階層: 小節線=2px 実線 / 拍線=1px 実線 / ステップ=1px 点線。
+  // 拍境界 (小節を含む) は実線、それ以外の細かいステップは点線。点線は横罫線の行を避けて
+  // 内寸だけに点を打つので、横線と交差しても線が潰れず隙間が横線に重なる (ASCII 位相)。
   for (let c = 0, x = cr.x; c <= COLS; c++) {
     const t = vThick(c);
-    fillRect(x, cr.y, t, th, 1);
+    if (c % STEPS_PER_BEAT === 0) fillRect(x, cr.y, t, th, 1); // 小節線(2px)/拍線(1px)=実線
+    else drawStepDots(x, cr.y, vl.interiorY, vl.R, cellH); // ステップ=1px 点線
     x += t + (c < COLS ? cellW : 0);
   }
   // 横罫線 (表示行の境界)
