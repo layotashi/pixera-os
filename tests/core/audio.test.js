@@ -26,6 +26,7 @@ import {
   currentMidiLookahead,
   MIDI_LOOKAHEAD,
   MIDI_LOOKAHEAD_RECORDING,
+  getMasterMeter,
 } from "@/core/audio.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -809,6 +810,17 @@ describe("ファクトリ関数", () => {
     const a = getDefaultChannel();
     const b = getDefaultChannel();
     expect(a).toBe(b);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  getMasterMeter
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("getMasterMeter", () => {
+  it("AudioContext 未初期化時 (テスト環境) は peak / reduction ともに 0", () => {
+    // Node には AudioContext が無く initAudio が走らないため、常に安全な 0 を返す。
+    expect(getMasterMeter()).toEqual({ peak: 0, reduction: 0 });
   });
 });
 

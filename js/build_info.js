@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.13",
-  hash: "055f740",
-  count: 299,
+  hash: "c99da50",
+  count: 300,
   notes: [
+    { date: "2026-07-13", hash: "c99da50", text: "ROLL opens on a usable pitch range" },
     { date: "2026-07-13", hash: "055f740", text: "TESSERA no longer opens full-screen" },
     { date: "2026-07-12", hash: "6a8712d", text: "ROLL now has rubber-band note selection" },
     { date: "2026-07-12", hash: "4378124", text: "Roll can now save and open note clips" },

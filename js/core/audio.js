@@ -100,6 +100,12 @@ let mediaDest = null;
 /** マスターチェーン末端のリミッター。録画用 PCM タップの取り出し口 */
 let limiter = null;
 
+/** 出力メーター用アナライザ (dcBlocker 出力 = リミッタ手前をタップ) */
+let masterAnalyser = null;
+
+/** アナライザから時間領域サンプルを読み出す再利用バッファ */
+let meterBuf = null;
+
 /** ノイズ用バッファ (全チャンネル共有) */
 let noiseBuffer = null;
 
@@ -319,6 +325,16 @@ export function initAudio() {
   mediaDest = ctx.createMediaStreamDestination();
   limiter.connect(mediaDest);
 
+  // ── 出力メーター用タップ (リミッタ手前 = dcBlocker 出力) ──
+  // SYNTH フッタのレベルバー / リミッタ表示用。リミッタで潰れる前の信号ピークを
+  // 見て VOL のヘッドルームを判断できるよう、あえてリミッタの手前をタップする。
+  // アナライザは受動的な分岐 (destination には繋がない) なので音は変えない。
+  masterAnalyser = ctx.createAnalyser();
+  masterAnalyser.fftSize = 256;
+  masterAnalyser.smoothingTimeConstant = 0;
+  meterBuf = new Float32Array(masterAnalyser.fftSize);
+  dcBlocker.connect(masterAnalyser);
+
   // ── ノイズバッファ生成 (4秒 + ループ接合クロスフェード) ──
   const sr = ctx.sampleRate;
   const len = sr * 4;
@@ -341,6 +357,27 @@ export function initAudio() {
  */
 export function getAudioContext() {
   return ctx;
+}
+
+/**
+ * マスター出力の計測値を返す。SYNTH フッタのレベルバー / リミッタ点灯表示用。
+ *   peak      … リミッタ手前 (DC 除去後) の瞬時ピーク振幅 (0..∞。過大入力で 1 を超える)
+ *   reduction … リミッタのゲインリダクション (dB, ≤0。0 = 未作動、負ほど強く作動)
+ * AudioContext 未初期化時 (無音・テスト環境) は両方 0 を返す。
+ * @returns {{ peak:number, reduction:number }}
+ */
+export function getMasterMeter() {
+  if (!masterAnalyser || !limiter || !meterBuf) return { peak: 0, reduction: 0 };
+  masterAnalyser.getFloatTimeDomainData(meterBuf);
+  let peak = 0;
+  for (let i = 0; i < meterBuf.length; i++) {
+    const a = Math.abs(meterBuf[i]);
+    if (a > peak) peak = a;
+  }
+  // reduction は現行仕様では読み取り専用 float。旧仕様の AudioParam にも保険で対応。
+  const red = limiter.reduction;
+  const reduction = typeof red === "number" ? red : (red && red.value) || 0;
+  return { peak, reduction };
 }
 
 // ── オーディオ「起こしておく」 (発音レイテンシ対策) ──

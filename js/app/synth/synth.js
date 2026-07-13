@@ -25,8 +25,12 @@
  *   Contrast  : 見出しは反転帯、鍵盤の押下キーは反転で強調 (1-bit の on/off)。
  *
  * ENV / AMP フェーダーで調整中 (最後に触れた) パラメータの値はフッタ左に表示する
- * (フェーダー自身には数値を出さない)。フッタ右には現在の発音数 / 最大同時発音数
- * (VOICES) と、MIDI デバイス接続時はその台数を表示する。
+ * (フェーダー自身には数値を出さない)。フッタ中央にはマスター出力メーター (LVL バー +
+ * リミッタ作動を示す LIM 点灯) を置き、聴感に頼らず音量過大・音割れ・リミッタ作動を
+ * 目視できる。フッタ右には現在の発音数 / 最大同時発音数 (VOICES) と、MIDI デバイス
+ * 接続時はその台数を表示する。
+ *
+ * 初期音色はチップチューン向けの既定 (波形 SQ50 / ADSR = MIN・MIN・MAX・MIN)。
  *
  * 演奏キー (フォーカス時):
  *   Z 段 = 現オクターブ, Q 段 = +1oct, I〜P = +2oct
@@ -35,11 +39,15 @@
  *   (OCT / VEL は上段の NumberBox、FIX はトグルでも操作でき、値は相互に同期する)
  */
 
-import { fillRect, isCapturing } from "../../core/gpu.js";
+import { fillRect, drawRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
-import { createPolySynth, midiEventAudioTime } from "../../core/audio.js";
+import {
+  createPolySynth,
+  midiEventAudioTime,
+  getMasterMeter,
+} from "../../core/audio.js";
 import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
 import { addTrack } from "../music/tracks.js";
 import {
@@ -53,6 +61,12 @@ import {
 } from "../../ui/index.js";
 import { Fader, FADER_W, FADER_DEFAULT_H, FADER_GAP } from "../../ui/music/index.js";
 import { Keyboard } from "./keyboard.js";
+import {
+  initialMeterState,
+  nextMeterState,
+  isLimiterLit,
+  meterBarFill,
+} from "./meter.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -88,6 +102,17 @@ const VOICE_VALUES = [4, 8, 16, 32];
 const VOICE_ITEMS = VOICE_VALUES.map(String);
 const VOICE_DEFAULT_INDEX = VOICE_VALUES.indexOf(16);
 
+/** ── SYNTH の初期音色 (チップチューン向け既定値) ──
+ *  波形 = SQ50 (チップチューンで最も汎用。SAW は使用頻度が低いため既定にはしない)。
+ *  ADSR = MIN/MIN/MAX/MIN → A 0ms / D 0ms / S 100% / R 0ms。通常はノイズ回避のため
+ *  Attack/Release を 5ms 程度に留めるが、チップチューンではあえて 0ms とし、発音・消音の
+ *  瞬間に乗るレトロ機らしいクリック感を音の一部として活かす。UI ウィジェットと音源の両方に
+ *  この値を与え、初期表示と初期音を一致させる。VOL は音作り時に調整する前提で従来どおり 50。 */
+const DEFAULT_WAVE_ID = "sq50";
+const DEFAULT_ADSR = { a: 0, d: 0, s: 100, r: 0 };
+const DEFAULT_VOL = 50;
+const DEFAULT_WAVE_INDEX = WAVE_IDS.indexOf(DEFAULT_WAVE_ID);
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  音源 (遅延生成)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -97,6 +122,12 @@ let _synth = null;
 function synth() {
   if (!_synth) {
     _synth = createPolySynth();
+    // 初期音色 (チップチューン既定) を音源へ反映し、UI 表示と初期音を一致させる。
+    // PolySynth のクラス既定 (saw 等) は ROLL のフォールバック音源と共有のため変更せず、
+    // SYNTH 固有の既定はここで上書きする。
+    _synth.setWaveform(DEFAULT_WAVE_ID);
+    _synth.setADSR(DEFAULT_ADSR.a, DEFAULT_ADSR.d, DEFAULT_ADSR.s, DEFAULT_ADSR.r);
+    _synth.setVolume(DEFAULT_VOL);
     // 自身の音源をトラックとして公開し、ROLL 等が現在の音色で鳴らせるようにする。
     // instrument は _synth への薄いラッパ (パラメータは _synth に反映済み)。
     addTrack({
@@ -176,6 +207,13 @@ const ENV_FADERS = [
 /** フッタに出す「最後に触れたアナログパラメータ (ENV / VOL)」の表示文字列 */
 let paramFooterText = "";
 
+/** フッタ中央のマスター出力メーター表示状態 (ピークホールド + リミッタ点灯ホールド) */
+let meterState = initialMeterState();
+/** メーター更新の前フレーム時刻 (秒)。フレームレート非依存の減衰/ホールドに使う */
+let meterLastT = 0;
+/** メーターのレベルバー外形幅 (px)。枠 1px を除いた内側にピークを塗る */
+const METER_BAR_W = 40;
+
 /** レイアウト結果 (draw / 測定で共有する相対座標) */
 const L = {};
 
@@ -183,24 +221,24 @@ function _initWidgets() {
   if (_ready) return;
   _ready = true;
 
-  dropDownWave = new DropDown(0, 0, WAVE_ITEMS, 0, (idx) => {
+  dropDownWave = new DropDown(0, 0, WAVE_ITEMS, DEFAULT_WAVE_INDEX, (idx) => {
     synth().setWaveform(WAVE_IDS[idx]);
   });
   dropDownVoices = new DropDown(0, 0, VOICE_ITEMS, VOICE_DEFAULT_INDEX, (idx) => {
     synth().setMaxVoices(VOICE_VALUES[idx]);
   });
 
-  // ENV: A/D/S/R は同型の縦フェーダー。初期値は PolySynth の既定に一致させる
-  faderA = new Fader(0, 0, FADER_H, 0, 2000, 10, (v) => onEnvChange(0, v));
-  faderD = new Fader(0, 0, FADER_H, 0, 2000, 100, (v) => onEnvChange(1, v));
-  faderS = new Fader(0, 0, FADER_H, 0, 100, 80, (v) => onEnvChange(2, v));
-  faderR = new Fader(0, 0, FADER_H, 0, 2000, 200, (v) => onEnvChange(3, v));
+  // ENV: A/D/S/R は同型の縦フェーダー。初期値はチップチューン既定 (0/0/100/0) に揃える
+  faderA = new Fader(0, 0, FADER_H, 0, 2000, DEFAULT_ADSR.a, (v) => onEnvChange(0, v));
+  faderD = new Fader(0, 0, FADER_H, 0, 2000, DEFAULT_ADSR.d, (v) => onEnvChange(1, v));
+  faderS = new Fader(0, 0, FADER_H, 0, 100, DEFAULT_ADSR.s, (v) => onEnvChange(2, v));
+  faderR = new Fader(0, 0, FADER_H, 0, 2000, DEFAULT_ADSR.r, (v) => onEnvChange(3, v));
   envFaders = [faderA, faderD, faderS, faderR];
   // フッタ初期表示 = 先頭 (ATTACK) の値
   setParamFooter("ATT", faderA.value, "MS");
 
   // AMP: VOL は ENV と同型の縦フェーダー (数値はフッタに表示)
-  faderVol = new Fader(0, 0, FADER_H, 0, 100, 50, (v) => {
+  faderVol = new Fader(0, 0, FADER_H, 0, 100, DEFAULT_VOL, (v) => {
     synth().setVolume(v);
     setParamFooter("VOL", v, "%");
   });
@@ -393,11 +431,15 @@ function drawFaderLabels(cr) {
   }
 }
 
-/** フッタ: 左に最後に触れたパラメータ値、右に発音数 / 最大同時発音数 (+ MIDI) を描く */
+/** フッタ: 左に最後に触れたパラメータ値、中央にマスター出力メーター、
+ *  右に発音数 / 最大同時発音数 (+ MIDI) を描く */
 function drawSynthFooter(fr) {
   _initWidgets();
+
+  // 左: 最後に触れたアナログパラメータ (ENV / VOL) の値
   if (paramFooterText) drawText(fr.x, fr.y, paramFooterText, 1);
 
+  // 右: 発音数 / 最大同時発音数 (+ MIDI 台数)
   let right =
     "POLY " +
     String(synth().heldCount).padStart(2) +
@@ -406,6 +448,60 @@ function drawSynthFooter(fr) {
   const midiN = getMidiInputCount();
   if (midiN > 0) right += "  MIDI " + midiN;
   drawText(fr.x + fr.w - textWidth(right), fr.y, right, 1);
+
+  // 中央: マスター出力メーター (左右テキストの間に収まる場合のみ描画)
+  const leftEnd = fr.x + (paramFooterText ? textWidth(paramFooterText) : 0);
+  const rightStart = fr.x + fr.w - textWidth(right);
+  drawMasterMeter(fr, leftEnd, rightStart);
+}
+
+/**
+ * フッタ中央にマスター出力メーターを描く: `LVL [====   ] LIM`。
+ * レベルバーはリミッタ手前の瞬時ピーク (ホールド減衰付き)。LIM はリミッタがゲインを
+ * 下げている間 (= 音割れ寸前 / クリップ防止が働いている合図) だけ反転点灯する。
+ * これで聴感に頼らず「音量が過大か」「リミッタが作動したか」を目視できる。
+ *
+ * @param {{x:number,y:number,w:number,h:number}} fr  フッタ矩形
+ * @param {number} leftEnd     左テキストの右端 X (この右側に置く)
+ * @param {number} rightStart  右テキストの左端 X (この左側に収める)
+ */
+function drawMasterMeter(fr, leftEnd, rightStart) {
+  // 計測 → 表示状態を更新 (フレームレート非依存の減衰 / ホールド)。
+  // 描画をスキップする場合でも状態と時刻は毎フレーム進める。
+  const now = (typeof performance !== "undefined" ? performance.now() : 0) / 1000;
+  const dt = meterLastT ? Math.min(0.1, now - meterLastT) : 0;
+  meterLastT = now;
+  const m = getMasterMeter();
+  meterState = nextMeterState(meterState, m.peak, m.reduction, dt);
+
+  // レイアウト: LVL [bar] LIM。左右テキストの隙間に中央寄せで収める。
+  const gap = 3;
+  const lvlW = textWidth("LVL");
+  const limW = textWidth("LIM");
+  const w = lvlW + gap + METER_BAR_W + gap + limW;
+  const avail = rightStart - leftEnd;
+  if (avail < w + gap * 2) return; // 隙間が足りなければ描かない (テキスト優先)
+
+  const y = fr.y;
+  let x = leftEnd + gap + ((avail - w) >> 1);
+
+  // LVL ラベル
+  drawText(x, y, "LVL", 1);
+  x += lvlW + gap;
+
+  // レベルバー: 枠 + ピーク塗り (0..1 を内側幅にマップ、超過はクランプ)
+  drawRect(x, y, METER_BAR_W, GLYPH_H, 1);
+  const fill = meterBarFill(meterState.peak, METER_BAR_W - 2);
+  if (fill > 0) fillRect(x + 1, y + 1, fill, GLYPH_H - 2, 1);
+  x += METER_BAR_W + gap;
+
+  // LIM バッジ: 作動中は帯を塗ってラベルを背景色で抜く (1-bit の on/off = 反転)
+  if (isLimiterLit(meterState)) {
+    fillRect(x - 1, y, limW + 2, GLYPH_H, 1);
+    drawText(x, y, "LIM", 0);
+  } else {
+    drawText(x, y, "LIM", 1);
+  }
 }
 
 function drawSynth(cr) {
@@ -501,6 +597,9 @@ function silence() {
   if (keyboard) keyboard.reset();
   heldKeys.clear();
   midiHeld.clear();
+  // メーターも無音状態へリセット (再オープン時の残留ピーク/点灯を防ぐ)
+  meterState = initialMeterState();
+  meterLastT = 0;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
