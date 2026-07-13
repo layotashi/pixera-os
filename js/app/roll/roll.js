@@ -73,14 +73,23 @@ const COLS = BARS * STEPS_PER_BAR;
 const OCTAVE = 12;
 const ROWS = 128;
 
+/** 起動時に縦中央へ収める音域 (チップチューンで多用する C4..C5 のメロディ域)。
+ *  128 音高のうち最高音域は実用上ほぼ使わないため、ここを軸に初期スクロールを合わせる。 */
+const INITIAL_VIEW_LO_MIDI = 60; // C4
+const INITIAL_VIEW_HI_MIDI = 72; // C5
+
 /** 罫線の太さ (DOT) */
 const THIN = 1;
 const BOLD = 2;
 
-/** セル内寸 (DOT) の範囲と初期値 */
+/** セル内寸 (DOT) の範囲。桁幅・行高は独立にズームできる (以下は初期値)。 */
 const CELL_MIN = 5;
 const CELL_MAX = 30;
-const CELL_DEFAULT = 15;
+/** 初期の桁幅。時間方向は横スクロール前提なので、編集しやすい幅を保つ。 */
+const CELL_W_DEFAULT = 15;
+/** 初期の行高。チップチューンの主要音域を一度に見せる (≈2 オクターブ) よう控えめにし、
+ *  起動ごとに使用音域までスクロールする手間を減らす。狭すぎると編集しづらいので下限寄り。 */
+const CELL_H_DEFAULT = 8;
 
 /** ホイール 1 ノッチのズーム量 (DOT) */
 const ZOOM_STEP = 1;
@@ -121,8 +130,8 @@ const ALL_ROWS = Array.from({ length: ROWS }, (_, i) => i);
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 let winId = -1;
-let cellW = CELL_DEFAULT;
-let cellH = CELL_DEFAULT;
+let cellW = CELL_W_DEFAULT;
+let cellH = CELL_H_DEFAULT;
 let fold = false; // FOLD: ノートのある行だけ表示
 
 /** @type {{col:number,row:number,len:number,vel:number,selected:boolean}[]} */
@@ -1145,12 +1154,14 @@ function onBeforeClose() {
   return true;
 }
 
-/** 起動/再オープン時、中音域 (MIDI 60 = C4) が縦中央に来るよう縦スクロールを合わせる。
- *  窓は標準サイズで小さいため、そのままだと最上段 (最高音・通常は空) が見えてしまう。 */
-function scrollToMiddleRegister() {
+/** 起動/再オープン時、チップチューンの主要音域 (C4..C5 のメロディ域) が縦中央に来るよう
+ *  縦スクロールを合わせる。窓は標準サイズで小さいため、そのままだと最上段 (最高音・通常は
+ *  空) が見えてしまう。行高を控えめにしてあるので、この帯を中心に約 2 オクターブが収まる。 */
+function scrollToDefaultRegister() {
   if (winId < 0) return;
   const vl = vLayout();
-  const di = vl.rowToDi.get(ROWS - 1 - 60); // C4 (MIDI 60) の表示行
+  const centerMidi = Math.round((INITIAL_VIEW_LO_MIDI + INITIAL_VIEW_HI_MIDI) / 2);
+  const di = vl.rowToDi.get(ROWS - 1 - centerMidi); // C4..C5 の中央 (=B4/C5 境) の表示行
   if (di === undefined) return;
   const cr = wmGetContentRect(winId);
   const viewH = cr ? cr.h : 0;
@@ -1166,12 +1177,15 @@ wmRegister(
       onDrawFooter,
       onBeforeClose,
       about: ABOUT_TEXT,
+      // ボディ全域をピアノロールに使う (NOTEPAD 同様)。Content Pad を効かせると作業領域が
+      // 中途半端な位置で途切れて見えるため、アプリ側で内側余白を無効化する。
+      padding: "none",
       // 起動サイズは標準サイズ (解像度に依存しない小さめの窓)。128 音高の全グリッドは
       // onMeasure がスクロール範囲として返し、はみ出す分は窓側スクロールで巡る。
       initialSize: wmDefaultContentSize(true),
     });
     refreshTitle(); // 再オープン時もファイル名 / dirty をタイトルに反映
-    scrollToMiddleRegister();
+    scrollToDefaultRegister();
     // 起動 (ユーザー操作) の時点でオーディオを用意/起こしておく。1 音目や放置後の
     // 復帰時に出る余分な発音遅延を防ぐ (クローズ時に releaseAudioAwake で解放)。
     keepAudioAwake();
