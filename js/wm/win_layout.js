@@ -21,6 +21,7 @@ import * as Config from "../config.js";
 import { GLYPH_H } from "../core/font.js";
 import { ICON_H } from "../core/icon.js";
 import * as Scroll from "../ui/scrollbar.js";
+import { FOCUS_MARGIN } from "../ui/ui_constants.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  派生定数 (フォント / パディング変更で変わる)
@@ -147,6 +148,14 @@ export function recalcLayout(win) {
       iconBaseX: 0,
       sepY: -1,
       contentRect: { x: 0, y: 0, w: Config.VRAM_WIDTH, h: Config.VRAM_HEIGHT },
+      // フルスクリーンはパディングが無く、はみ出す枠/ヘッダーも無いため
+      // クリップは content そのもの (フォーカスマージンの張り出し無し)。
+      contentClipRect: {
+        x: 0,
+        y: 0,
+        w: Config.VRAM_WIDTH,
+        h: Config.VRAM_HEIGHT,
+      },
       scrollbarRect: null,
       hScrollbarRect: null,
       scrollCornerRect: null,
@@ -223,6 +232,22 @@ export function recalcLayout(win) {
   const contentW = Math.max(0, bodyW - reserve - pad * 2);
   const contentH = Math.max(0, bodyH - reserve - pad * 2);
 
+  // ── アプリ描画用クリップ矩形 ──
+  // アプリの onDraw は contentRect にクリップされるが、フォーカスブラケットは
+  // 各ウィジェットの外側へ FOCUS_MARGIN px 張り出して描かれるため、その分だけ
+  // クリップを外側へ広げる。ただし広げる量はウィンドウの**実際の**内側パディング
+  // (pad: padding:"none" は 0) を超えないようクランプする。超えて広げると
+  // ヘッダー区切り線・外枠へコンテンツがはみ出す (padding:"none" 窓の onDraw が
+  // スクロール等で content 端を越えて描いた分が枠外へ漏れる) ため。
+  // pad=0 の窓は contentRect ちょうどにクリップされ、一切はみ出さない。
+  const clipMargin = Math.min(FOCUS_MARGIN, pad);
+  const contentClipRect = {
+    x: contentX - clipMargin,
+    y: contentY - clipMargin,
+    w: contentW + clipMargin * 2,
+    h: contentH + clipMargin * 2,
+  };
+
   // ── スクロールバー・スロット / コーナー矩形 (_chrome=true のみ) ──
   // Scroll.drawVScrollbarSlot / drawHScrollbarSlot / drawScrollCorner へ渡す。
   // V スロットは下端を SLOT 分空け、H スロットは右端を SLOT 分空けて、交差部にコーナーを置く。
@@ -292,6 +317,9 @@ export function recalcLayout(win) {
     sepY,
     // コンテンツ描画領域
     contentRect: { x: contentX, y: contentY, w: contentW, h: contentH },
+    // アプリ onDraw 用クリップ矩形 (contentRect をフォーカスマージン分だけ
+    // 実パディングを上限に外側へ広げたもの。padding:"none" は contentRect と一致)
+    contentClipRect,
     // 縦スクロールバースロット矩形 (_chrome=true のみ, null = chrome 無し)
     scrollbarRect,
     // 横スクロールバースロット矩形 (_chrome=true のみ, null = chrome 無し)

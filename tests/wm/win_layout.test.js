@@ -180,3 +180,57 @@ describe("padding:none (win._noPad)", () => {
   });
 });
 
+describe("contentClipRect — アプリ onDraw のクリップ領域", () => {
+  // アプリの onDraw は contentClipRect にクリップされる。フォーカスブラケット
+  // (ウィジェット外側へ FOCUS_MARGIN=2 px 張り出す) を切らないよう contentRect を
+  // 外へ広げるが、広げる量はウィンドウの実パディングを上限にクランプされ、
+  // ヘッダー区切り線・外枠へは決して食い込まない。
+  const makeWin = (noPad) => {
+    const win = {
+      x: 0,
+      y: 0,
+      w: 200,
+      h: 150,
+      footer: false,
+      _chrome: false,
+      _scrollable: false,
+      _vScroll: null,
+      fullscreen: false,
+      _noPad: !!noPad,
+    };
+    recalcLayout(win);
+    return win;
+  };
+
+  it("padding あり窓は contentRect を FOCUS_MARGIN(=2) ぶん外へ広げる", () => {
+    // clipMargin = min(FOCUS_MARGIN=2, pad=6) = 2
+    const { contentRect: cr, contentClipRect: clip } = makeWin(false)._layout;
+    expect(cr.x - clip.x).toBe(2);
+    expect(cr.y - clip.y).toBe(2);
+    expect(clip.w - cr.w).toBe(4);
+    expect(clip.h - cr.h).toBe(4);
+  });
+
+  it("padding あり窓のクリップもボディ内に収まる (ヘッダー/枠を侵さない)", () => {
+    const win = makeWin(false);
+    const { contentClipRect: clip, sepY } = win._layout;
+    expect(clip.y).toBeGreaterThan(sepY); // 上端は区切り線より下
+    expect(clip.x).toBeGreaterThanOrEqual(win.x + 1); // 左端は外枠 (BORDER) 内
+  });
+
+  it("padding:none 窓のクリップは contentRect ちょうど (はみ出し 0)", () => {
+    // clipMargin = min(FOCUS_MARGIN=2, pad=0) = 0 → 広げない
+    const { contentRect: cr, contentClipRect: clip } = makeWin(true)._layout;
+    expect(clip).toEqual(cr);
+  });
+
+  it("padding:none 窓のクリップはヘッダー区切り線・外枠へ食い込まない (回帰)", () => {
+    // 回帰: 以前は pad に依らず FOCUS_MARGIN ぶん常に広げていたため、pad=0 の窓
+    // (ROLL/NOTEPAD/AQUARIA) で onDraw がヘッダー・外枠へはみ出していた。
+    const win = makeWin(true);
+    const { contentClipRect: clip, sepY } = win._layout;
+    expect(clip.y).toBe(sepY + 1); // ちょうどボディ上端 (SEPARATOR_HEIGHT ぶん下)
+    expect(clip.x).toBe(win.x + 1); // ちょうど外枠 (BORDER) の内側
+  });
+});
+

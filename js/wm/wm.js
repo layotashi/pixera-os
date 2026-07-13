@@ -57,7 +57,6 @@ import * as Input from "../core/input.js";
 import { setCursor } from "../core/cursor.js";
 import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
 import { drawText, GLYPH_H, textWidth } from "../core/font.js";
-import { FOCUS_MARGIN } from "../ui/ui_constants.js";
 import * as Scroll from "../ui/scrollbar.js";
 import * as Desktop from "./desktop.js";
 import {
@@ -2653,15 +2652,11 @@ function drawWindowFrame(win) {
         scrollX || scrollY
           ? { x: cr.x - scrollX, y: cr.y - scrollY, w: cr.w, h: cr.h }
           : cr;
-      // フォーカスブラケットのためにクリップを拡張。
-      // CONTENT_PADDING を超えないようにクランプ (ヘッダー/枠線へのはみ出し防止)
-      const clipMargin = Math.min(FOCUS_MARGIN, CONTENT_PADDING);
-      GPU.setClip(
-        cr.x - clipMargin,
-        cr.y - clipMargin,
-        cr.w + clipMargin * 2,
-        cr.h + clipMargin * 2,
-      );
+      // クリップは win_layout が算出した contentClipRect を使う。contentRect を
+      // フォーカスブラケット分だけ外側へ広げつつ、ウィンドウの実パディングを上限に
+      // クランプしてある (padding:"none" 窓は contentRect ちょうど = はみ出し無し)。
+      const clip = L.contentClipRect;
+      GPU.setClip(clip.x, clip.y, clip.w, clip.h);
       safeOnDraw(win, drawCr);
       GPU.resetClip();
     }

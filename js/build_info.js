@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.13",
-  hash: "286e227",
-  count: 302,
+  hash: "bc4ab41",
+  count: 303,
   notes: [
+    { date: "2026-07-13", hash: "bc4ab41", text: "ROLL cursor now reflects the action" },
     { date: "2026-07-13", hash: "05a99e8", text: "SYNTH now shows a master output meter" },
     { date: "2026-07-13", hash: "c99da50", text: "ROLL opens on a usable pitch range" },
     { date: "2026-07-13", hash: "055f740", text: "TESSERA no longer opens full-screen" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-11", hash: "15cf8c5", text: "SYNTH ADSR now uses vertical faders" },
     { date: "2026-07-11", hash: "7fd8b89", text: "SYNTH ADSR now uses vertical faders" },
     { date: "2026-07-10", hash: "7b2ce0a", text: "New Matte option adds a margin to shots" },
-    { date: "2026-07-10", hash: "e901879", text: "About now has clickable links to X and GitHub" },
   ],
 };
