@@ -76,7 +76,6 @@ import { compile } from "../../lang/runtime.js";
 import { makeBufferSurface } from "../../lang/surface.js";
 import { format } from "../../lang/format.js";
 import * as Wallpaper from "../wallpaper.js";
-import * as Config from "../config.js";
 import { DEFAULT_CODE, HOME_DIR, EXT, seedSamples } from "./tessera/samples.js";
 
 const APP_NAME = "TESSERA";
@@ -743,22 +742,14 @@ function relayout() {
 }
 
 // ── 自然（fit-to-content）サイズ ────────────────────────────────────────
-// 規定解像度 360x270 を最も映える基準として、ウィンドウが work area にちょうど収まる
-// 固定コンテンツ寸法を返す（= fit to content = maximize と一致）。ウィンドウのリサイズには
-// 追従せず（＝リフローしない）、360x270 より小さくすると WM が窓側の縦横スクロールで巡らせる。
+// 規定解像度 360x270 の work area にちょうど収まる**固定**コンテンツ寸法を返す。
+// 実画面がどれだけ大きくても（＝解像度に依存せず）この固定サイズで開き、fit-to-content も
+// ここへ戻る。窓をこれより小さくすると WM が窓側の縦横スクロールで巡らせる。レイアウト
+// （fitLayout）もこの固定サイズに敷くので、ウィンドウのリサイズには追従しない（リフローしない）。
+// 標準サイズは WM.wmDefaultContentSize が SSoT（ROLL と共有）。footer 分を差し引いた値。
 function naturalSize() {
-  const SLOT = 10; // SCROLLBAR_SLOT_WIDTH（縦横バーのスロット）
-  // content → window の枠増分（win_layout.js と一致）。BORDER=1 は不変の枠定数。
-  const chromeW = 2 /*BORDER*2*/ + WM.CONTENT_PADDING * 2 + SLOT;
-  const chromeH =
-    3 /*BORDER*2+SEP*/ +
-    WM.HEADER_HEIGHT +
-    WM.CONTENT_PADDING * 2 +
-    WM.FOOTER_HEIGHT +
-    SLOT;
-  const availW = Config.VRAM_WIDTH - chromeW;
-  const availH = Config.VRAM_HEIGHT - WM.wmGetWorkAreaTop() - chromeH;
-  return { w: Math.max(220, availW), h: Math.max(160, availH) };
+  const { w, h } = WM.wmDefaultContentSize(true);
+  return { w: Math.max(220, w), h: Math.max(160, h) };
 }
 
 // ── 固定配置 ────────────────────────────────────────────────────────────

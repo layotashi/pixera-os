@@ -52,6 +52,8 @@ import {
   wmSetTitle,
   wmOpenOrFocus,
   wmClose,
+  wmDefaultContentSize,
+  wmGetContentRect,
 } from "../../wm/index.js";
 import { keyDown, keyHeld, ctrlDown, ctrlShiftDown } from "../../core/input.js";
 
@@ -1143,6 +1145,19 @@ function onBeforeClose() {
   return true;
 }
 
+/** 起動/再オープン時、中音域 (MIDI 60 = C4) が縦中央に来るよう縦スクロールを合わせる。
+ *  窓は標準サイズで小さいため、そのままだと最上段 (最高音・通常は空) が見えてしまう。 */
+function scrollToMiddleRegister() {
+  if (winId < 0) return;
+  const vl = vLayout();
+  const di = vl.rowToDi.get(ROWS - 1 - 60); // C4 (MIDI 60) の表示行
+  if (di === undefined) return;
+  const cr = wmGetContentRect(winId);
+  const viewH = cr ? cr.h : 0;
+  // wmSetScroll がコンテンツ範囲でクランプするので端でも安全
+  wmSetScroll(winId, 0, vl.interiorY[di] + cellH / 2 - viewH / 2);
+}
+
 wmRegister(
   APP_NAME,
   () => {
@@ -1151,8 +1166,12 @@ wmRegister(
       onDrawFooter,
       onBeforeClose,
       about: ABOUT_TEXT,
+      // 起動サイズは標準サイズ (解像度に依存しない小さめの窓)。128 音高の全グリッドは
+      // onMeasure がスクロール範囲として返し、はみ出す分は窓側スクロールで巡る。
+      initialSize: wmDefaultContentSize(true),
     });
     refreshTitle(); // 再オープン時もファイル名 / dirty をタイトルに反映
+    scrollToMiddleRegister();
     // 起動 (ユーザー操作) の時点でオーディオを用意/起こしておく。1 音目や放置後の
     // 復帰時に出る余分な発音遅延を防ぐ (クローズ時に releaseAudioAwake で解放)。
     keepAudioAwake();

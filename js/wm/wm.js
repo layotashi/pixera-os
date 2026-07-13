@@ -65,6 +65,8 @@ import {
   SEPARATOR_HEIGHT,
   FOOTER_SEPARATOR_HEIGHT,
   FOOTER_PADDING,
+  FRAME_EXTRA_W,
+  FRAME_EXTRA_H,
   MIN_WIDTH,
   MIN_HEIGHT,
   HEADER_HEIGHT,
@@ -177,9 +179,11 @@ function recalcDerivedConstants() {
 /** 全ウィンドウのレイアウトを再計算する */
 function recalcAllWindows() {
   for (const win of windows) {
-    // スナップ中/フルスクリーンのウィンドウは領域を維持する (onMeasure で上書きしない)
-    if (win.snapState === "none" && !win.fullscreen && win.onMeasure) {
-      const size = win.onMeasure();
+    // スナップ中/フルスクリーンのウィンドウは領域を維持する (onMeasure で上書きしない)。
+    // 起動時サイズを固定する窓 (_initialSize) は自然サイズではなくそちらへ再フィットする
+    // (ROLL のように onMeasure=スクロール範囲が巨大でも、窓は標準サイズを保つ)。
+    if (win.snapState === "none" && !win.fullscreen && (win._initialSize || win.onMeasure)) {
+      const size = win._initialSize || win.onMeasure();
       if (size) {
         const fit = calcWindowSize(
           size.w,
@@ -341,6 +345,11 @@ function nextCascadePos(winW, winH) {
  *   バーはレトロ GUI の意匠として常設し、コンテンツがはみ出す軸で機能してスクロールする
  *   (全長サムは「今スクロール不要」を表すだけで、非機能な飾りではない)。
  * @param {function|null} [opts.onBeforeClose=null] 閉じる前コールバック (() => boolean, false で閉じをキャンセル)
+ * @param {{w:number,h:number}|null} [opts.initialSize=null] 起動時 / FIT TO CONTENT の基準にする
+ *   content 寸法。省略時は onMeasure (自然サイズ) を使う。onMeasure がスクロール範囲として
+ *   画面より大きい content を返す窓 (ROLL のグリッド全体) で、窓自体は標準サイズで開きたい
+ *   場合に指定する (スクロール範囲は onMeasure、外寸はこちらと役割を分ける)。
+ *   WM.wmDefaultContentSize() が既定解像度 360x270 に収まる標準サイズを返す。
  * @returns {object} ウィンドウオブジェクト
  */
 function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
@@ -380,6 +389,9 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     // (NOTEPAD/AQUARIA 等の画面端まで描く/配置するアプリ用)。既定は CONTENT_PADDING。
     _noPad: o.padding === "none",
     onBeforeClose: o.onBeforeClose || null,
+    // 起動時 / FIT TO CONTENT の基準 content 寸法 (省略時は onMeasure = 自然サイズ)。
+    // onMeasure がスクロール範囲として巨大な content を返す窓で、外寸だけ標準サイズに保つ。
+    _initialSize: o.initialSize || null,
     // ── ABOUT パネル (opt-in) ──
     // about 文字列を持つウィンドウはヘッダ右クリックメニューに ABOUT が出て、
     // ボディが説明パネルに切り替わる。説明は「何か + 主要操作」を簡潔に。
@@ -1166,13 +1178,41 @@ function clampScrollableInitSize(w, h) {
 }
 
 /**
- * ウィンドウを「ちょうど良いサイズ」(自然サイズ、scrollable は ratio クランプ後)
- * にリサイズし、現在の中心位置を保ったまま再配置する。最後に画面内クランプ。
- * 右クリックメニューの "FIT TO CONTENT" から呼ばれる。
+ * 「標準サイズのウィンドウ」の content 寸法を返す (解像度に依存しない固定値)。
+ *
+ * コンテンツが画面より大きい窓 (ROLL のグリッド全体 / TESSERA の固定レイアウト) の
+ * 起動時サイズと FIT TO CONTENT の基準に使う。実画面がどれだけ大きくても、窓は既定解像度
+ * (360x270) の work area にちょうど収まる大きさで開き、はみ出す分は常設スクロールバーで巡る。
+ * これにより高解像度でも画面を覆い尽くさず「適度に小さくまとまった」窓になる。
+ * (小さな画面では wmOpen / fit 側の work area クランプでさらに縮む。)
+ *
+ * 返り値は content 寸法 = calcWindowSize の逆演算 (window − 枠増分)。initialSize や
+ * onMeasure に渡すと calcWindowSize が枠を足し戻し、既定解像度ちょうどの外寸になる。
+ * @param {boolean} [footer=false] footer を持つ窓か (footer 分を差し引く)
+ * @returns {{ w:number, h:number }}
+ */
+export function wmDefaultContentSize(footer = false) {
+  const BASE_W = 360; // 既定 VRAM 幅 (config のデフォルト解像度)
+  const BASE_H = 270; // 既定 VRAM 高
+  const slot = Scroll.SCROLLBAR_SLOT_WIDTH; // 標準 chrome は縦横バーのスロットを常設
+  const footerH = footer ? FOOTER_HEIGHT : 0;
+  const w = BASE_W - (FRAME_EXTRA_W + CONTENT_PADDING * 2 + slot);
+  const h =
+    BASE_H -
+    workAreaTop -
+    (FRAME_EXTRA_H + HEADER_HEIGHT + CONTENT_PADDING * 2 + footerH + slot);
+  return { w: Math.max(MIN_WIDTH, w), h: Math.max(MIN_HEIGHT, h) };
+}
+
+/**
+ * ウィンドウを「ちょうど良いサイズ」(initialSize があればそれ、無ければ自然サイズ。
+ * scrollable は work area クランプ後) にリサイズし、現在の中心位置を保ったまま再配置する。
+ * 最後に画面内クランプ。右クリックメニューの "FIT TO CONTENT" から呼ばれる。
  */
 function fitWindowToContent(win) {
-  if (!win.onMeasure || win.noResize) return;
-  const size = win.onMeasure();
+  // 起動時サイズを固定する窓 (_initialSize) は自然サイズではなく標準サイズへ合わせる。
+  const size = win._initialSize || (win.onMeasure && win.onMeasure());
+  if (!size || win.noResize) return;
   const fit = calcWindowSize(size.w, size.h, win.footer, win._chrome);
   let newW = fit.w;
   let newH = fit.h;
@@ -1205,7 +1245,7 @@ function fitWindowToContent(win) {
  */
 function buildWindowContextMenu(win) {
   const items = [];
-  if (win.onMeasure && !win.noResize) {
+  if ((win._initialSize || win.onMeasure) && !win.noResize) {
     items.push({
       type: "action",
       label: "FIT TO CONTENT",
@@ -1302,7 +1342,7 @@ function buildIconContextMenu(name, entry) {
  * @param {function|null} [onDraw=null] コンテンツ描画コールバック (contentRect) => void
  * @param {function|null} [onInput=null] 入力コールバック ({ localX, localY, type }) => void
  * @param {function|null} [onMeasure=null] コンテンツサイズ測定コールバック () => { w, h }
- * @param {object} [opts] 追加オプション ({ footer, onDrawFooter, onInputFooter, modal, noResize, noMaximize, onBeforeClose })
+ * @param {object} [opts] 追加オプション ({ footer, onDrawFooter, onInputFooter, modal, noResize, noMaximize, onBeforeClose, initialSize })
  * @returns {number} ウィンドウ ID (一意の識別子)
  */
 export function wmOpen(
@@ -1331,18 +1371,22 @@ export function wmOpen(
   // 明示指定された外寸か (onMeasure 自動算出でない) を先に記録しておく。
   const wExplicit = w !== 0;
   const hExplicit = h !== 0;
-  // w=0 or h=0 なら onMeasure で自動算出
+  // w=0 or h=0 なら自動算出。基準は initialSize があればそれ (標準サイズで開き、スクロール
+  // 範囲は onMeasure が別途担う)、無ければ onMeasure (自然サイズ) を使う。
   let scrollableClamped = false;
-  if (onMeasure && (w === 0 || h === 0)) {
-    const size = onMeasure();
-    const fit = calcWindowSize(size.w, size.h, footer, chrome, contentPad);
-    if (w === 0) w = fit.w;
-    if (h === 0) h = fit.h;
-    if (scrollable) {
-      const c = clampScrollableInitSize(w, h);
-      w = c.w;
-      h = c.h;
-      scrollableClamped = c.clamped;
+  if (w === 0 || h === 0) {
+    const sizeSrc =
+      opts && opts.initialSize ? opts.initialSize : onMeasure ? onMeasure() : null;
+    if (sizeSrc) {
+      const fit = calcWindowSize(sizeSrc.w, sizeSrc.h, footer, chrome, contentPad);
+      if (w === 0) w = fit.w;
+      if (h === 0) h = fit.h;
+      if (scrollable) {
+        const c = clampScrollableInitSize(w, h);
+        w = c.w;
+        h = c.h;
+        scrollableClamped = c.clamped;
+      }
     }
   }
   // 明示指定された外寸には標準 chrome のスロット分を加える (onMeasure 経由は

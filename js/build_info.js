@@ -7,10 +7,11 @@
  */
 
 export const BUILD = {
-  date: "2026.07.12",
-  hash: "6a8712d",
-  count: 297,
+  date: "2026.07.13",
+  hash: "b654ac8",
+  count: 299,
   notes: [
+    { date: "2026-07-13", hash: "b654ac8", text: "TESSERA no longer opens full-screen" },
     { date: "2026-07-12", hash: "6a8712d", text: "ROLL now has rubber-band note selection" },
     { date: "2026-07-12", hash: "4378124", text: "Roll can now save and open note clips" },
     { date: "2026-07-11", hash: "6699d81", text: "SYNTH: fixed velocity mode (FIX toggle)" },

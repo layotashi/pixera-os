@@ -26,6 +26,7 @@ export {
   wmRegister,
   wmGetRegistry,
   wmGetContentRect,
+  wmDefaultContentSize,
   wmOpenByName,
   wmOpenOrFocus,
   wmOpen,
