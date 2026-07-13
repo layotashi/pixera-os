@@ -80,22 +80,23 @@ describe("Fader — 構築", () => {
 });
 
 describe("Fader — ドラッグの値マッピング (上=max, 下=min)", () => {
-  // 奇数高で使う (実効高=指定高)。travelTop = y+5 = 5, travelBottom = y+h-6 = 39 (h=45)
+  // 奇数高で使う (実効高=指定高)。マージン 1px ぶん内側で止まるので
+  // travelTop = y+MARGIN+5 = 6, travelBottom = y+h-MARGIN-11+5 = 38 (h=45)
   it("上端をつかむと max になる", () => {
     const f = new Fader(0, 0, 45, 0, 100, 50);
-    press(f, 5);
+    press(f, 6);
     expect(f.value).toBe(100);
   });
 
   it("下端をつかむと min になる", () => {
     const f = new Fader(0, 0, 45, 0, 100, 50);
-    press(f, 39);
+    press(f, 38);
     expect(f.value).toBe(0);
   });
 
   it("中央をつかむと中間値になる", () => {
     const f = new Fader(0, 0, 45, 0, 100, 0);
-    press(f, Math.round((5 + 39) / 2)); // ≈ 22
+    press(f, Math.round((6 + 38) / 2)); // = 22
     expect(f.value).toBeGreaterThan(40);
     expect(f.value).toBeLessThan(60);
   });
@@ -163,8 +164,9 @@ describe("Fader — 非整数レンジ / 描画スモーク", () => {
 describe("Fader — ASCII 仕様の幾何 (描画呼び出しで検証)", () => {
   const H = 45; // 奇数高: 実効高=指定高 (端密着の検証を明快にする)
   const cr = { x: 0, y: 0 };
-  // つまみ枠は 23w×11h。フェーダー枠 (23w×Hh) とサイズで見分ける
-  const isThumb = (r) => r.w === FADER_W && r.h === 11;
+  const THUMB_W = FADER_W - 4; // 枠1+マージン1 を左右で除いた 21
+  // つまみは fillRect のフットプリント (21w×11h) で識別。フェーダー枠は drawRect(25w×Hh)
+  const isThumb = (r) => r.w === THUMB_W && r.h === 11;
   const isFrame = (r) => r.w === FADER_W && r.h === H;
 
   it("フェーダー枠は四辺 1px (drawRect が全幅×全高)", () => {
@@ -173,37 +175,39 @@ describe("Fader — ASCII 仕様の幾何 (描画呼び出しで検証)", () => 
     expect(calls.drawRect.some(isFrame)).toBe(true);
   });
 
-  it("max でつまみ上端がフェーダー上端に密着 (thumbTop = y)", () => {
+  it("max でつまみ上端が上端マージン (y+1) に密着", () => {
     resetCalls();
     new Fader(3, 7, H, 0, 100, 100).draw(cr);
-    const thumb = calls.drawRect.find(isThumb);
-    expect(thumb.y).toBe(7); // ay = cr.y + this.y = 7
+    const thumb = calls.fillRect.find(isThumb);
+    expect(thumb.y).toBe(7 + 1); // ay + MARGIN
   });
 
-  it("min でつまみ下端がフェーダー下端に密着 (thumbBottom = y+h-1)", () => {
+  it("min でつまみ下端が下端マージン (y+h-2) に密着", () => {
     resetCalls();
     new Fader(3, 7, H, 0, 100, 0).draw(cr);
-    const thumb = calls.drawRect.find(isThumb);
-    expect(thumb.y + thumb.h - 1).toBe(7 + H - 1);
+    const thumb = calls.fillRect.find(isThumb);
+    expect(thumb.y + thumb.h - 1).toBe(7 + H - 1 - 1); // ay + h-1 - MARGIN
   });
 
-  it("つまみ高さは 11px、グリップ線は 19px で左右 2px 内側", () => {
+  it("つまみは 21w×11h・枠から左右 2px 内側、グリップ線は 19px で左右 3px 内側", () => {
     resetCalls();
     new Fader(0, 0, H, 0, 100, 50).draw(cr);
-    const thumb = calls.drawRect.find(isThumb);
+    const thumb = calls.fillRect.find(isThumb);
+    expect(thumb.w).toBe(THUMB_W);
     expect(thumb.h).toBe(11);
-    // グリップ線 = 最後の hline。全幅 23 に対し x1=2, x2=20 (幅 19)
+    expect(thumb.x).toBe(2); // 枠1 + マージン1 内側
+    // グリップ線 = 最後の hline。全幅 25 に対し x1=3, x2=21 (幅 19)
     const grip = calls.hline[calls.hline.length - 1];
-    expect(grip.x1).toBe(2);
-    expect(grip.x2).toBe(FADER_W - 1 - 2);
+    expect(grip.x1).toBe(3);
+    expect(grip.x2).toBe(FADER_W - 1 - 3);
   });
 
-  it("グルーヴは幅 5px・溝(背景くり抜き) 3px = 壁 1px ずつ", () => {
+  it("グルーヴは幅 5px・溝(前景くり抜き) 3px = 壁 1px ずつ", () => {
     resetCalls();
     new Fader(0, 0, H, 0, 100, 50).draw(cr);
-    // グルーヴ実線 = 幅 5 の fillRect(c=1)、くり抜き = 幅 3 の fillRect(c=0)
-    const slot = calls.fillRect.find((r) => r.w === 5 && r.c === 1);
-    const hollow = calls.fillRect.find((r) => r.w === 3 && r.c === 0);
+    // 反転配色: グルーヴ壁 = 幅 5 の fillRect(c=0)、内側くり抜き = 幅 3 の fillRect(c=1)
+    const slot = calls.fillRect.find((r) => r.w === 5 && r.c === 0);
+    const hollow = calls.fillRect.find((r) => r.w === 3 && r.c === 1);
     expect(slot).toBeTruthy();
     expect(hollow).toBeTruthy();
     // 溝は中央: 左壁 1px → hollow.x = slot.x + 1

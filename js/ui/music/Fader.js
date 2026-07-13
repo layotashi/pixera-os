@@ -6,16 +6,23 @@
  * OS 標準の水平 Slider とは別カテゴリ (js/ui/music/) の音楽制作系ウィジェットで、
  * SYNTH / MIXER / SAMPLER / DAW など音を扱うアプリでのみ使う。
  *
- * 幅は固定 (FADER_W=23)、高さ h をアプリが指定する (= つまみの可動域)。
- * アプリは必要な本数を 1px 間隔で横に並べて 1 つのフェーダー・バンクを作る
- * (MIXER ならトラック数ぶん)。フォーカス時のカギ括弧は自前枠と二重になるため抑止する。
+ * 幅は固定 (FADER_W=25)、高さ h をアプリが指定する (= つまみの可動域)。
+ * アプリは必要な本数を外枠 1px を共有させて横に並べ 1 つのフェーダー・バンクを作る
+ * (バンクのピッチ = FADER_W-1。MIXER ならトラック数ぶん)。
+ * フォーカス時のカギ括弧は自前枠と二重になるため抑止する。
  *
- * ── 見た目 (ASCII 仕様の実測に一致) ──
- *   枠      : 四辺 1px の実線ボーダー
- *   地      : 枠の内側を市松テクスチャ ((lx+ly) が奇数のとき前景)
- *   グルーヴ : 中央の縦溝。幅 5px = 壁1 + 溝3 + 壁1、上下に 1px キャップ
- *   つまみ   : 全幅 × 高さ 11px の横長キャップ。中央グリップ線 (19px, 左右 2px 内側) が
- *             現在値を指す。max で上端・min で下端に密着する。
+ * ── 見た目 (前景/背景を反転した配色。1px 単位の ASCII 仕様に一致) ──
+ * 白鍵=背景・黒鍵=前景で描く鍵盤と並べたとき、溝とつまみは前景 (黒) の方が馴染む。
+ * そこで枠は外形の境界として前景のまま据え置き、枠の内側に 1px の背景マージン環を取って
+ * 地・溝・つまみが枠に接して角や辺が汚れないようにし、溝の内側とつまみを前景で塗る。
+ * (市松は対称なので前景/背景を反転しても地の見えは変わらない)。
+ *   枠        : 四辺 1px の実線ボーダー (隣接フェーダーと共有)
+ *   マージン  : 枠の内側 1px の背景環。地・溝・つまみはこの内側にだけ描き枠に触れない
+ *   地        : マージンの内側を市松テクスチャ ((lx+ly) が偶数のとき前景)
+ *   グルーヴ  : 中央の縦溝。幅 5px = 壁1 + 溝3 + 壁1、上下に 1px キャップ。壁=背景・内側=前景
+ *   つまみ    : 幅 21px (枠から左右 2px 内側) × 高さ 11px の横長キャップ。前景ベタ塗りで、
+ *               上下端 1px と中央グリップ線 (19px) を背景で抜く。max で上端・min で下端側の
+ *               マージンに密着し、現在値をグリップ線が指す。
  *
  * 操作は水平 Slider と対称:
  *   上下ドラッグで値 (上端 = max)、Shift+ドラッグで微調整、ホイールで増減、
@@ -31,22 +38,25 @@ import {
 } from "../ports.js";
 import { tickRepeat } from "../ui_helpers.js";
 
-/** フェーダーの固定幅 (px) — ASCII 仕様の 1 セル幅 */
-export const FADER_W = 23;
+/** フェーダーの固定幅 (px) — 枠1 + マージン1 + 内容21 + マージン1 + 枠1 */
+export const FADER_W = 25;
 
-/** 高さ (可動域) の推奨初期値 (px) — ASCII 仕様 (72) を四隅位相合わせで 1px 縮めた奇数 */
+/** 高さ (可動域) の推奨初期値 (px) — 四隅の市松位相を揃えるための奇数 */
 export const FADER_DEFAULT_H = 71;
 
-/** 隣接フェーダー間の間隔 (px) — バンク化するときのピッチは FADER_W + FADER_GAP */
-export const FADER_GAP = 1;
+/** 隣接フェーダーの重なり (px)。外枠 1px を共有するのでピッチは FADER_W + FADER_GAP = 24。
+ *  負値 = 重なり (共有)。単体フェーダーには影響しない。 */
+export const FADER_GAP = -1;
 
-/** つまみの高さ (px): 枠1 + 余白4 + グリップ線1 + 余白4 + 枠1 = 11 */
+/** 枠の内側に取る背景マージン環の厚み (px)。地・溝・つまみを枠から離し角/辺を綺麗に保つ */
+const MARGIN = 1;
+/** つまみの高さ (px): 背景端1 + 前景4 + グリップ線1 + 前景4 + 背景端1 = 11 */
 const THUMB_H = 11;
-/** つまみ上端からグリップ線 (中央) までの距離 (px) */
+/** つまみ上端 (背景端) からグリップ線 (中央) までの距離 (px) */
 const THUMB_GRIP_OFFSET = 5;
-/** グリップ線の左右インセット (px): 枠1 + 余白1 */
-const GRIP_INSET = 2;
-/** グルーヴの溝 (背景でくり抜く) 幅 (px) */
+/** グリップ線の左右インセット (px): 枠1 + マージン1 + つまみ内側1 */
+const GRIP_INSET = 2 + MARGIN;
+/** グルーヴの溝 (前景でくり抜く) 幅 (px) */
 const GROOVE_HOLLOW_W = 3;
 /** グルーヴの左右壁の厚み (px) */
 const GROOVE_WALL_W = 1;
@@ -55,7 +65,7 @@ const GROOVE_W = GROOVE_HOLLOW_W + GROOVE_WALL_W * 2;
 /** グルーヴ端キャップの厚み (px) */
 const GROOVE_CAP_H = 1;
 /** フェーダー端からグルーヴ端キャップまでの距離 (px)。max 時のグリップ線の 1px 手前 */
-const GROOVE_END_MARGIN = THUMB_GRIP_OFFSET - 1;
+const GROOVE_END_MARGIN = THUMB_GRIP_OFFSET - 1 + MARGIN;
 
 export class Fader extends FocusableWidget {
   /**
@@ -118,13 +128,14 @@ export class Fader extends FocusableWidget {
 
   /**
    * グリップ線 (現在値) が動く範囲をローカル座標で返す。
-   * travelTop = max 位置 (つまみ上端密着)、travelBottom = min 位置 (下端密着)。
+   * travelTop = max 位置 (つまみが上端マージンに密着)、travelBottom = min 位置 (下端マージン)。
+   * つまみは枠の内側マージンぶん (MARGIN) 内に収まるので上下端とも 1px 内側で止まる。
    * @private
    */
   _travel() {
     const h = this._effH();
-    const travelTop = this.y + THUMB_GRIP_OFFSET;
-    const travelBottom = this.y + h - 1 - (THUMB_H - 1 - THUMB_GRIP_OFFSET);
+    const travelTop = this.y + MARGIN + THUMB_GRIP_OFFSET;
+    const travelBottom = this.y + h - MARGIN - THUMB_H + THUMB_GRIP_OFFSET;
     return { travelTop, travelBottom };
   }
 
@@ -155,33 +166,46 @@ export class Fader extends FocusableWidget {
     const w = FADER_W;
     const h = this._effH(); // 奇数化 (四隅の市松位相を揃えるため。偶数は 1px 縮む)
 
-    // 1) 四辺 1px の枠 + 内側の市松 (地)。奇数高なので上端基準の連続した市松で
-    //    四隅がすべて背景から始まり、位相が揃う (継ぎ目なし)。phase=1 で内側原点=背景。
+    // 1) 四辺 1px の枠 + 内側の市松 (地)。枠と地の間に MARGIN の背景環を取り、市松を枠から
+    //    離して角/辺が汚れないようにする。phase=0 で内側原点 (四隅) = 前景に揃い、奇数高なら
+    //    四隅の位相が必ず一致し継ぎ目もできない。地の背景はウィンドウ地 (描かず素通し)。
     drawRect(ax, ay, w, h, 1);
-    drawCheckerboard(ax + 1, ay + 1, w - 2, h - 2, 1, 1);
+    drawCheckerboard(
+      ax + 1 + MARGIN,
+      ay + 1 + MARGIN,
+      w - 2 - 2 * MARGIN,
+      h - 2 - 2 * MARGIN,
+      1,
+      0,
+    );
 
-    // 2) 縦グルーヴ (中央) — 実線スロットの内側を背景でくり抜き、上下 1px キャップを残す
+    // 2) 縦グルーヴ (中央) — 反転配色: 背景の壁で縁取り、内側を前景でくり抜いて溝を暗く沈める。
+    //    上下 1px キャップを残す。黒く沈んだ溝が白鍵/黒鍵の並びと調和する。
     const gx = ax + ((w - GROOVE_W) >> 1);
     const gTop = ay + GROOVE_END_MARGIN;
     const gH = h - GROOVE_END_MARGIN * 2;
     if (gH > GROOVE_CAP_H * 2) {
-      fillRect(gx, gTop, GROOVE_W, gH, 1);
+      fillRect(gx, gTop, GROOVE_W, gH, 0);
       fillRect(
         gx + GROOVE_WALL_W,
         gTop + GROOVE_CAP_H,
         GROOVE_HOLLOW_W,
         gH - GROOVE_CAP_H * 2,
-        0,
+        1,
       );
     }
 
-    // 3) つまみ — max で上端・min で下端に密着 (thumbTop ∈ [0, h-11])
+    // 3) つまみ — 反転配色: 幅 21px (枠から左右 MARGIN 内側) の前景ベタ塗りキャップ。上下端 1px と
+    //    中央グリップ線を背景で抜いて溝から浮かせる。max で上端マージン・min で下端マージンに密着。
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
-    const thumbTop = ay + Math.round((1 - ratio) * (h - THUMB_H));
-    fillRect(ax, thumbTop, w, THUMB_H, 0); // 下地 (枠・市松・溝) を消す
-    drawRect(ax, thumbTop, w, THUMB_H, 1); // つまみ枠
-    hline(ax + GRIP_INSET, ax + w - 1 - GRIP_INSET, thumbTop + THUMB_GRIP_OFFSET, 1); // 中央グリップ線
+    const travel = h - 2 * MARGIN - THUMB_H;
+    const thumbTop = ay + MARGIN + Math.round((1 - ratio) * travel);
+    const tx = ax + 1 + MARGIN; // 枠から MARGIN 内側
+    const tw = w - 2 - 2 * MARGIN; // 21
+    fillRect(tx, thumbTop, tw, THUMB_H, 0); // 下地を背景で消す (上下端の 1px も背景に)
+    fillRect(tx, thumbTop + 1, tw, THUMB_H - 2, 1); // 前景ベタのキャップ本体 (上下 1px 内側)
+    hline(ax + GRIP_INSET, ax + w - 1 - GRIP_INSET, thumbTop + THUMB_GRIP_OFFSET, 0); // 中央グリップ線
   }
 
   /** @override */

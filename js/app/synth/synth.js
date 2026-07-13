@@ -80,7 +80,7 @@ const KEY_H = 42;
 const NUM_WHITE = 21;
 /** 鍵盤の全幅 (px)。仕切り共有のため +1 */
 const KEYBOARD_W = KEY_W * NUM_WHITE + 1;
-/** ENV フェーダーの高さ (可動域)。間隔は連結バンクにするため FADER_GAP (=1px) */
+/** ENV フェーダーの高さ (可動域)。バンクは外枠 1px を共有して連結する (FADER_GAP=-1) */
 const FADER_H = FADER_DEFAULT_H;
 /** 上段セクション間の間隔 (px)。セクション内の GAP より広げて区切りを明確にする */
 const SEC_GAP = GAP * 2;
@@ -364,7 +364,7 @@ function computeLayout() {
   L.oscLabelX = oscX;
   x += oscW + SEC_GAP;
 
-  // ── ENV ── ATT/DEC/SUS/REL の縦フェーダーを 1px 間隔で連結したバンク
+  // ── ENV ── ATT/DEC/SUS/REL の縦フェーダーを外枠 1px 共有で連結したバンク
   const envX = x;
   L.faderLabelX = [];
   for (let i = 0; i < envFaders.length; i++) {

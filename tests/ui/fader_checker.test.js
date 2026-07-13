@@ -79,15 +79,15 @@ function render(H, value = 50) {
   new Fader(0, 0, H, 0, 100, value, null).draw({ x: 0, y: 0 });
 }
 
-/** 内側四隅の市松ピクセル (枠の 1px 内側。実効高で下辺を測る) */
+/** 市松の四隅ピクセル (枠 1px + マージン 1px の内側 = 2px インセット。実効高で下辺を測る) */
 function cornerPhases(H) {
   render(H);
   const he = effH(H);
   return {
-    tl: at(1, 1),
-    tr: at(FADER_W - 2, 1),
-    bl: at(1, he - 2),
-    br: at(FADER_W - 2, he - 2),
+    tl: at(2, 2),
+    tr: at(FADER_W - 3, 2),
+    bl: at(2, he - 3),
+    br: at(FADER_W - 3, he - 3),
   };
 }
 
@@ -101,14 +101,25 @@ describe("Fader 市松の四隅位相", () => {
     });
   }
 
+  it("枠と地の間に 1px の背景マージンがあり市松が枠に接しない", () => {
+    // 枠 (x=0, x=FADER_W-1) の 1px 内側 (x=1, FADER_W-2) は常に背景であること
+    const H = 72;
+    render(H, 50);
+    const he = effH(H);
+    for (let y = 2; y < he - 2; y++) {
+      expect(at(1, y)).toBe(0); // 左マージン
+      expect(at(FADER_W - 2, y)).toBe(0); // 右マージン
+    }
+  });
+
   it("継ぎ目がない (連続した市松): 隣接行で同じ列が二重に点かない", () => {
     // つまみを上端 (value=max) に退避し、その下の市松を全行チェックする
     const H = 72;
     render(H, 100);
     const he = effH(H);
-    const x = 2; // グルーヴ (中央) を避けた市松列
-    // つまみ (上端 11px) の下から下枠の手前まで
-    for (let y = 12; y < he - 2; y++) {
+    const x = 2; // マージンの内側・グルーヴ (中央) を避けた市松列
+    // つまみ (上端マージン込み 12px) の下から下枠の手前まで
+    for (let y = 13; y < he - 2; y++) {
       expect(at(x, y)).not.toBe(at(x, y + 1)); // 継ぎ目 = 二重行があると失敗
     }
   });
