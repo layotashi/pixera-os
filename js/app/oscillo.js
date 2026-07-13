@@ -1,28 +1,25 @@
 /**
  * @module app/oscillo
- * oscillo.js — OSCILLO (1-bit 音声反応ビジュアル) のプロトタイプ
+ * oscillo.js — OSCILLO (1-bit オシロスコープ)
  *
- * Web Audio の AnalyserNode で master gain から FFT / 波形を取得し、
- * 1-bit でリアルタイム可視化する。SYNESTA の再生と同期して
+ * Web Audio の AnalyserNode で master gain から時間ドメイン波形を取得し、ウィンドウ
+ * ボディ全域に 1-bit のトレースとして描く。SYNESTA/SYNTH/ROLL 等の再生と同期して
  * 「画が音に踊る」体験を提供する。
  *
- * プロトタイプ仕様:
- *   - master gain に AnalyserNode を接続 (信号経路は非侵襲)
- *   - 3 つのビジュアライザを切替可能 (BARS / WAVE / RIPPLE)
- *     - BARS: FFT スペクトラムの 1-bit 棒グラフ
- *     - WAVE: 時間ドメイン波形のラインプロット
- *     - RIPPLE: 音量に応じて中心から広がる同心円
- *   - 上部に簡素なボタン行で切替
+ * 仕様:
+ *   - master gain に AnalyserNode を接続 (信号経路は非侵襲: 受動的な分岐)
+ *   - 表示は単純な波形トレースのみ (表示モードの概念は持たない)
+ *   - 配色はオシロスコープに倣い「地 = 前景 (黒)・波形 = 背景 (白)」。SYNTH の反転配色
+ *     (白鍵=背景/黒鍵=前景、フェーダーの溝=前景) と同じ規則で、地を前景色で塗り波形を
+ *     背景色で描く。OS 全体の invert 切替が入っても SYNTH と一緒に反転して整合する。
+ *   - ボディ全域を使う (NOTEPAD/ROLL と同じく Content Pad を効かせない padding:"none")
  *
  * 未実装 (本格化時の検討事項):
  *   - BPM 検出 → 拍に合わせた演出
- *   - エフェクトプリセットの増加 (core/field_render.js の場レンダラを流用可能)
  *   - CAPTURE との統合 (録画専用モード)
- *   - VRAM dither グラデーション活用
  */
 
-import { pset, fillRect, hline, vline, drawRect } from "../core/gpu.js";
-import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
+import { fillRect, vline } from "../core/gpu.js";
 import { getAudioContext, getMasterGain, initAudio } from "../core/audio.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
@@ -30,7 +27,6 @@ const APP_NAME = "OSCILLO";
 
 const WIN_W = 240;
 const WIN_H = 160;
-const HEADER_H = 14;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  オーディオ解析セットアップ
@@ -38,8 +34,6 @@ const HEADER_H = 14;
 
 /** @type {AnalyserNode|null} */
 let analyser = null;
-/** @type {Uint8Array|null} */
-let freqData = null;
 /** @type {Uint8Array|null} */
 let timeData = null;
 
@@ -52,179 +46,53 @@ function _ensureAnalyser() {
   analyser = ctx.createAnalyser();
   analyser.fftSize = 256;
   analyser.smoothingTimeConstant = 0.8;
-  master.connect(analyser);
-  freqData = new Uint8Array(analyser.frequencyBinCount);
+  master.connect(analyser); // 受動的な分岐 (destination には繋がないので音は変えない)
   timeData = new Uint8Array(analyser.fftSize);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  状態
+//  波形トレース
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const MODES = ["BARS", "WAVE", "RIPPLE"];
-let modeIdx = 0;
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  ビジュアライザ
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-function drawBars(cr) {
-  if (!analyser) return;
-  analyser.getByteFrequencyData(freqData);
-  const drawY = cr.y + HEADER_H;
-  const drawH = cr.h - HEADER_H - 2;
-  const drawW = cr.w - 4;
-  const numBars = 48;
-  const barW = Math.max(1, ((drawW - numBars) / numBars) | 0);
-  const step = Math.floor(freqData.length / numBars);
-  for (let i = 0; i < numBars; i++) {
-    let sum = 0;
-    for (let j = 0; j < step; j++) sum += freqData[i * step + j];
-    const avg = sum / step / 255;
-    const h = Math.floor(avg * drawH);
-    const x = cr.x + 2 + i * (barW + 1);
-    if (h > 0) {
-      fillRect(x, drawY + drawH - h, barW, h, 1);
-    }
-  }
-}
-
+/**
+ * 時間ドメイン波形をボディ全域に描く。
+ *
+ * 全ての列を同じ規則で扱う: 列 i の描画位置は「その列に写像したサンプルの振幅 A」だけで
+ * 決まり、左右端も内部の列と完全に等価。i=0 は基準点を打つだけ、以降は直前の列の振幅と
+ * 現在の列の振幅を縦線で結んで連続したトレースにする (隣接列なので縦補間で足りる)。
+ * 旧実装は基準点を中央 (振幅 0) に固定していたため、左端だけが「中央→先頭サンプル」の
+ * 縦線になって非対称に見えていた。基準点を先頭サンプル自身にすることでこれを解消する。
+ *
+ * @param {{x:number,y:number,w:number,h:number}} cr  コンテンツ矩形 (= ボディ全域)
+ */
 function drawWave(cr) {
-  if (!analyser) return;
-  analyser.getByteTimeDomainData(timeData);
-  const drawY = cr.y + HEADER_H;
-  const drawH = cr.h - HEADER_H - 2;
-  const cy = drawY + drawH / 2;
-  const drawW = cr.w - 4;
-  let prevX = cr.x + 2;
-  let prevY = cy;
-  for (let i = 0; i < drawW; i++) {
-    const sampleIdx = Math.floor((i / drawW) * timeData.length);
-    const v = (timeData[sampleIdx] - 128) / 128; // -1 ~ +1
-    const x = cr.x + 2 + i;
-    const y = cy - v * (drawH / 2 - 2);
-    // 単純 line: prev と curr 間を線で結ぶ
-    const x0 = prevX, y0 = prevY | 0, x1 = x, y1 = y | 0;
-    // bresenham 簡略 (横ラインなので適当でも見える)
-    const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) || 1;
-    for (let s = 0; s <= steps; s++) {
-      const px = x0 + ((x1 - x0) * s) / steps;
-      const py = y0 + ((y1 - y0) * s) / steps;
-      pset(px | 0, py | 0, 1);
-    }
-    prevX = x;
+  const cy = cr.y + cr.h / 2;
+  const amp = cr.h / 2 - 1; // 上下 1px を余白として残す
+  const n = timeData.length;
+  let prevY = 0;
+  for (let i = 0; i < cr.w; i++) {
+    const sampleIdx = Math.min(n - 1, Math.floor((i / cr.w) * n));
+    const v = (timeData[sampleIdx] - 128) / 128; // -1.0 〜 +1.0
+    const x = cr.x + i;
+    const y = (cy - v * amp) | 0;
+    const from = i === 0 ? y : prevY; // 先頭列は自分自身を基準に (= 点を打つ)
+    vline(x, from, y, 0); // 波形は背景色 (白) で描く
     prevY = y;
   }
 }
 
-let ripples = []; // { r, age }
-
-function drawRipple(cr) {
-  if (!analyser) return;
-  analyser.getByteFrequencyData(freqData);
-  // 低音域の平均パワーを取得
-  let bass = 0;
-  for (let i = 0; i < 16; i++) bass += freqData[i];
-  bass /= 16 * 255;
-
-  // 一定閾値を超えたら新しい波紋
-  if (bass > 0.4 && (ripples.length === 0 || ripples[ripples.length - 1].r > 8)) {
-    ripples.push({ r: 1, age: 0 });
-  }
-
-  const cx = cr.x + cr.w / 2;
-  const cy = cr.y + HEADER_H + (cr.h - HEADER_H) / 2;
-  const maxR = Math.min(cr.w, cr.h - HEADER_H) / 2 - 2;
-
-  for (const ring of ripples) {
-    ring.r += 0.7 + bass * 1.5;
-    ring.age++;
-    // 1-bit 円 (mid-point algorithm 簡略)
-    const r = ring.r | 0;
-    if (r > maxR) continue;
-    let x = r, y = 0, err = 0;
-    while (x >= y) {
-      pset(cx + x, cy + y, 1);
-      pset(cx + y, cy + x, 1);
-      pset(cx - y, cy + x, 1);
-      pset(cx - x, cy + y, 1);
-      pset(cx - x, cy - y, 1);
-      pset(cx - y, cy - x, 1);
-      pset(cx + y, cy - x, 1);
-      pset(cx + x, cy - y, 1);
-      y++;
-      err += 1 + 2 * y;
-      if (2 * (err - x) + 1 > 0) {
-        x--;
-        err += 1 - 2 * x;
-      }
-    }
-  }
-  ripples = ripples.filter((r) => r.r <= maxR);
-}
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  ヘッダー (モード切替ボタン)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-// 最新の contentRect 幅を onInput hit-test と共有する
-let _crW = 0;
-
-// ボタンのジオメトリ。
-// グリフを 1px 単位で対称に配置するため、サイズと padding は明示計算する。
-// (BTN_W - GLYPH_W) / 2 が整数になる組み合わせを選ぶ:
-//   GLYPH_W = 5 → BTN_W = 11 で padX = 3
-//   GLYPH_H = 5 → BTN_H = 11 で padY = 3
-const BTN_W = 11;
-const BTN_H = 11;
-
-function drawHeader(cr) {
-  _crW = cr.w;
-  // モード名表示
-  const label = `MODE: ${MODES[modeIdx]}`;
-  drawText(cr.x + 4, cr.y + 4, label, 1);
-  // 「>」ボタン (右側、左右上下とも完全対称な padding)
-  const btnX = cr.x + cr.w - BTN_W - 2;
-  // ヘッダー領域内で button を上下中央に配置 (HEADER_H = 14)
-  const btnY = cr.y + Math.floor((HEADER_H - BTN_H) / 2);
-  drawRect(btnX, btnY, BTN_W, BTN_H, 1);
-  // グリフを button 内で 1px 単位で対称配置
-  const padX = Math.floor((BTN_W - GLYPH_W) / 2);
-  const padY = Math.floor((BTN_H - GLYPH_H) / 2);
-  drawText(btnX + padX, btnY + padY, ">", 1);
-  // セパレータ
-  hline(cr.x, cr.x + cr.w - 1, cr.y + HEADER_H - 1, 1);
-}
-
-function isHeaderClick(ev) {
-  return ev.localY < HEADER_H;
-}
-
-function isModeButtonClick(ev) {
-  return (
-    ev.localX >= _crW - BTN_W - 2 &&
-    ev.localX < _crW - 2 &&
-    ev.localY >= 0 &&
-    ev.localY < HEADER_H
-  );
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  描画 / 入力
+//  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function onDraw(cr) {
   _ensureAnalyser();
-  drawHeader(cr);
-  if (modeIdx === 0) drawBars(cr);
-  else if (modeIdx === 1) drawWave(cr);
-  else drawRipple(cr);
-}
-
-function onInput(ev) {
-  if (ev.type === "down" && isHeaderClick(ev) && isModeButtonClick(ev)) {
-    modeIdx = (modeIdx + 1) % MODES.length;
-  }
+  // 地をボディ全域に前景色 (黒) で塗る。オーディオ未初期化 (無音・ユーザー未操作) でも
+  // オシロスコープらしい黒画面になる。
+  fillRect(cr.x, cr.y, cr.w, cr.h, 1);
+  if (!analyser) return;
+  analyser.getByteTimeDomainData(timeData);
+  drawWave(cr);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -234,10 +102,13 @@ function onInput(ev) {
 wmRegister(
   APP_NAME,
   () => {
-    return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
+    return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, null, null, {
       about:
-        "Visualizes audio from SYNESTA playback in 1-bit. Press the > " +
-        "button in the header to cycle through visualizer modes.",
+        "Visualizes audio from SYNTH / ROLL playback as a 1-bit oscilloscope " +
+        "trace across the whole window.",
+      // ボディ全域を波形に使う (NOTEPAD/ROLL 同様)。Content Pad を効かせると波形が
+      // 中途半端な位置で途切れて見えるため、アプリ側で内側余白を無効化する。
+      padding: "none",
       noResize: true,
       noMaximize: true,
     });
