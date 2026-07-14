@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "d543f18",
-  count: 312,
+  hash: "44b82a3",
+  count: 313,
   notes: [
     { date: "2026-07-14", hash: "d543f18", text: "ROLL: undo/redo, copy-paste, time scale" },
     { date: "2026-07-14", hash: "6bafcfb", text: "New TRANSPORT app: play, tempo, loop, metronome for all music apps" },

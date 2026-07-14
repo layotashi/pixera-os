@@ -103,6 +103,24 @@ export function getLoop() {
   return { start: _loopStart, end: _loopEnd, on: _loopOn };
 }
 
+/**
+ * ワークレット内シーケンサへ渡す時計アンカー一式を返す。位置はこのアンカーから
+ * pos = startBeat + (ctx.currentTime − startTime) × bpm/60 で復元でき、ループで折り返す。
+ * ROLL はこれをオーディオスレッドのシーケンサへ送り、発音時刻をサンプル精度に固定する。
+ * @returns {{playing:boolean,bpm:number,startBeat:number,startTime:number,loopStart:number,loopEnd:number,loopOn:boolean}}
+ */
+export function getClock() {
+  return {
+    playing: _playing,
+    bpm: _bpm,
+    startBeat: _startBeat,
+    startTime: _startTime,
+    loopStart: _loopStart,
+    loopEnd: _loopEnd,
+    loopOn: _loopOn,
+  };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  位置の bar.beat.sub 換算 (拍子ベース)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

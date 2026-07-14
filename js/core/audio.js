@@ -547,6 +547,15 @@ function _registerSource(src) {
 }
 
 /**
+ * 外部モジュール (core/chip.js の ChipSynth 等) の発音元をパニック消音レジストリへ登録する。
+ * panic() を実装したオブジェクトを渡すこと。タブ非表示時に panicAllAudio() が呼ばれる。
+ * @param {{panic:()=>void}} src
+ */
+export function registerPanicSource(src) {
+  _registerSource(src);
+}
+
+/**
  * 全発音元を即座に消音する (パニック)。タブ非表示化などで発音スケジューリングが止まり、
  * 発音中ノートに noteOff が届かなくなる状況で、鳴りっぱなしを防ぐために呼ぶ。
  * 1 つの発音元でエラーが出ても残りは消音を続ける。

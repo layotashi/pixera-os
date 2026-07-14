@@ -152,6 +152,41 @@ describe("playback clock", () => {
   });
 });
 
+describe("clock (getClock) — ワークレットシーケンサへ渡すアンカー", () => {
+  it("play 後は開始位置/時刻・テンポ・ループを返す", () => {
+    setNow(2);
+    T.play(4);
+    const c = T.getClock();
+    expect(c.playing).toBe(true);
+    expect(c.bpm).toBe(120);
+    expect(c.startBeat).toBe(4);
+    expect(c.startTime).toBe(2);
+    expect(c.loopStart).toBe(0);
+    expect(c.loopEnd).toBe(16);
+    expect(c.loopOn).toBe(true);
+  });
+
+  it("stop すると playing:false になる (位置アンカーは保持)", () => {
+    T.play(0);
+    setNow(1);
+    T.update();
+    T.stop();
+    const c = T.getClock();
+    expect(c.playing).toBe(false);
+    expect(c.startBeat).toBe(0);
+  });
+
+  it("テンポ/ループ変更が反映される", () => {
+    T.setTempo(140);
+    T.setLoop(4, 12, false);
+    const c = T.getClock();
+    expect(c.bpm).toBe(140);
+    expect(c.loopStart).toBe(4);
+    expect(c.loopEnd).toBe(12);
+    expect(c.loopOn).toBe(false);
+  });
+});
+
 describe("recording", () => {
   it("startRecording は停止中なら再生も始め、状態を立てる", () => {
     T.startRecording();

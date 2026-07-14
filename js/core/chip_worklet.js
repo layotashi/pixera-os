@@ -33,10 +33,17 @@
  *   { type:"noteOn",  channel, id, midi, vel, time }                     // vel=0..1, time=秒(ctx基準)
  *   { type:"noteOff", channel, id, time }
  *   { type:"allNotesOff", channel? }   // channel 省略時は全チャンネル
+ *   // ── シーケンサ (Phase 2) ──
+ *   { type:"pattern",   notes:[{midi,startStep,lenSteps,vel}], stepsPerBeat }
+ *   { type:"transport", channel, playing, bpm, startBeat, startTime, loopStart, loopEnd, loopOn }
  */
 
 /** 最大同時発音数の既定 (PolySynth の DEFAULT_MAX_VOICES に一致)。 */
 const DEFAULT_MAX_VOICES = 16;
+
+/** シーケンサ発音の id オフセット。ライブ発音 (id=midi) と同一チャンネル・同一音高でも
+ *  ボイスが衝突しないよう別 id 空間にする (伴奏に合わせて同じ鍵盤を弾いても両立する)。 */
+const SEQ_ID_BASE = 100000;
 
 /** ボイスプール総数 (全チャンネル共有)。 */
 const VOICE_POOL = 64;
@@ -80,11 +87,32 @@ class ChipProcessor extends AudioWorkletProcessor {
     this._voices = [];
     for (let i = 0; i < VOICE_POOL; i++) this._voices.push(this._blankVoice());
 
-    /** @type {Array<object>} 発火待ちイベント (atSample 昇順) */
+    /** @type {Array<object>} 発火待ちイベント (atSample 昇順)。ライブ + シーケンサ共通 */
     this._events = [];
 
     /** ボイス割当順 (最古スティール用の単調増加カウンタ) */
     this._seq = 0;
+
+    // ── 自走シーケンサ (パターン + トランスポート時計から発火) ──
+    /** @type {{notes:Array<object>, stepsPerBeat:number}} */
+    this._pattern = { notes: [], stepsPerBeat: 4 };
+    /** @type {object} トランスポート状態 (メインの transport をミラー) */
+    this._transport = {
+      playing: false,
+      bpm: 120,
+      startBeat: 0,
+      startTime: 0,
+      loopStart: 0,
+      loopEnd: 16,
+      loopOn: true,
+    };
+    /** シーケンサの発音先チャンネル */
+    this._seqChannel = 0;
+    /** 次に発火判定を始める絶対サンプル (連続する窓で重複/取りこぼしを防ぐ) */
+    this._seqCursor = 0;
+    /** アンカー変化検知用 (再開/シークで再スケジュールするため) */
+    this._lastStartTime = 0;
+    this._lastStartBeat = 0;
 
     this.port.onmessage = (e) => this._onMessage(e.data);
   }
@@ -176,17 +204,59 @@ class ChipProcessor extends AudioWorkletProcessor {
         });
         break;
       case "allNotesOff": {
-        // 予約中イベントも破棄して即時消音 (channel 指定時はそのチャンネルのみ)
-        if (msg.channel == null) {
-          this._events.length = 0;
-          for (const v of this._voices) this._deactivate(v);
-        } else {
-          const ch = msg.channel | 0;
-          this._events = this._events.filter((e) => e.channel !== ch);
-          for (const v of this._voices) if (v.channel === ch) this._deactivate(v);
+        // 予約中イベントも破棄して即時消音。channel 指定でそのチャンネルのみ、
+        // liveOnly でライブ発音のみ (id<SEQ_ID_BASE) を対象にする。後者はタブ非表示時の
+        // パニック消音用 — 押しっぱなしのライブ音だけ止め、自走シーケンサは乱さない。
+        const chanFilter = msg.channel == null ? null : msg.channel | 0;
+        const liveOnly = !!msg.liveOnly;
+        const keep = (target) =>
+          (chanFilter != null && target.channel !== chanFilter) ||
+          (liveOnly && target.id >= SEQ_ID_BASE);
+        this._events = this._events.filter(keep);
+        for (const v of this._voices) if (v.active && !keep(v)) this._deactivate(v);
+        break;
+      }
+      case "pattern":
+        // パターン差し替え。発音中ボイスは止めない (予約済み off で自然に消える)。
+        // 未来のオンセットは次クォンタムから新パターンで再導出される (編集の即時反映)。
+        this._pattern = {
+          notes: msg.notes || [],
+          stepsPerBeat: msg.stepsPerBeat || 4,
+        };
+        break;
+      case "transport": {
+        const tp = this._transport;
+        tp.bpm = msg.bpm;
+        tp.loopStart = msg.loopStart;
+        tp.loopEnd = msg.loopEnd;
+        tp.loopOn = msg.loopOn;
+        if (msg.channel != null) this._seqChannel = msg.channel | 0;
+        const wasPlaying = tp.playing;
+        tp.playing = !!msg.playing;
+        tp.startBeat = msg.startBeat;
+        tp.startTime = msg.startTime;
+        // アンカー (開始位置/時刻) が変わった = (再)開始 or シーク。予約を捨ててアンカーから
+        // 再スケジュールする。テンポ/ループだけの変更ではカーソルを保ち連続性を維持する。
+        const anchorChanged =
+          msg.startTime !== this._lastStartTime || msg.startBeat !== this._lastStartBeat;
+        this._lastStartTime = msg.startTime;
+        this._lastStartBeat = msg.startBeat;
+        if (!tp.playing) {
+          this._clearSeq(); // 停止: 発音中のシーケンス音を消す
+        } else if (anchorChanged || !wasPlaying) {
+          this._clearSeq();
+          this._seqCursor = Math.round(tp.startTime * sampleRate);
         }
         break;
       }
+    }
+  }
+
+  /** シーケンサ由来の予約イベント・発音中ボイスだけを消す (ライブ発音は残す)。 */
+  _clearSeq() {
+    this._events = this._events.filter((e) => e.id < SEQ_ID_BASE);
+    for (const v of this._voices) {
+      if (v.active && v.id >= SEQ_ID_BASE) this._deactivate(v);
     }
   }
 
@@ -314,6 +384,77 @@ class ChipProcessor extends AudioWorkletProcessor {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  //  自走シーケンサ (chip_dsp.notesOnsetsInWindow のミラー)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * このクォンタムがカバーするサンプル窓 [_seqCursor, currentFrame+N) に発火するノートの
+   * on/off イベントを予約する。窓は連続 (前クォンタムの終端 = 今回の始端) なので各オンセットは
+   * ちょうど 1 度だけ拾う。ループ境界 (末尾→先頭) も周回 k を数えて跨いで発火できる。
+   * off はオンセット検出時に一緒に予約するので、パターン編集/ノート削除でも鳴りっぱなしにならない。
+   * @param {number} N レンダークォンタムのサンプル数
+   */
+  _scheduleSeq(N) {
+    const t = this._transport;
+    if (!t.playing) return;
+    const beatsPerSec = t.bpm / 60;
+    if (!(beatsPerSec > 0)) return;
+    const notes = this._pattern.notes;
+    if (!notes.length) {
+      this._seqCursor = currentFrame + N;
+      return;
+    }
+    const qEnd = currentFrame + N;
+    const t0 = this._seqCursor / sampleRate;
+    const t1 = qEnd / sampleRate;
+    if (!(t1 > t0)) {
+      this._seqCursor = qEnd;
+      return;
+    }
+    const spb = this._pattern.stepsPerBeat || 4;
+    const bLin0 = t.startBeat + (t0 - t.startTime) * beatsPerSec;
+    const bLin1 = t.startBeat + (t1 - t.startTime) * beatsPerSec;
+    const period = t.loopEnd - t.loopStart;
+    const looping = t.loopOn && period > 0;
+    const ch = this._seqChannel;
+    const beatToSample = (b) =>
+      Math.round((t.startTime + (b - t.startBeat) / beatsPerSec) * sampleRate);
+
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const onBeat = n.startStep / spb;
+      const lenBeat = n.lenSteps / spb;
+      const id = SEQ_ID_BASE + n.midi;
+      if (looping) {
+        if (onBeat < t.loopStart || onBeat >= t.loopEnd) continue;
+        const offRel = Math.min(lenBeat, t.loopEnd - onBeat); // off はループ末尾で切る
+        let cand = onBeat + Math.ceil((bLin0 - onBeat) / period) * period;
+        for (; cand < bLin1; cand += period) {
+          if (cand < bLin0) continue;
+          this._enqueue(beatToSample(cand), {
+            kind: "on",
+            channel: ch,
+            id,
+            midi: n.midi,
+            vel: n.vel,
+          });
+          this._enqueue(beatToSample(cand + offRel), { kind: "off", channel: ch, id });
+        }
+      } else if (onBeat >= bLin0 && onBeat < bLin1) {
+        this._enqueue(beatToSample(onBeat), {
+          kind: "on",
+          channel: ch,
+          id,
+          midi: n.midi,
+          vel: n.vel,
+        });
+        this._enqueue(beatToSample(onBeat + lenBeat), { kind: "off", channel: ch, id });
+      }
+    }
+    this._seqCursor = qEnd;
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   //  合成
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -383,7 +524,13 @@ class ChipProcessor extends AudioWorkletProcessor {
     const out0 = output[0];
     const N = out0.length;
     const q0 = currentFrame;
+
+    // このクォンタムに発火するシーケンサ発音を予約 (サンプル精度)。
+    this._scheduleSeq(N);
+
     const events = this._events;
+    const voices = this._voices;
+    const nv = voices.length;
     let ei = 0;
 
     for (let i = 0; i < N; i++) {
@@ -393,9 +540,10 @@ class ChipProcessor extends AudioWorkletProcessor {
         this._applyEvent(events[ei]);
         ei++;
       }
-      // 全ボイスを合成して加算
+      // 全ボイスを合成して加算 (オーディオスレッドのホットループ ─ 添字ループで回す)
       let mix = 0;
-      for (const v of this._voices) {
+      for (let vi = 0; vi < nv; vi++) {
+        const v = voices[vi];
         if (v.active) mix += this._renderVoiceSample(v);
       }
       out0[i] = mix;

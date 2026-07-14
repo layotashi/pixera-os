@@ -46,7 +46,13 @@ import {
   keepAudioAwake,
   releaseAudioAwake,
 } from "../../core/audio.js";
-import { createInstrument, initChipEngine } from "../../core/chip.js";
+import {
+  createInstrument,
+  initChipEngine,
+  isChipSupported,
+  chipSetPattern,
+  chipSetTransport,
+} from "../../core/chip.js";
 import * as tracks from "../music/tracks.js";
 import * as transport from "../music/transport.js";
 import * as VFS from "../../core/vfs.js";
@@ -202,10 +208,23 @@ let lastDownKey = null;
 let prevDownKey = null;
 
 // ── 再生 (クロックは共有 transport、発音先は tracks レジストリ) ──
+//
+// 発音方式は 2 系統:
+//   [seq]    ワークレット内シーケンサ (対応環境 + 発音先が ChipSynth のとき)。パターンと
+//            トランスポート時計をオーディオスレッドへ渡し、そこがサンプル精度で発火する。
+//            メインスレッドの描画ジャンク (TESSERA 背景等) に一切影響されない ＝ 本命の経路。
+//   [legacy] 非対応環境/フォールバック音源のとき。従来どおり毎フレームでステップを発火する
+//            (フレームレートに量子化されるが、対応環境では使われない安全網)。
 let lastFiredStep = -1;
 let _wasPlaying = false; // transport 再生状態の前フレーム値 (開始/停止の遷移検出)
 let _activeInst = null; // 再生セッション中の発音先 (開始時に確定し、途中で切替えない)
-const sounding = new Map(); // note -> 残りステップ (発音中)
+const sounding = new Map(); // note -> 残りステップ ([legacy] の発音管理用)
+
+// ── [seq] ワークレットシーケンサの同期状態 ──
+let _seqMode = false; // このセッションがワークレットシーケンサ経路か
+let _seqChannel = null; // 発音先チャンネル (ChipSynth.channel)
+let _lastPatternSig = 0; // 直近に送ったパターンの署名 (編集検知して再送)
+let _lastClockKey = ""; // 直近に送ったトランスポート時計のキー (変化検知して再送)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  音源 / 試聴
@@ -890,7 +909,39 @@ function togglePlay(fromStop) {
     transport.play(fromStop ? null : 0); // null=停止位置から / 0=1.1.1 から
   }
 }
-/** ステップ境界: 発音中を減衰・消音し、そのステップで始まるノートを発音 */
+// ── [seq] ワークレットシーケンサへ渡す変換 / 同期 ──
+
+/** ROLL のノート {col,row,len,vel} → ワークレットのパターン形 {midi,startStep,lenSteps,vel(0..1)}。 */
+function toWorkletNotes() {
+  return notes.map((n) => ({
+    midi: rowToMidi(n.row),
+    startStep: n.col,
+    lenSteps: n.len,
+    vel: n.vel / 127,
+  }));
+}
+
+/** パターンの署名 (編集検知用)。値が変われば再送する。 */
+function patternSig() {
+  let s = notes.length | 0;
+  for (const n of notes) {
+    s = (Math.imul(s, 31) + n.col * 131071 + n.row * 8191 + n.len * 127 + n.vel) | 0;
+  }
+  return s;
+}
+
+/** トランスポート時計のキー (変化検知用)。アンカー/テンポ/ループが変われば再送する。 */
+function clockKey(c) {
+  return `${c.playing}|${c.bpm}|${c.startBeat}|${c.startTime}|${c.loopStart}|${c.loopEnd}|${c.loopOn}`;
+}
+
+/** 発音先がワークレットシーケンサで鳴らせるなら、そのチャンネル番号を返す (不可なら null)。 */
+function seqChannelOf(inst) {
+  if (!isChipSupported()) return null;
+  return inst && inst.channel != null ? inst.channel : null;
+}
+
+/** [legacy] ステップ境界: 発音中を減衰・消音し、そのステップで始まるノートを発音 */
 function onStepEnter(step) {
   const inst = _activeInst;
   if (!inst) return;
@@ -912,33 +963,80 @@ function onStepEnter(step) {
     }
   }
 }
+
 /**
- * 毎フレーム: transport を進め、開始/停止の遷移を処理し、跨いだステップを発火する。
- * transport を誰が操作しても (将来の Transport アプリ含む) ここで追従する。
+ * 毎フレーム: transport を進め、開始/停止の遷移を処理する。
+ * [seq] 経路ではパターン + トランスポート時計をワークレットへ同期するだけで、発火はオーディオ
+ * スレッドが担う (発音タイミングはメインの描画負荷から独立)。[legacy] 経路のみ従来の per-frame
+ * 発火を行う。transport を誰が操作しても (将来の TRANSPORT アプリ含む) ここで追従する。
  */
 function updatePlayback() {
   transport.update();
   const p = transport.isPlaying();
+  const clock = transport.getClock();
+
   if (p && !_wasPlaying) {
-    // 再生開始: このセッションの発音先を確定し、開始ステップ直前へ合わせる
+    // ── 再生開始: 発音先を確定し、経路を選ぶ ──
     _activeInst = targetInstrument();
-    const startStep = transport.getPosition() * STEPS_PER_BEAT;
-    lastFiredStep = (Math.floor(startStep) - 1 + LOOP_STEPS) % LOOP_STEPS;
-    sounding.clear();
+    _seqChannel = seqChannelOf(_activeInst);
+    _seqMode = _seqChannel != null;
+    if (_seqMode) {
+      // ワークレットへパターン + 時計を送る (以降オーディオスレッドが自走発火)
+      chipSetPattern(toWorkletNotes(), STEPS_PER_BEAT);
+      chipSetTransport(clock, _seqChannel);
+      _lastPatternSig = patternSig();
+      _lastClockKey = clockKey(clock);
+    } else {
+      // フォールバック: 開始ステップ直前へ合わせる
+      const startStep = transport.getPosition() * STEPS_PER_BEAT;
+      lastFiredStep = (Math.floor(startStep) - 1 + LOOP_STEPS) % LOOP_STEPS;
+      sounding.clear();
+    }
   } else if (!p && _wasPlaying) {
-    // 停止: 発音を止める
-    if (_activeInst) _activeInst.allNotesOff();
+    // ── 停止 ──
+    if (_seqMode) {
+      chipSetTransport(clock, _seqChannel); // playing:false ＝ ワークレットのシーケンス音を止める
+    } else if (_activeInst) {
+      _activeInst.allNotesOff();
+    }
     _activeInst = null;
+    _seqMode = false;
     sounding.clear();
+  } else if (p && _seqMode) {
+    // ── 継続 [seq]: 編集/トランスポート変更をワークレットへ同期 ──
+    const sig = patternSig();
+    if (sig !== _lastPatternSig) {
+      chipSetPattern(toWorkletNotes(), STEPS_PER_BEAT); // 打ち込み編集を即反映 (WYSIWYG)
+      _lastPatternSig = sig;
+    }
+    const ck = clockKey(clock);
+    if (ck !== _lastClockKey) {
+      chipSetTransport(clock, _seqChannel); // テンポ/ループ/シーク変更を反映
+      _lastClockKey = ck;
+    }
   }
+
   _wasPlaying = p;
-  if (!p) return;
+  if (!p || _seqMode) return;
+
+  // ── [legacy] per-frame 発火 (非対応環境/フォールバック音源のみ) ──
   const target = Math.floor(transport.getPosition() * STEPS_PER_BEAT) % LOOP_STEPS;
   let guard = 0;
   while (lastFiredStep !== target && guard++ <= LOOP_STEPS) {
     lastFiredStep = (lastFiredStep + 1) % LOOP_STEPS;
     onStepEnter(lastFiredStep);
   }
+}
+
+/** 発音中ノートの視覚ハイライト用の現在ステップ (再生ヘッド)。停止中は -1。
+ *  [seq]/[legacy] 共通で共有時計 (transport) から導出する ＝ 盤面と発音が一致する (WYSIWYG)。 */
+function currentPlayStep() {
+  if (!transport.isPlaying()) return -1;
+  return Math.floor(transport.getPosition() * STEPS_PER_BEAT) % LOOP_STEPS;
+}
+/** ノート n が再生ヘッド playStep 上で発音中か (視覚ハイライト用)。 */
+function isNoteSounding(n, playStep) {
+  return playStep >= n.col && playStep < n.col + n.len;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1383,12 +1481,14 @@ function onDraw(cr) {
     y += t + (di < vl.R ? cellH : 0);
   }
 
-  // ノート + 移動プレビュー (発音中/選択は白抜き)
+  // ノート + 移動プレビュー (発音中/選択は白抜き)。発音中判定は再生ヘッドから導出するので
+  // [seq]/[legacy] どちらの発音経路でも盤面と一致する (WYSIWYG)。
   const moving = !!(drag && drag.mode === "move" && drag.moved);
   const dup = moving && ctrlHeld();
+  const playStep = currentPlayStep();
   for (const n of notes) {
     if (moving && !dup && drag.sel.includes(n)) continue; // 移動: 掴んだ実体は隠す
-    drawNoteAt(cr, n.col, n.row, n.len, n.selected || sounding.has(n), vl);
+    drawNoteAt(cr, n.col, n.row, n.len, n.selected || isNoteSounding(n, playStep), vl);
   }
   if (moving) {
     for (const n of drag.sel) drawNoteAt(cr, n.col + drag.dCol, n.row + drag.dRow, n.len, false, vl);
@@ -1510,8 +1610,11 @@ const ABOUT_TEXT = [
 /** 閉じる際の後始末: 再生を止め発音を消す (updatePlayback は閉じると呼ばれないため明示) */
 function cleanupOnClose() {
   if (transport.isPlaying()) transport.stop();
+  // [seq] ワークレットシーケンサは自走するので、停止後の時計 (playing:false) を明示的に送って止める。
+  if (_seqMode && _seqChannel != null) chipSetTransport(transport.getClock(), _seqChannel);
   if (_activeInst) _activeInst.allNotesOff();
   _activeInst = null;
+  _seqMode = false;
   _wasPlaying = false;
   sounding.clear();
   previewStop(); // プレビュー音を止める

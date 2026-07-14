@@ -23,6 +23,7 @@ import {
   getMasterGain,
   WAVEFORM_LIST,
   createPolySynth,
+  registerPanicSource,
 } from "./audio.js";
 import { buildWavetables, TABLE_SIZE, quantizeVolume16 } from "./chip_dsp.js";
 
@@ -113,6 +114,8 @@ export function initChipEngine() {
 export class ChipSynth {
   constructor(channel) {
     this._ch = channel;
+    /** ワークレット上のチャンネル番号。ROLL のシーケンサが発音先として参照する。 */
+    this.channel = channel;
     // 既定は PolySynth のクラス既定に合わせる (a10ms/d100ms/s80%/r200ms, saw, vol50, 16 voices)。
     // SYNTH は生成後に自前の既定 (sq50 等) を setWaveform 等で上書きする。
     this._waveform = "saw";
@@ -125,6 +128,13 @@ export class ChipSynth {
     this._held = new Set();
     initChipEngine();
     this._pushParams();
+    registerPanicSource(this); // タブ非表示時のパニック消音 (押しっぱなしのライブ音を止める)
+  }
+
+  /** パニック消音 (タブ非表示時)。ライブ発音だけ止め、自走シーケンサ (ROLL 再生) は乱さない。 */
+  panic() {
+    this._held.clear();
+    post({ type: "allNotesOff", channel: this._ch, liveOnly: true });
   }
 
   /** 現在の音色パラメータをワークレットへ送る (秒 / 0..1 に換算)。 */
@@ -218,6 +228,43 @@ export class ChipSynth {
   getMaxVoices() {
     return this._maxVoices;
   }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  ワークレット内シーケンサ制御 (ROLL の再生を駆動)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// ワークレットは 1 つの自走シーケンサを持ち、パターン (ノート列) とトランスポート時計を
+// 与えると、自前のサンプル時計で発火する。発音時刻はメインスレッドの描画ジャンクから独立し、
+// サンプル精度に固定される (frame-quantize なテンポ揺れが原理的に消える)。
+
+/**
+ * シーケンサのパターンを差し替える。再生中の編集で呼ぶと未来のオンセットに即反映される。
+ * @param {{midi:number,startStep:number,lenSteps:number,vel:number}[]} notes  vel は 0..1
+ * @param {number} stepsPerBeat
+ */
+export function chipSetPattern(notes, stepsPerBeat) {
+  post({ type: "pattern", notes, stepsPerBeat });
+}
+
+/**
+ * トランスポート時計 (アンカー) と発音先チャンネルをシーケンサへ送る。開始/停止/シーク/
+ * テンポ・ループ変更のたびに呼ぶ。playing:false で発音中のシーケンス音を止める。
+ * @param {{playing:boolean,bpm:number,startBeat:number,startTime:number,loopStart:number,loopEnd:number,loopOn:boolean}} clock
+ * @param {number} channel  発音先チャンネル (ChipSynth.channel)
+ */
+export function chipSetTransport(clock, channel) {
+  post({
+    type: "transport",
+    channel,
+    playing: clock.playing,
+    bpm: clock.bpm,
+    startBeat: clock.startBeat,
+    startTime: clock.startTime,
+    loopStart: clock.loopStart,
+    loopEnd: clock.loopEnd,
+    loopOn: clock.loopOn,
+  });
 }
 
 /**

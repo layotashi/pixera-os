@@ -131,6 +131,9 @@ function synth() {
       id: APP_NAME,
       name: APP_NAME,
       instrument: {
+        // ワークレット上のチャンネル (ChipSynth のとき)。ROLL のシーケンサが発音先として使う。
+        // PolySynth フォールバック時は undefined ＝ ROLL は従来の per-frame 発火にフォールバックする。
+        channel: _synth.channel,
         noteOn: (m, v, t) => _synth.noteOn(m, v, t),
         noteOff: (m, t) => _synth.noteOff(m, t),
         allNotesOff: () => _synth.allNotesOff(),
