@@ -24,6 +24,8 @@
  *   移動 = ドラッグ、複製 = Ctrl+ドラッグ。音価 = ノート左右の辺をドラッグ。
  *   ズーム = Ctrl/Shift+Ctrl+ホイール (カーソル基準)。FOLD = F。再生 = Space。
  *   選択時はピッチ確認のため短く試聴する。重なりは配置側が勝ち (被りは削除/クリップ)。
+ *   コピー/ペースト = Ctrl+C / Ctrl+V (ペーストは直近クリックのグリッド線が起点)。
+ *   Undo/Redo = Ctrl+Z / Ctrl+Y。時間スケール = `*`/`/` に続けて数字 (例 `*`2=2倍, `/`2=1/2倍)。
  *
  * 発音は tracks レジストリ経由: SYNTH が開いていればその音色 (現在のパラメータ) で鳴り、
  * 無ければ ROLL 内蔵のフォールバック音源で鳴る。再生位置は共有 transport が持つ
@@ -63,7 +65,7 @@ import {
   wmGetContentRect,
   wmRequestCursor,
 } from "../../wm/index.js";
-import { keyDown, keyHeld, ctrlDown, ctrlShiftDown } from "../../core/input.js";
+import { keyDown, keyHeld, ctrlDown, ctrlShiftDown, getCharQueue } from "../../core/input.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -114,6 +116,14 @@ const REPEAT_RATE = 45;
 
 /** ノート辺の掴み判定幅 (DOT)。真上 1px より広く取る */
 const EDGE_GRAB = 5;
+
+/** 履歴 (Undo/Redo) の保持数。1 操作 = ノート全体のスナップショット 1 枚。
+ *  4 小節 × 数十ノート規模なので 100 段でも十分軽い。 */
+const HISTORY_LIMIT = 100;
+
+/** スケール入力 (`*`/`/` → 数字) の受付猶予 (ms)。演算子を押してからこの時間内に数字を
+ *  入力すると倍率が確定する。過ぎたら演算子待ちを破棄する (押しっぱなしの取り違え防止)。 */
+const SCALE_PENDING_MS = 1500;
 
 /** 既定ベロシティ (0..127)。v1 は固定 */
 const DEFAULT_VEL = 100;
@@ -167,6 +177,25 @@ let drag = null;
 /** キーリピート */
 let repeatCode = null;
 let repeatNext = 0;
+
+// ── 履歴 (Undo/Redo) ──
+/** 過去状態のスタック (それぞれノート全体のスナップショット)。undo で pop する */
+let undoStack = [];
+/** undo で戻した状態のスタック。redo で pop する。新規編集が入ると破棄する */
+let redoStack = [];
+
+// ── コピー / ペースト ──
+/** コピーしたノート群。位置は先頭 (srcCol) からの相対 dCol で保持し、ペースト時に再配置する。
+ *  null = クリップボード空。 @type {{srcCol:number,notes:{dCol:number,row:number,len:number,vel:number}[]}|null} */
+let clipboard = null;
+/** ペースト基準列 (グリッド線番号)。直近クリックのセル中央しきい値で決まる。null = 未クリック */
+let _pasteRefCol = null;
+
+// ── スケール入力の状態機械 (`*`/`/` を押した後に数字で倍率確定) ──
+/** 押された演算子 ('*' | '/' | null)。null = 演算子待ち無し */
+let _scaleOp = null;
+/** 演算子を押した時刻 (ms)。SCALE_PENDING_MS を過ぎたら _scaleOp を破棄する */
+let _scaleOpAt = 0;
 
 /** ダブルクリック誤検出よけ: 直近 2 クリックのセルキー */
 let lastDownKey = null;
@@ -365,6 +394,16 @@ function cellAt(lx, ly) {
   return { col, row: vl.rows[di] };
 }
 
+/**
+ * コンテンツ空間 X → 最寄りのグリッド線番号 (0..COLS)。判定はセル中央がしきい値:
+ * クリックがセル中央より左なら左側の線 (= その列番号)、中央以上なら右側の線 (= 列番号+1)。
+ * anchorCol はセル中央でちょうど整数+0.5 になるので、Math.round が中央しきい値そのものになる
+ * (中央上は右側へ丸める)。ペーストの基準列決定に使う。
+ */
+export function gridLineAtX(lx) {
+  return clampInt(Math.round(anchorCol(lx)), 0, COLS);
+}
+
 /** WM 管理スクロールの仮想コンテンツ寸法 */
 function onMeasure() {
   return { w: tableW(), h: vLayout().totalH };
@@ -547,6 +586,183 @@ function deleteSelected() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  履歴 (Undo / Redo)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// スナップショット方式: 1 操作の直前状態 (ノート全体の複製) を undo スタックへ積む。
+// 自然な操作単位で 1 件になるよう、記録は「操作の確定点」で行う ── ドラッグは離した
+// とき、矢印キーは押下 1 回 (長押しリピートは 1 件に集約)、配置/削除/複製/削除/
+// スケール/ペーストはそれぞれ完了時。選択だけの変化は履歴に残さない (編集ではないため)。
+// commitHistory は直前スナップショットと現在を比較し、変化が無ければ積まない (空エントリ防止)。
+
+/** ノート全体を値だけ複製する (選択状態も含めて復元できるよう selected も持つ) */
+function snapshotNotes() {
+  return notes.map((n) => ({ col: n.col, row: n.row, len: n.len, vel: n.vel, selected: n.selected }));
+}
+/** スナップショットからノート配列を復元する (新しいオブジェクトに作り直す) */
+function restoreNotes(snap) {
+  notes = snap.map((n) => ({ ...n }));
+}
+/** 2 つのスナップショット (or 現在の notes) が値として等しいか (順序も含めて比較) */
+function historyEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x.col !== y.col || x.row !== y.row || x.len !== y.len || x.vel !== y.vel || x.selected !== y.selected)
+      return false;
+  }
+  return true;
+}
+/** before (操作前スナップショット) を undo スタックへ積む。変化が無ければ何もしない。
+ *  新規編集なので redo スタックは破棄する。上限を超えた分は古い方から捨てる。 */
+function commitHistory(before) {
+  if (historyEqual(before, notes)) return;
+  undoStack.push(before);
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+}
+/** fn を実行し、ノートが変化していれば 1 件の履歴として記録する (配置/削除/スケール等の共通枠) */
+function withHistory(fn) {
+  const before = snapshotNotes();
+  fn();
+  commitHistory(before);
+}
+/** undo/redo でノートを差し替えた後の後始末 (ドラッグ/発音/dirty を整える) */
+function afterHistoryChange() {
+  drag = null;
+  if (_activeInst) _activeInst.allNotesOff(); // 発音中があれば消す (残った参照は無効になるため)
+  sounding.clear();
+  markDirty();
+}
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshotNotes());
+  restoreNotes(undoStack.pop());
+  afterHistoryChange();
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshotNotes());
+  restoreNotes(redoStack.pop());
+  afterHistoryChange();
+}
+/** 履歴をまっさらにする (ファイル読込など、別ドキュメントへ切り替えたとき) */
+function resetHistory() {
+  undoStack = [];
+  redoStack = [];
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  選択編集 — 時間スケール / コピー&ペースト
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * 選択ノート群を時間方向へ factor 倍したノートを返す (純関数)。起点は選択先頭ノート
+ * (最小 col) の開始列。各ノートの開始・長さを起点基準で factor 倍する。
+ *
+ * factor は整数 d (= d 倍) か、整数の逆数 1/d (= 1/d 倍) を渡す約束。倍・除算は整数演算で
+ * 正確に行う (浮動小数の丸め誤差で成立判定がブレないように 1/d は割り切れるかを整数で見る)。
+ *
+ * ステップグリッド上で「丸めずに」正確に表せない場合は null を返す (呼び出し側は操作を
+ * 実行しない): 割り切れず開始列/長さが非整数になる・長さが最小グリッド (1 ステップ) 未満に
+ * なる・グリッド枠 (0..maxCols) をはみ出す、のいずれか。2 倍は常に整数だが、1/2 倍は各ノートの
+ * 長さと起点からの距離がともに偶数のときだけ成立する。
+ *
+ * @param {{col:number,row:number,len:number,vel:number}[]} sel  選択ノート
+ * @param {number} factor  倍率 (2 = 2 倍 / 0.5 = 1/2 倍)。整数 d か 1/d
+ * @param {number} maxCols グリッド総列数 (枠外判定用)
+ * @returns {{col:number,row:number,len:number,vel:number}[]|null} sel と同順の変換結果、不可なら null
+ */
+export function scaleNotesInTime(sel, factor, maxCols) {
+  if (!sel || !sel.length || !(factor > 0)) return null;
+  const mul = factor >= 1; // >=1 は d 倍、<1 は 1/d 倍として整数 d を復元する
+  const d = mul ? Math.round(factor) : Math.round(1 / factor);
+  let origin = Infinity;
+  for (const n of sel) origin = Math.min(origin, n.col);
+  const out = [];
+  for (const n of sel) {
+    const off = n.col - origin;
+    let col, len;
+    if (mul) {
+      col = origin + off * d;
+      len = n.len * d;
+    } else {
+      if (off % d !== 0 || n.len % d !== 0) return null; // 割り切れない → 丸めず実行しない
+      col = origin + off / d;
+      len = n.len / d;
+    }
+    if (len < 1) return null; // 最小グリッド (1 ステップ) 未満
+    if (col < 0 || col + len > maxCols) return null; // 枠外
+    out.push({ col, row: n.row, len, vel: n.vel });
+  }
+  return out;
+}
+
+/** 選択ノート群を factor 倍する。成立しなければ何もしない (1 件の履歴として記録) */
+function applyScale(factor) {
+  withHistory(() => {
+    const sel = selected();
+    const scaled = scaleNotesInTime(sel, factor, COLS);
+    if (!scaled) return; // 実行不可 (丸めず操作自体を行わない)
+    for (let i = 0; i < sel.length; i++) {
+      sel[i].col = scaled[i].col;
+      sel[i].len = scaled[i].len;
+    }
+    resolveOverlaps(sel); // 拡大で他ノートに被った分は選択側を勝たせて解決
+    markDirty();
+  });
+}
+
+/** 現在の選択をクリップボードへコピーする (先頭 col からの相対位置で保持) */
+function copySelection() {
+  const sel = selected();
+  if (!sel.length) return;
+  let srcCol = Infinity;
+  for (const n of sel) srcCol = Math.min(srcCol, n.col);
+  clipboard = {
+    srcCol,
+    notes: sel.map((n) => ({ dCol: n.col - srcCol, row: n.row, len: n.len, vel: n.vel })),
+  };
+}
+
+/**
+ * クリップボードのノート群を基準列 refCol に配置したノートを返す (純関数)。
+ * 各ノートの col = refCol + dCol。右端をはみ出す分は長さを詰め、枠外に出るものは捨てる。
+ * @param {{dCol:number,row:number,len:number,vel:number}[]} clipNotes
+ * @param {number} refCol  ノート群の開始列 (グリッド線番号)
+ * @param {number} maxCols グリッド総列数
+ * @returns {{col:number,row:number,len:number,vel:number}[]}
+ */
+export function pasteNotesAt(clipNotes, refCol, maxCols) {
+  const out = [];
+  for (const c of clipNotes) {
+    const col = refCol + c.dCol;
+    if (col < 0 || col >= maxCols) continue; // 枠外は捨てる
+    const len = Math.min(c.len, maxCols - col); // 右端はみ出しは詰める
+    if (len < 1) continue;
+    out.push({ col, row: c.row, len, vel: c.vel });
+  }
+  return out;
+}
+
+/** クリップボードを基準グリッド線へペーストする (1 件の履歴として記録) */
+function pasteClipboard() {
+  if (!clipboard || !clipboard.notes.length) return;
+  withHistory(() => {
+    // 基準列は直近クリックのグリッド線。未クリックならコピー元の位置に戻す。
+    const refCol = _pasteRefCol != null ? _pasteRefCol : clipboard.srcCol;
+    const placed = pasteNotesAt(clipboard.notes, refCol, COLS);
+    if (!placed.length) return;
+    deselectAll();
+    const copies = placed.map((p) => ({ ...p, selected: true }));
+    notes.push(...copies);
+    resolveOverlaps(copies); // ペースト側が既存に勝つ
+    markDirty();
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ファイル (VFS 保存 / 読込)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
@@ -593,6 +809,7 @@ function loadClip(clip) {
   }));
   drag = null;
   sounding.clear();
+  resetHistory(); // 別ドキュメントなので Undo/Redo をまっさらに
 }
 
 /** dirty なら破棄確認、無ければ即実行 */
@@ -813,7 +1030,10 @@ function endDrag() {
   }
   if (d.mode === "resize") {
     resolveOverlaps([d.note]); // 端ドラッグはノートを実時間で伸縮済み。確定時に重なり解決
-    if (d.resized) markDirty();
+    if (d.resized) {
+      markDirty();
+      commitHistory(d.before); // 音価変更を 1 件の履歴に
+    }
     return;
   }
   if (!d.moved) {
@@ -830,6 +1050,7 @@ function endDrag() {
     resolveOverlaps(d.sel);
     markDirty();
   }
+  commitHistory(d.before); // 移動 / 複製を 1 件の履歴に
 }
 
 function onInput(ev) {
@@ -844,6 +1065,7 @@ function onInput(ev) {
     if (!cell) return;
     // 別セルへの連続シングルクリックが時間だけで dblclick 誤検出されるのを弾く
     if (`${cell.col},${cell.row}` !== prevDownKey) return;
+    const before = snapshotNotes();
     const n = noteAt(cell.col, cell.row);
     if (n) {
       removeNote(n); // 既存 → 削除
@@ -855,11 +1077,14 @@ function onInput(ev) {
       resolveOverlaps([nn]);
     }
     markDirty();
+    commitHistory(before); // 配置 / 削除を 1 件の履歴に
     return;
   }
 
   if (ev.type === "down") {
     const cell = cellAt(ev.localX, ev.localY);
+    _pasteRefCol = gridLineAtX(ev.localX); // ペースト基準グリッド線 (セル中央しきい値)
+    const before = snapshotNotes(); // ドラッグ確定時に使う履歴起点 (move/resize)
     prevDownKey = lastDownKey;
     lastDownKey = cell ? `${cell.col},${cell.row}` : null;
 
@@ -893,6 +1118,7 @@ function onInput(ev) {
         side,
         fixedCol: side === "r" ? n.col : n.col + n.len - 1,
         resized: false,
+        before,
       };
       return;
     }
@@ -925,6 +1151,7 @@ function onInput(ev) {
       previewRow: 0, // 最後に試聴した dRow (ピッチが変わったフレームだけ鳴らすため)
       sel: selected(),
       pending,
+      before,
     };
     return;
   }
@@ -1000,7 +1227,11 @@ function arrowAction(code, shift) {
 function handleArrows(now, shift) {
   for (const code of ARROWS) {
     if (keyDown(code)) {
+      // 押下 1 回を 1 件の履歴に。以降の長押しリピートはこの起点へ集約する
+      // (リピート中は commit しないので、その連続移動を 1 回の Undo で戻せる)。
+      const before = snapshotNotes();
       arrowAction(code, shift)?.();
+      commitHistory(before);
       repeatCode = code;
       repeatNext = now + REPEAT_DELAY;
       return;
@@ -1008,7 +1239,7 @@ function handleArrows(now, shift) {
   }
   if (repeatCode && keyHeld(repeatCode)) {
     if (now >= repeatNext) {
-      arrowAction(repeatCode, shift)?.();
+      arrowAction(repeatCode, shift)?.(); // リピートは履歴を追加しない (押下単位で 1 件)
       repeatNext = now + REPEAT_RATE;
     }
   } else {
@@ -1036,10 +1267,34 @@ function toggleFold() {
   }
 }
 
+/**
+ * スケール入力 (`*`/`/` → 数字) を文字キューから解釈する。演算子を押すと待ち状態になり、
+ * 続けて数字 d を押すと `*` は d 倍・`/` は 1/d 倍で確定する (例: `*` `2` = 2 倍、`/` `2` =
+ * 1/2 倍)。修飾なしの印字文字だけを見るので Ctrl 系のショートカットとは干渉しない。
+ * SCALE_PENDING_MS を過ぎた演算子待ちは破棄する。
+ */
+function handleScaleInput(now) {
+  if (_scaleOp && now - _scaleOpAt > SCALE_PENDING_MS) _scaleOp = null; // 期限切れ
+  const chars = getCharQueue();
+  for (const ch of chars) {
+    if (ch === "*" || ch === "/") {
+      _scaleOp = ch;
+      _scaleOpAt = now;
+    } else if (_scaleOp && ch >= "1" && ch <= "9") {
+      const d = ch.charCodeAt(0) - 48;
+      applyScale(_scaleOp === "*" ? d : 1 / d);
+      _scaleOp = null;
+    } else {
+      _scaleOp = null; // 無関係な文字入力で演算子待ちを中断
+    }
+  }
+}
+
 function handleKeys() {
   // フォーカス判定は winId で行う (title はファイル名で変わるため APP_NAME 比較は不可)
   if (!wmIsFocused(winId)) {
     repeatCode = null;
+    _scaleOp = null; // フォーカスを失ったら演算子待ちも捨てる
     return;
   }
   const shift = shiftHeld();
@@ -1047,12 +1302,19 @@ function handleKeys() {
   if (ctrlShiftDown("KeyS")) saveClipAs();
   else if (ctrlDown("KeyS")) saveClip();
   if (ctrlDown("KeyO")) openClip();
+  // 履歴: Ctrl+Z = Undo / Ctrl+Y = Redo
+  if (ctrlDown("KeyZ")) undo();
+  if (ctrlDown("KeyY")) redo();
+  // コピー / ペースト
+  if (ctrlDown("KeyC")) copySelection();
+  if (ctrlDown("KeyV")) pasteClipboard();
   if (ctrlDown("KeyA")) selectAll();
-  if (ctrlDown("KeyD")) duplicateAfter();
+  if (ctrlDown("KeyD")) withHistory(duplicateAfter);
   if (keyDown("Escape")) deselectAll();
-  if (keyDown("Delete")) deleteSelected();
+  if (keyDown("Delete")) withHistory(deleteSelected);
   if (keyDown("KeyF")) toggleFold();
   if (keyDown("Space")) togglePlay(shift); // Shift = 停止位置から / 素 = 1.1.1 から
+  handleScaleInput(performance.now());
   handleArrows(performance.now(), shift);
 }
 
@@ -1220,12 +1482,20 @@ const ABOUT_TEXT = [
   "- Ctrl+A / Esc: select all / none",
   "- Delete: delete selection",
   "- Ctrl+D: duplicate after group",
+  "- Ctrl+C / Ctrl+V: copy / paste",
+  "- Ctrl+Z / Ctrl+Y: undo / redo",
+  "- * then N: scale length x N",
+  "- / then N: scale length / N",
   "- Arrows: move 1 cell (held repeats)",
   "- Shift+Up/Down: move 1 octave",
   "- Shift+Left/Right: shorten/lengthen",
   "- F: fold (show only used rows)",
   "- Space: play / stop",
   "- Shift+Space: play from stop point",
+  "",
+  "PASTE lands the group's start on the grid line nearest your last click (the cell center decides left or right).",
+  "",
+  "SCALE grows or shrinks length from the first selected note. It is skipped whole, never rounded, if a result would fall below one step.",
   "",
   "FILE",
   "- Ctrl+S: save (.roll clip)",

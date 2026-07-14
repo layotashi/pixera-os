@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "de68716",
-  count: 310,
+  hash: "6bafcfb",
+  count: 311,
   notes: [
+    { date: "2026-07-14", hash: "6bafcfb", text: "New TRANSPORT app: play, tempo, loop, metronome for all music apps" },
     { date: "2026-07-14", hash: "de68716", text: "Roll step grid dots stay aligned when zooming" },
     { date: "2026-07-14", hash: "ab03887", text: "ROLL keeps your scroll position when unfolding" },
     { date: "2026-07-14", hash: "26ab759", text: "OSCILLO is now a full-window oscilloscope" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-13", hash: "055f740", text: "TESSERA no longer opens full-screen" },
     { date: "2026-07-12", hash: "6a8712d", text: "ROLL now has rubber-band note selection" },
     { date: "2026-07-12", hash: "4378124", text: "Roll can now save and open note clips" },
-    { date: "2026-07-11", hash: "6699d81", text: "SYNTH: fixed velocity mode (FIX toggle)" },
   ],
 };
