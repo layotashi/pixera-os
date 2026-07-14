@@ -1,8 +1,14 @@
-# `.song` プロジェクトファイル — 設計スペック (提案)
+# `.song` プロジェクトファイル — 設計スペック
 
 > 楽曲全体を「プロジェクトファイル単位」で管理・編集・再生するための保存形式の**設計合意**。
 > `MIDI_EDITOR_SPEC.md` と同じ living document で、**実装前に形式・境界・拡張方針を固定**する。
-> 本書は提案段階。実装は将来 (SEQUENCER / 保存 UI と併せて) 行う。数値・フィールドは提案値。
+> 数値・フィールドは提案値。
+
+> **実装状況 (2026-07-14 更新):** 最小レイヤ (トラックごとの音符 + 音色 + 選択トラック) を
+> `js/core/song.js` (コーデック) と `app/music/song.js` (`snapshotSong` / `applySong`) で実装し、
+> ROLL の Ctrl+S / Ctrl+O が `.song` を扱う。SEQUENCER / 保存 UI は未実装のまま、ROLL が当面の
+> 楽曲エディタとして `.song` を読み書きする。`bpm` / `beatsPerBar` / `loop` (トランスポート) と
+> `arrangement` (クリップ配置) は §6 のとおり **version を上げて加算的に予約** (未実装)。
 
 決定経緯: 2026-07-14、マルチトラック化 (4 トラック固定) の実装に伴い、ファイル保存の扱い・
 保存形式・音色永続化の単位を分析。関連 memory: `music-apps-direction` / `music-app-integration` /

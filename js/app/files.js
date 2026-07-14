@@ -15,7 +15,8 @@
  *   - .txt, .md, .log → Notepad
  *   - .pbm            → Paint
  *   - .tess           → Tessera
- *   - .roll           → Roll (MIDI クリップ)
+ *   - .roll           → Roll (単一フレーズを現在のトラックへ取り込む)
+ *   - .song           → Roll (4 トラックの楽曲プロジェクトを開く)
  *
  * キーボードショートカット:
  *   ↑↓        選択移動
@@ -33,7 +34,7 @@ import * as VFS from "../core/vfs.js";
 import { notepadOpenFile } from "./notepad.js";
 import { tesseraOpenFile } from "./tessera.js";
 import { paintOpenFile } from "./paint.js";
-import { rollOpenFile } from "./roll/roll.js";
+import { rollOpenFile, rollOpenSong } from "./roll/roll.js";
 
 const APP_NAME = "FILES";
 
@@ -57,6 +58,7 @@ const FILE_ASSOC = {
   ".pbm": "PAINT",
   ".tess": "TESSERA",
   ".roll": "ROLL",
+  ".song": "SONG",
 };
 
 /** 拡張子に応じたオープンハンドラ */
@@ -64,7 +66,8 @@ const FILE_HANDLERS = {
   NOTEPAD: notepadOpenFile,
   PAINT: paintOpenFile,
   TESSERA: tesseraOpenFile,
-  ROLL: rollOpenFile,
+  ROLL: rollOpenFile, // .roll = 単一フレーズを現在のトラックへ取り込む
+  SONG: rollOpenSong, // .song = 4 トラックの楽曲プロジェクトを開く
 };
 
 /** ファイル名から拡張子を取得 (小文字, 例: ".txt") */

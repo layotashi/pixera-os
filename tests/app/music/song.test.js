@@ -93,3 +93,63 @@ describe("song モデル (4 トラック固定)", () => {
     expect(song.peekInstrument(3)).toBe(null);
   });
 });
+
+describe("song モデル — .song 永続化ブリッジ (snapshotSong / applySong)", () => {
+  beforeEach(() => song._resetSong());
+
+  it("snapshotSong: 全 4 トラックの notes / patch / selected をコピーで返す", () => {
+    song.setClipNotes(0, [{ pitch: 60, start: 0, len: 4, vel: 100 }]);
+    song.setClipNotes(2, [{ pitch: 48, start: 8, len: 2, vel: 90 }]);
+    song.setSelectedIndex(2);
+    const snap = song.snapshotSong();
+    expect(snap.selected).toBe(2);
+    expect(snap.tracks).toHaveLength(4);
+    expect(snap.tracks[0].notes).toEqual([{ pitch: 60, start: 0, len: 4, vel: 100 }]);
+    expect(snap.tracks[2].notes).toEqual([{ pitch: 48, start: 8, len: 2, vel: 90 }]);
+    expect(snap.tracks[0].patch.waveform).toBe("sq25");
+    // コピーなので書き換えてもモデルに漏れない
+    snap.tracks[0].notes.push({ pitch: 1, start: 1, len: 1, vel: 1 });
+    snap.tracks[0].patch.volume = 999;
+    expect(song.getClip(0).notes).toHaveLength(1);
+    expect(song.getPatch(0).volume).toBe(50);
+  });
+
+  it("applySong: 全トラックを丸ごと差し替え、旧トラックのデータを残さない (混在防止)", () => {
+    // 事前に 4 トラックすべてへ何か打ち込んでおく
+    for (let i = 0; i < 4; i++) song.setClipNotes(i, [{ pitch: 60 + i, start: 0, len: 1, vel: 100 }]);
+    // 2 トラック分だけ持つデータを適用 (残り 2 トラックは空になるべき)
+    song.applySong({
+      selected: 1,
+      tracks: [
+        { notes: [{ pitch: 72, start: 0, len: 2, vel: 100 }], patch: { waveform: "saw", volume: 80 } },
+        { notes: [{ pitch: 50, start: 4, len: 1, vel: 90 }] },
+      ],
+    });
+    expect(song.getSelectedIndex()).toBe(1);
+    expect(song.getClip(0).notes).toEqual([{ pitch: 72, start: 0, len: 2, vel: 100 }]);
+    expect(song.getClip(1).notes).toEqual([{ pitch: 50, start: 4, len: 1, vel: 90 }]);
+    // 差し替え前のトラック 2・3 のノートは消える (旧データが残らない)
+    expect(song.getClip(2).notes).toEqual([]);
+    expect(song.getClip(3).notes).toEqual([]);
+    // 音色も適用される
+    expect(song.getPatch(0)).toMatchObject({ waveform: "saw", volume: 80 });
+  });
+
+  it("applySong: selected が現状と同じでも選択リスナへ通知する (view を強制再同期)", () => {
+    const calls = [];
+    song.onSelectionChange((n, p) => calls.push([n, p]));
+    // 選択は 0 のまま。それでも読み込み後の状態へ view を揃えるため通知される。
+    song.applySong({ selected: 0, tracks: [{ notes: [] }] });
+    expect(calls).toEqual([[0, 0]]);
+  });
+
+  it("snapshotSong → applySong の往復でノートが保たれる", () => {
+    song.setClipNotes(3, [{ pitch: 38, start: 0, len: 1, vel: 100 }]);
+    song.setSelectedIndex(3);
+    const snap = song.snapshotSong();
+    song._resetSong();
+    song.applySong(snap);
+    expect(song.getClip(3).notes).toEqual([{ pitch: 38, start: 0, len: 1, vel: 100 }]);
+    expect(song.getSelectedIndex()).toBe(3);
+  });
+});

@@ -33,10 +33,13 @@
  * 再生位置は共有 transport が持つ (再生「制御」は TRANSPORT アプリが操作する)。
  *
  * ── VFS 連携 (保存 / 読込) ──
- *   Ctrl+S = 上書き保存 (無題なら Save As)。Ctrl+Shift+S = 名前を付けて保存。
- *   Ctrl+O = 開く。いずれも共有クリップモデル (core/clip.js) の JSON = `.roll`。
- *   モデルは MIDI 互換の形状 (pitch/start/len/vel) で、将来の `.mid` コーデック追加時に
- *   作り直さずに済む。FILES から `.roll` をダブルクリックで開く (rollOpenFile)。
+ *   保存単位は 4 トラック丸ごとの楽曲プロジェクト = `.song` (core/song.js)。
+ *   Ctrl+S = 上書き保存 (無題なら Save As)。Ctrl+Shift+S = 名前を付けて保存。Ctrl+O = 開く。
+ *   これで「1 トラックしか保存されない / 別ファイルを開くと旧データと混在する」不具合を解消する
+ *   (docs/SONG_FORMAT_SPEC.md)。ノート形状は MIDI 互換 (pitch/start/len/vel) を保つ。
+ *   `.roll` (core/clip.js の単一フレーズ) は交換/再利用グレインとして残り、FILES から
+ *   ダブルクリックすると現在のトラックへフレーズを取り込む (rollOpenFile)。`.song` は
+ *   rollOpenSong で開く。
  */
 
 import { fillRect, pset, drawDashedRect, drawCheckerboard, isCapturing } from "../../core/gpu.js";
@@ -57,7 +60,8 @@ import * as song from "../music/song.js";
 import * as transport from "../music/transport.js";
 import * as VFS from "../../core/vfs.js";
 import { openFileDialog, openConfirmDialog } from "../../ui/index.js";
-import { CLIP_EXT, serializeClip, parseClip } from "../../core/clip.js";
+import { parseClip } from "../../core/clip.js";
+import { SONG_EXT, serializeSong, parseSong } from "../../core/song.js";
 import {
   wmOpen,
   wmRegister,
@@ -833,13 +837,29 @@ function commitSelectedClip() {
   song.setClipNotes(song.getSelectedIndex(), currentClip().notes);
 }
 
+/** .song 読み込み中フラグ。全トラックを一括差し替えする間は onTrackSwitch の「旧トラックへ
+ *  現在ノートを書き戻す」処理を止める。さもないと applySong が発火する選択変更で、まだ差し替え
+ *  前の ROLL バッファ (古いノート) が読み込んだトラックへ上書きされてしまう。 */
+let _loadingSong = false;
+
 /** トラック切替: 旧トラックへ現在ノートを保存し、新トラックのクリップを読み込む
- *  (Undo 履歴・選択・ドラッグ・発音中は loadClip 内で初期化される)。 */
+ *  (Undo 履歴・選択・ドラッグ・発音中は loadClip 内で初期化される)。
+ *  .song 読み込み中は loadSong が全トラックと ROLL バッファを自前で管理するため何もしない。 */
 function onTrackSwitch(next, prev) {
+  if (_loadingSong) return;
   song.setClipNotes(prev, currentClip().notes);
   loadClip(song.getClip(next));
 }
 song.onSelectionChange(onTrackSwitch);
+
+/** .song (4 トラック) を丸ごと読み込む。全トラックのノート・音色・選択を差し替え、
+ *  選択トラックを ROLL の編集バッファへ読み込む。旧データは残らない (混在しない)。 */
+function loadSong(data) {
+  _loadingSong = true;
+  song.applySong(data); // 全トラックを一括差し替え + 選択設定 (ROLL の onTrackSwitch は抑止)
+  _loadingSong = false;
+  loadClip(song.getClip(song.getSelectedIndex())); // 選択トラックを編集バッファへ
+}
 
 /** dirty なら破棄確認、無ければ即実行 */
 function confirmDiscard(onOk) {
@@ -850,19 +870,26 @@ function confirmDiscard(onOk) {
   openConfirmDialog("DISCARD UNSAVED CHANGES?", { variant: "danger", onOk });
 }
 
-/** 名前を付けて保存 (FileDialog) */
-function saveClipAs() {
+/** 保存前に選択トラックの編集を song へ確定する (毎フレームの commit と冪等だが、次フレームを
+ *  待たずスナップショットへ確実に載せるため保存時に明示する)。 */
+function flushForSave() {
+  commitSelectedClip();
+}
+
+/** 名前を付けて保存 (FileDialog)。4 トラック丸ごとを .song として保存する。 */
+function saveSongAs() {
   const dir = currentFilePath ? VFS.parentPath(currentFilePath) : "/Music";
-  const name = currentFilePath ? VFS.basename(currentFilePath) : "untitled" + CLIP_EXT;
+  const name = currentFilePath ? VFS.basename(currentFilePath) : "untitled" + SONG_EXT;
   openFileDialog("save", {
     title: "SAVE AS",
     defaultPath: dir,
     defaultName: name,
-    filter: [CLIP_EXT],
+    filter: [SONG_EXT],
     onResult: (path) => {
       if (!path) return;
       currentFilePath = path;
-      VFS.writeFile(path, serializeClip(currentClip()));
+      flushForSave();
+      VFS.writeFile(path, serializeSong(song.snapshotSong()));
       isDirty = false;
       refreshTitle();
     },
@@ -870,29 +897,30 @@ function saveClipAs() {
 }
 
 /** 上書き保存 (パス未定なら Save As へフォールバック) */
-function saveClip() {
+function saveSong() {
   if (!currentFilePath) {
-    saveClipAs();
+    saveSongAs();
     return;
   }
-  VFS.writeFile(currentFilePath, serializeClip(currentClip()));
+  flushForSave();
+  VFS.writeFile(currentFilePath, serializeSong(song.snapshotSong()));
   isDirty = false;
   refreshTitle();
 }
 
-/** ファイルを開く (未保存確認 → FileDialog → 読込) */
-function openClip() {
+/** ファイルを開く (未保存確認 → FileDialog → 読込)。4 トラックを丸ごと差し替える。 */
+function openSong() {
   confirmDiscard(() => {
     openFileDialog("open", {
       title: "OPEN",
-      filter: [CLIP_EXT],
+      filter: [SONG_EXT],
       onResult: (path) => {
         if (!path) return;
         const text = VFS.readFile(path);
         if (text === null) return;
-        const clip = parseClip(text);
-        if (!clip) return;
-        loadClip(clip);
+        const data = parseSong(text);
+        if (!data) return;
+        loadSong(data);
         currentFilePath = path;
         isDirty = false;
         refreshTitle();
@@ -1425,10 +1453,10 @@ function handleKeys() {
     return;
   }
   const shift = shiftHeld();
-  // ファイル (VFS): Ctrl+Shift+S を Ctrl+S より先に判定する
-  if (ctrlShiftDown("KeyS")) saveClipAs();
-  else if (ctrlDown("KeyS")) saveClip();
-  if (ctrlDown("KeyO")) openClip();
+  // ファイル (VFS): Ctrl+Shift+S を Ctrl+S より先に判定する。保存単位は 4 トラック丸ごと (.song)
+  if (ctrlShiftDown("KeyS")) saveSongAs();
+  else if (ctrlDown("KeyS")) saveSong();
+  if (ctrlDown("KeyO")) openSong();
   // 履歴: Ctrl+Z = Undo / Ctrl+Y = Redo
   if (ctrlDown("KeyZ")) undo();
   if (ctrlDown("KeyY")) redo();
@@ -1663,9 +1691,10 @@ const ABOUT_TEXT = [
   "SCALE grows or shrinks length from the first selected note. It is skipped whole, never rounded, if a result would fall below one step.",
   "",
   "FILE",
-  "- Ctrl+S: save (.roll clip)",
+  "- Ctrl+S: save song (all 4 tracks, .song)",
   "- Ctrl+Shift+S: save as",
-  "- Ctrl+O: open",
+  "- Ctrl+O: open a .song project",
+  "- A .roll file imports one phrase into the current track.",
 ].join("\n");
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1748,12 +1777,39 @@ wmRegister(
 );
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  公開 API: FILES 等から .roll を開く
+//  公開 API: FILES 等から .song / .roll を開く
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * 指定パスの .roll クリップを ROLL で開く。
+ * 指定パスの .song プロジェクト (4 トラック) を ROLL で開く。
  * ウィンドウが閉じていれば開き、最前面へ。未保存の編集があれば破棄確認する。
+ * @param {string} path  VFS 上のファイルパス (.song)
+ * @returns {boolean} 読み込み成功なら true
+ */
+export function rollOpenSong(path) {
+  const text = VFS.readFile(path);
+  if (text === null) return false;
+  const data = parseSong(text);
+  if (!data) return false;
+
+  const load = () => {
+    wmOpenOrFocus(APP_NAME); // 未オープンなら登録 cb が winId を確定
+    loadSong(data);
+    currentFilePath = path;
+    isDirty = false;
+    refreshTitle();
+  };
+  // 開いていて未保存編集があるときだけ確認する (閉じていれば破棄するものは無い)
+  if (winId >= 0 && isDirty) confirmDiscard(load);
+  else load();
+  return true;
+}
+
+/**
+ * 指定パスの .roll クリップ (単一フレーズ) を ROLL の「選択トラック」へ取り込む。
+ * .roll は交換/再利用グレインなので、これは楽曲を開くのではなく現在のトラックへフレーズを
+ * インポートする操作。他トラックには触れないため、選択トラックのノートだけが差し替わる。
+ * プロジェクトの保存先 (.song パス) は変えず、未保存編集として dirty にする。
  * @param {string} path  VFS 上のファイルパス (.roll)
  * @returns {boolean} 読み込み成功なら true
  */
@@ -1763,15 +1819,14 @@ export function rollOpenFile(path) {
   const clip = parseClip(text);
   if (!clip) return false;
 
-  const load = () => {
+  const doImport = () => {
     wmOpenOrFocus(APP_NAME); // 未オープンなら登録 cb が winId を確定
-    loadClip(clip);
-    currentFilePath = path;
-    isDirty = false;
+    loadClip(clip); // フレーズを編集バッファ (= 選択トラック) へ。他トラックは不変
+    markDirty(); // プロジェクトの未保存編集にする (.song パスは変えない)
     refreshTitle();
   };
   // 開いていて未保存編集があるときだけ確認する (閉じていれば破棄するものは無い)
-  if (winId >= 0 && isDirty) confirmDiscard(load);
-  else load();
+  if (winId >= 0 && isDirty) confirmDiscard(doImport);
+  else doImport();
   return true;
 }

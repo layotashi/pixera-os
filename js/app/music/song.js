@@ -238,6 +238,62 @@ export function onChange(cb) {
   _changeListeners.push(cb);
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  永続化 (.song 保存 / 読込のブリッジ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// core/song.js のコーデック (純粋な plain-object 形式) と、この live モデルの橋渡し。
+// ROLL の save/load から呼ぶ。コーデック側はモデルに依存しない (レイヤ方向: app → core)。
+
+/**
+ * 全トラックの直列化用スナップショット (plain object) を返す。
+ * ノート・音色はコピーして返すので、呼び出し側が書き換えてもモデルには影響しない。
+ * @returns {{selected:number, tracks:Array<{name:string, patch:object, notes:Array}>}}
+ */
+export function snapshotSong() {
+  return {
+    selected: _selected,
+    tracks: _tracks.map((t) => ({
+      name: t.name,
+      patch: { ...t.patch },
+      notes: t.clip.notes.map((n) => ({ ...n })),
+    })),
+  };
+}
+
+/**
+ * スナップショット (core/song.js の createSong / parseSong 出力) を全トラックへ適用する。
+ * 4 トラックすべてのノートと音色を丸ごと差し替え、選択トラックを設定する。ファイルに無い
+ * トラックは空 (無音) になるため、読み込み後に旧データが混在しない。最後に選択リスナ・変更
+ * リスナを 1 度ずつ通知し、SYNTH / TRACK / ROLL などの view を読み込み後の状態へ同期させる
+ * (選択 index が変わらなくても通知するので、view が確実に再読込される)。
+ * @param {{selected?:number, tracks?:Array}} data
+ */
+export function applySong(data) {
+  const tracks = Array.isArray(data && data.tracks) ? data.tracks : [];
+  const prev = _selected;
+  for (let i = 0; i < TRACK_COUNT; i++) {
+    const td = tracks[i] && typeof tracks[i] === "object" ? tracks[i] : null;
+    const notes = td && Array.isArray(td.notes) ? td.notes.map((n) => ({ ...n })) : [];
+    _tracks[i].clip = {
+      steps: _tracks[i].clip.steps,
+      stepsPerBeat: _tracks[i].clip.stepsPerBeat,
+      notes,
+    };
+    if (td && td.patch) {
+      Object.assign(_tracks[i].patch, td.patch);
+      _applyPatch(_tracks[i]); // 音源が生成済みなら即反映 (未生成なら getInstrument 時に反映)
+    }
+  }
+  let sel = Number.isFinite(Number(data && data.selected))
+    ? Math.round(Number(data.selected))
+    : 0;
+  sel = Math.max(0, Math.min(TRACK_COUNT - 1, sel));
+  _selected = sel;
+  _notifySel(sel, prev); // index 不変でも通知して全 view を読み込み後の状態へ揃える
+  _notifyChange(); // 音色が変わったので patch 購読者 (SYNTH 等) へ通知
+}
+
 /** テスト用: モデルを初期状態へ戻す。 */
 export function _resetSong() {
   for (let i = 0; i < TRACK_COUNT; i++) _tracks[i] = makeTrack(i);
