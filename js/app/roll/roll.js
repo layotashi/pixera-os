@@ -55,6 +55,7 @@ import {
   isChipSupported,
   chipSetPattern,
   chipSetTransport,
+  createInstrument,
 } from "../../core/chip.js";
 import * as song from "../music/song.js";
 import * as transport from "../music/transport.js";
@@ -244,53 +245,105 @@ function ensureCtx() {
   return ctx;
 }
 
-// ── モノフォニック試聴 / プレビュー ──
+// ── 試聴 / プレビュー (モノ単発 + ポリ和音) ──
 //
-// 一度に鳴るプレビュー音は常に 1 つだけ。次の音を鳴らす前に必ず直前の音を止めるので
-// 多重発音しない。プレビューはすべて単発 (audition) で AUDITION_SEC 後に自動消音する。
-// ドラッグやキーでピッチが変わるたびに鳴らし直すため、移動中も短い発音が連なる (持続はしない)。
+// プレビューは選択トラックの「音色」で鳴らすが、トラックの発音チャンネルとは別の専用ポリ音源で
+// 鳴らす。こうすることで (a) 和音ラバー選択で全音を同時に鳴らして響きを確認でき (トラックが
+// Monophonic でもプレビューは和音になる) (b) SYNTH のライブ演奏や ROLL の再生と発音が干渉しない。
 // 発音は「今すぐ」(ctx.currentTime) にスケジュールしてクリック→発音の遅延を最小化する。
+//
+//   audition(midi)       … モノ単発。直前の音を止めてから 1 音 (ノート移動・単体選択の確認)。
+//                          半音移動での濁りを避けるためモノ制約を保ち AUDITION_SEC 後に自動消音。
+//   previewChord(midis)  … ポリ持続。ラバー選択中の集合を鳴らし続け、外れた音は止め入った音を足す。
+//                          離す (endDrag) と AUDITION_SEC の自動消音へ移行する。
 
-/** 現在鳴っているプレビュー音の MIDI (null = 無音) */
-let _previewMidi = null;
-/** その音を鳴らした発音先 (停止に使う。途中でターゲットが変わっても正しく止める) */
+/** 現在鳴っているプレビュー音の MIDI 集合 (空 = 無音)。 */
+let _previewNotes = new Set();
+/** その音を鳴らした発音先 (停止に使う)。 */
 let _previewInst = null;
-/** 自動消音の期限 (ms, performance.now 基準) */
+/** 自動消音の期限 (ms, performance.now 基準)。Infinity = 持続 (自動消音しない)。 */
 let _previewOffAt = 0;
+/** プレビュー専用のポリ音源 (トラックの maxVoices に縛られない。遅延生成)。 */
+let _previewSynth = null;
 
-/** 現在のプレビュー音を止める (直前の音を停止 = 多重発音の防止) */
+/** プレビュー音源を確保し、選択トラックの音色をミラーして返す (和音でも鳴るよう maxVoices は多め)。 */
+function previewSynth() {
+  if (!_previewSynth) {
+    song.getInstrument(song.getSelectedIndex()); // 先に 4 トラック音源を確保 (channel 0..3)
+    _previewSynth = createInstrument(); // 専用プレビュー音源 (別チャンネル)
+  }
+  const t = song.getSelectedTrack();
+  if (t && _previewSynth.setWaveform) {
+    const p = t.patch;
+    _previewSynth.setWaveform(p.waveform);
+    _previewSynth.setADSR(p.a, p.d, p.s, p.r);
+    _previewSynth.setVolume(p.volume);
+    _previewSynth.setMaxVoices(16); // 試聴は常にポリ (和音確認のため)
+  }
+  return _previewSynth;
+}
+
+/** 現在のプレビュー音を全て止める。 */
 function previewStop() {
-  if (_previewMidi == null) return;
-  if (_previewInst && getAudioContext()) _previewInst.noteOff(_previewMidi);
-  _previewMidi = null;
+  if (_previewNotes.size && _previewInst && getAudioContext()) {
+    for (const m of _previewNotes) _previewInst.noteOff(m);
+  }
+  _previewNotes.clear();
   _previewInst = null;
   _previewOffAt = 0;
 }
 
 /**
- * 単発試聴 (ピッチ確認)。直前の音を必ず止めてから鳴らす (モノフォニック)。AUDITION_SEC 後に
- * updatePreview が自動消音する。同じ音高への連続呼び出しは鳴らし直さず消音期限だけ延長する。
+ * モノ単発試聴 (ピッチ確認)。直前の音を必ず止めてから 1 音鳴らす。AUDITION_SEC 後に
+ * updatePreview が自動消音する。同じ 1 音への連続呼び出しは鳴らし直さず消音期限だけ延長する。
  * @param {number} midi
  */
 function audition(midi) {
   const ctx = ensureCtx();
   if (!ctx) return;
   const off = performance.now() + AUDITION_SEC * 1000;
-  if (_previewMidi === midi) {
-    _previewOffAt = off; // 同じ音は鳴らし直さず、消音期限だけ延長
+  if (_previewNotes.size === 1 && _previewNotes.has(midi)) {
+    _previewOffAt = off; // 同じ単音は鳴らし直さず、消音期限だけ延長
     return;
   }
   previewStop();
-  const inst = targetInstrument();
+  const inst = previewSynth();
   inst.noteOn(midi, DEFAULT_VEL / 127, ctx.currentTime);
-  _previewMidi = midi;
+  _previewNotes.add(midi);
   _previewInst = inst;
   _previewOffAt = off;
 }
 
-/** 毎フレーム: 単発プレビューが期限に達していたら消音する */
+/**
+ * ポリ和音試聴 (ラバー選択の響き確認)。現在鳴っている集合を midis へ差分更新し持続させる
+ * (外れた音は noteOff、入った音は noteOn)。自動消音はしない (endDrag で期限へ移行する)。
+ * @param {number[]} midis
+ */
+function previewChord(midis) {
+  const ctx = ensureCtx();
+  if (!ctx) return;
+  const inst = previewSynth();
+  if (_previewInst && _previewInst !== inst) previewStop(); // 音源が変わったら作り直す
+  const want = new Set(midis);
+  for (const m of [..._previewNotes]) {
+    if (!want.has(m)) {
+      inst.noteOff(m);
+      _previewNotes.delete(m);
+    }
+  }
+  for (const m of want) {
+    if (!_previewNotes.has(m)) {
+      inst.noteOn(m, DEFAULT_VEL / 127, ctx.currentTime);
+      _previewNotes.add(m);
+    }
+  }
+  _previewInst = inst;
+  _previewOffAt = _previewNotes.size ? Infinity : 0; // 持続 (自動消音しない)
+}
+
+/** 毎フレーム: プレビューが期限に達していたら消音する (Infinity = 持続中は消さない)。 */
 function updatePreview() {
-  if (_previewMidi != null && performance.now() >= _previewOffAt) previewStop();
+  if (_previewNotes.size && performance.now() >= _previewOffAt) previewStop();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -517,9 +570,7 @@ function applyRubberSelection(d) {
   const rx1 = Math.max(d.x0, d.x1);
   const ry0 = Math.min(d.y0, d.y1);
   const ry1 = Math.max(d.y0, d.y1);
-  const prevHit = d.rubberHit;
   const hitNow = new Set();
-  let addedTopRow = Infinity; // 新たに矩形へ入ったノートの最高音 (= 最小 row)
   for (const n of notes) {
     const di = vl.rowToDi.get(n.row);
     if (di === undefined) {
@@ -532,14 +583,11 @@ function applyRubberSelection(d) {
     const ny1 = ny0 + cellH;
     const hit = nx0 < rx1 && nx1 > rx0 && ny0 < ry1 && ny1 > ry0;
     n.selected = hit || (d.base ? d.base.has(n) : false);
-    if (hit) {
-      hitNow.add(n);
-      // 選択状態が false→true に変わった (前は未ヒット & base にも無い) ノートだけ試聴候補
-      if (!prevHit.has(n) && !(d.base && d.base.has(n))) addedTopRow = Math.min(addedTopRow, n.row);
-    }
+    if (hit) hitNow.add(n);
   }
-  d.rubberHit = hitNow;
-  if (addedTopRow !== Infinity) audition(rowToMidi(addedTopRow));
+  // 矩形に触れているノート群を「和音」としてポリで持続試聴し、響きを確認できるようにする
+  // (移動プレビューのモノ制約とは別扱い)。矩形から外れた音は止め、入った音を足す。重複ピッチは 1 度。
+  previewChord([...hitNow].map((n) => rowToMidi(n.row)));
 }
 
 /**
@@ -1241,6 +1289,8 @@ function endDrag() {
     // 動かして離した場合は held で選択反映済み。動かさず離した (単なる空クリック) は
     // 非 Shift なら全解除、Shift なら選択維持。
     if (!d.moved && !d.additive) deselectAll();
+    // 和音プレビューを鳴らし切ってから消す (キーを離した時のリリース感)。持続 → 自動消音へ移行。
+    if (_previewNotes.size) _previewOffAt = performance.now() + AUDITION_SEC * 1000;
     return;
   }
   if (d.mode === "resize") {
@@ -1330,7 +1380,6 @@ function onInput(ev) {
         y1: ev.localY,
         additive: !!ev.shift,
         base: ev.shift ? new Set(selected()) : null,
-        rubberHit: new Set(), // 前フレームまでに矩形へ入ったノート (新規ヒットの試聴判定用)
         moved: false,
       };
       return;
@@ -1792,6 +1841,7 @@ function cleanupOnClose() {
   _wasPlaying = false;
   sounding.clear();
   previewStop(); // プレビュー音を止める
+  if (_previewSynth) _previewSynth.allNotesOff(); // 専用プレビュー音源のリリース残りも消す
   releaseAudioAwake(); // キープアライブ解放 (開いた時の keepAudioAwake と対)
   winId = -1;
 }

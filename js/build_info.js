@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "2e52697",
-  count: 322,
+  hash: "1ab6b91",
+  count: 323,
   notes: [
+    { date: "2026-07-16", hash: "1ab6b91", text: "Playing notes now highlight on every track, and stop lighting up wrongly" },
     { date: "2026-07-16", hash: "2e52697", text: "Space plays from the top, Shift plus Space resumes from the cursor" },
     { date: "2026-07-16", hash: "72c538e", text: "Shift plus wheel now fine-tunes music faders in the right direction" },
     { date: "2026-07-14", hash: "fd020ce", text: "Music apps now launch and close together as SYNESTA" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "2306bbf", text: "ROLL now plays in perfect time even under heavy desktop load" },
     { date: "2026-07-14", hash: "d543f18", text: "ROLL: undo/redo, copy-paste, time scale" },
     { date: "2026-07-14", hash: "6bafcfb", text: "New TRANSPORT app: play, tempo, loop, metronome for all music apps" },
-    { date: "2026-07-14", hash: "de68716", text: "Roll step grid dots stay aligned when zooming" },
   ],
 };
