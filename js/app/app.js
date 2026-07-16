@@ -42,6 +42,7 @@ import "./tessera.js";
 import "./telex.js";
 import { updateDesktopFish, drawDesktopFish } from "./aquaria.js";
 import "./oscillo.js"; // OSCILLO — 1-bit オシロスコープ (SYNESTA メンバー)
+import "./chord.js"; // CHORD — 発音中の和音名表示 (SYNESTA メンバー)
 import "./oracle.js";
 import "./glypher.js";
 import { DOLPHIN_TOOLTIP } from "./dolphin.js";

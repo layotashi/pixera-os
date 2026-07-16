@@ -37,7 +37,7 @@ const APP_NAME = "SYNESTA";
  * SYNESTA が束ねるメンバーアプリの登録名。配列順 = 起動時に開く順で、後ろほど前面に来る
  * (ROLL を最後に置いて主エディタを最前面にする)。
  */
-const MEMBERS = ["OSCILLO", "TRANSPORT", "TRACK", "SYNTH", "ROLL"];
+const MEMBERS = ["OSCILLO", "CHORD", "TRANSPORT", "TRACK", "SYNTH", "ROLL"];
 
 /** セッション (SYNESTA 起動中) か。launch した時点で true、一括終了 or 全窓クローズで false。 */
 let _session = false;

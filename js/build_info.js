@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "8f5005e",
-  count: 332,
+  hash: "d163370",
+  count: 333,
   notes: [
+    { date: "2026-07-16", hash: "d163370", text: "ROLL now has a left-side keyboard to play pitches and select notes by pitch" },
     { date: "2026-07-16", hash: "8f5005e", text: "ROLL now shows a play head that snaps to the grid" },
     { date: "2026-07-16", hash: "0f62a73", text: "TRACK now has per-track Solo and Mute" },
     { date: "2026-07-16", hash: "da01448", text: "SYNTH can now be monophonic, and new tracks default to MONO" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-16", hash: "f4e470b", text: "Rubber-band select now previews the notes together as a chord" },
     { date: "2026-07-16", hash: "1ab6b91", text: "Playing notes now highlight on every track, and stop lighting up wrongly" },
     { date: "2026-07-16", hash: "2e52697", text: "Space plays from the top, Shift plus Space resumes from the cursor" },
-    { date: "2026-07-16", hash: "72c538e", text: "Shift plus wheel now fine-tunes music faders in the right direction" },
   ],
 };

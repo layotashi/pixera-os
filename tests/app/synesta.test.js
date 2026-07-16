@@ -1,7 +1,7 @@
 /**
  * synesta.test.js — SYNESTA (音楽アプリ群の統合入口) の起動・一括終了・グループ終了検出。
  *
- * SYNESTA は窓を持たないメタアプリで、SYNTH / ROLL / TRANSPORT / TRACK / OSCILLO を束ねて
+ * SYNESTA は窓を持たないメタアプリで、SYNTH / ROLL / TRANSPORT / TRACK / OSCILLO / CHORD を束ねて
  * まとめて開閉する。WM ファサードをモックし、登録時の launch / isRunning / onClose と、
  * 毎フレームの synestaUpdate() を直接叩いて挙動を検証する:
  *   - launch: 全メンバーを開く
@@ -43,7 +43,7 @@ const regCall = h.wmRegister.mock.calls[0];
 const APP_NAME = regCall[0];
 const opts = regCall[2];
 
-const MEMBERS = ["OSCILLO", "TRANSPORT", "TRACK", "SYNTH", "ROLL"];
+const MEMBERS = ["OSCILLO", "CHORD", "TRANSPORT", "TRACK", "SYNTH", "ROLL"];
 
 beforeEach(() => {
   // wmCloseByName の実装を既定へ戻す (前テストの上書きを解除)
@@ -65,7 +65,7 @@ describe("SYNESTA — 起動 / 終了のまとまり", () => {
     expect(typeof opts.isRunning).toBe("function");
   });
 
-  it("launch: 全メンバー (SYNTH/ROLL/TRANSPORT/TRACK/OSCILLO) を開き、isRunning が true になる", () => {
+  it("launch: 全メンバー (SYNTH/ROLL/TRANSPORT/TRACK/OSCILLO/CHORD) を開き、isRunning が true になる", () => {
     opts.launch();
     for (const m of MEMBERS) expect(h.openSet.has(m)).toBe(true);
     expect(opts.isRunning()).toBe(true);
