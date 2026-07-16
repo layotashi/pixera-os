@@ -1142,10 +1142,14 @@ function updatePlayback() {
 }
 
 /** 発音中ノートの視覚ハイライト用の現在ステップ (再生ヘッド)。停止中は -1。
- *  [seq]/[legacy] 共通で共有時計 (transport) から導出する ＝ 盤面と発音が一致する (WYSIWYG)。 */
+ *  [seq]/[legacy] 共通で共有時計 (transport) から導出する ＝ 盤面と発音が一致する (WYSIWYG)。
+ *  LOOP_STEPS での剰余は取らない: ループ ON なら transport 側が位置を範囲内へ折り返し済みで
+ *  剰余は無用、ループ OFF では位置がパターン長 (64 step) を超えて進むため剰余を取ると 1.1.1
+ *  付近のノートが誤って発音中表示になる (5.1.1 以降で step%64 が 0 付近へ巻き戻るバグ)。
+ *  パターン長を超えた step は isNoteSounding にどのノートもヒットせず、正しく無ハイライトになる。 */
 function currentPlayStep() {
   if (!transport.isPlaying()) return -1;
-  return Math.floor(transport.getPosition() * STEPS_PER_BEAT) % LOOP_STEPS;
+  return Math.floor(transport.getPosition() * STEPS_PER_BEAT);
 }
 /** ノート n が再生ヘッド playStep 上で発音中か (視覚ハイライト用)。 */
 function isNoteSounding(n, playStep) {
@@ -1605,10 +1609,11 @@ function drawNoteAt(cr, col, row, len, hollow, vl) {
   if (r) drawNoteGlyph(r.ox, r.oy, r.ow, r.oh, hollow ? "hollow" : "solid");
 }
 
-/** 非アクティブトラックのノートを市松ゴーストで描く (状態差なし。背面表示用)。 */
-function drawGhostNoteAt(cr, col, row, len, vl) {
+/** 非アクティブトラックのノートを描く (背面表示用)。発音中はトラックのアクティブ状態に
+ *  依らず「再生中」スタイル (hollow) で目立たせ、それ以外は市松ゴーストで描く。 */
+function drawGhostNoteAt(cr, col, row, len, sounding, vl) {
   const r = noteRect(cr, col, row, len, vl);
-  if (r) drawNoteGlyph(r.ox, r.oy, r.ow, r.oh, "ghost");
+  if (r) drawNoteGlyph(r.ox, r.oy, r.ow, r.oh, sounding ? "hollow" : "ghost");
 }
 
 function onDraw(cr) {
@@ -1635,21 +1640,24 @@ function onDraw(cr) {
     y += t + (di < vl.R ? cellH : 0);
   }
 
+  // 発音中判定は再生ヘッドから導出するので [seq]/[legacy] どちらの発音経路でも盤面と一致する。
+  const playStep = currentPlayStep();
+
   // 非選択トラックのノートを背面に市松ゴースト表示する (同時刻・同音高の重なりを把握するため)。
-  // 選択トラックのノートは後段で通常描画され前面に来る。
+  // 選択トラックのノートは後段で通常描画され前面に来る。発音中のゴーストノートはトラックの
+  // アクティブ状態に依らず「再生中」スタイルで描く (再生を全トラック横断で可視化する)。
   const selIdx = song.getSelectedIndex();
   for (let ti = 0; ti < song.getTrackCount(); ti++) {
     if (ti === selIdx) continue;
     for (const gn of song.getClip(ti).notes) {
-      drawGhostNoteAt(cr, gn.start, ROWS - 1 - gn.pitch, gn.len, vl);
+      const sounding = playStep >= gn.start && playStep < gn.start + gn.len;
+      drawGhostNoteAt(cr, gn.start, ROWS - 1 - gn.pitch, gn.len, sounding, vl);
     }
   }
 
-  // ノート + 移動プレビュー (発音中/選択は白抜き)。発音中判定は再生ヘッドから導出するので
-  // [seq]/[legacy] どちらの発音経路でも盤面と一致する (WYSIWYG)。
+  // ノート + 移動プレビュー (発音中/選択は白抜き)。
   const moving = !!(drag && drag.mode === "move" && drag.moved);
   const dup = moving && ctrlHeld();
-  const playStep = currentPlayStep();
   for (const n of notes) {
     if (moving && !dup && drag.sel.includes(n)) continue; // 移動: 掴んだ実体は隠す
     drawNoteAt(cr, n.col, n.row, n.len, n.selected || isNoteSounding(n, playStep), vl);

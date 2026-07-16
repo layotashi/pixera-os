@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "72c538e",
-  count: 321,
+  hash: "2e52697",
+  count: 322,
   notes: [
+    { date: "2026-07-16", hash: "2e52697", text: "Space plays from the top, Shift plus Space resumes from the cursor" },
     { date: "2026-07-16", hash: "72c538e", text: "Shift plus wheel now fine-tunes music faders in the right direction" },
     { date: "2026-07-14", hash: "fd020ce", text: "Music apps now launch and close together as SYNESTA" },
     { date: "2026-07-14", hash: "0d6840e", text: "Click a ghost note in ROLL to switch to its track" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "d543f18", text: "ROLL: undo/redo, copy-paste, time scale" },
     { date: "2026-07-14", hash: "6bafcfb", text: "New TRANSPORT app: play, tempo, loop, metronome for all music apps" },
     { date: "2026-07-14", hash: "de68716", text: "Roll step grid dots stay aligned when zooming" },
-    { date: "2026-07-14", hash: "ab03887", text: "ROLL keeps your scroll position when unfolding" },
   ],
 };
