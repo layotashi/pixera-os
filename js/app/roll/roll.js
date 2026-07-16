@@ -44,7 +44,7 @@
  *   rollOpenSong で開く。
  */
 
-import { fillRect, pset, drawDashedRect, drawCheckerboard, isCapturing } from "../../core/gpu.js";
+import { fillRect, pset, drawDashedRect, drawCheckerboard, isCapturing, pushClip, popClip } from "../../core/gpu.js";
 import { drawText, textWidth } from "../../core/font.js";
 import {
   getAudioContext,
@@ -126,6 +126,19 @@ const CELL_H_DEFAULT = 9;
 const ZOOM_STEP_W = 2;
 const ZOOM_STEP_H = 2;
 
+/** 左端の鍵盤列の幅 (DOT)。左枠 1 + 白余白 1 + 内部 5 + 白余白 1 + 右枠 2 = 10 (ASCII 仕様)。
+ *  右枠 2px は 1.1.1 の小節線 (ロールの左フレーム) を兼ねる。鍵盤は横スクロールに追従せず
+ *  常に左端へ固定表示し (frozen column)、縦は行に合わせて追従する。 */
+const KB_W = 10;
+/** 鍵盤ぶんグリッドを右へずらす content 空間のオフセット。グリッドの c=0 線 (BOLD=2px) が
+ *  鍵盤の右枠 2px にちょうど重なるよう KB_W - BOLD にする (c=0 は鍵盤が描くのでグリッドは省く)。 */
+const KB_GRID_OFFSET = KB_W - BOLD;
+
+/** 黒鍵の半音 (C#/D#/F#/G#/A#)。1 段鍵盤の白/黒判定に使う。 */
+const BLACK_KEY_SEMITONES = new Set([1, 3, 6, 8, 10]);
+/** MIDI が黒鍵か。 */
+const isBlackKey = (midi) => BLACK_KEY_SEMITONES.has(((midi % 12) + 12) % 12);
+
 /** キーリピート: 押下後この待機 (ms) を経てからこの間隔 (ms) で連続処理 */
 const REPEAT_DELAY = 300;
 const REPEAT_RATE = 45;
@@ -183,6 +196,12 @@ let fold = false; // FOLD: ノートのある行だけ表示
 let _playheadCol = 0;
 /** 直近に検知した選択先頭ノートの開始列 (選択が変わった瞬間だけ playhead を動かすための基準)。 */
 let _lastSelStart = -1;
+
+// ── 左端の鍵盤 (演奏 + ピッチ選択) ──
+/** マウスで発音中の鍵盤ノート (MIDI, -1 = なし)。押下表示にも使う。 */
+let _kbNote = -1;
+/** 鍵盤ドラッグ状態 (グリッサンド + ピッチ範囲選択)。null = ドラッグ中でない。 */
+let _kbDrag = null;
 /** FOLD を ON にする直前 (通常表示) のスクロール位置。OFF 復帰時にここへ戻す (null = 未保存) */
 let _scrollBeforeFold = null;
 
@@ -373,6 +392,60 @@ function updatePreview() {
   if (_previewNotes.size && performance.now() >= _previewOffAt) previewStop();
 }
 
+// ── 左端鍵盤の演奏 (プレビュー音源で発音。押下中は持続、ドラッグでグリッサンド) ──
+
+/** 鍵盤クリックで pitch を鳴らす (モノ。直前を止めてから鳴らす)。 */
+function kbNoteOn(midi) {
+  const ctx = ensureCtx();
+  if (!ctx || _kbNote === midi) return;
+  const inst = previewSynth();
+  if (_kbNote >= 0) inst.noteOff(_kbNote); // グリッサンド: 直前を止める
+  else previewStop(); // 編集プレビューが鳴っていれば止める
+  inst.noteOn(midi, DEFAULT_VEL / 127, ctx.currentTime);
+  _kbNote = midi;
+}
+/** 鍵盤の発音を止める。 */
+function kbNoteOff() {
+  if (_kbNote < 0) return;
+  if (_previewSynth && getAudioContext()) _previewSynth.noteOff(_kbNote);
+  _kbNote = -1;
+}
+
+/** row 範囲 [a,b] のピッチに属する全ノートを選択する (範囲外は解除)。鍵盤クリック/ドラッグ選択。
+ *  選択のみで編集ではないので dirty にはしない (選択変更は履歴にも残さない)。 */
+function selectByPitchRange(rowA, rowB) {
+  const lo = Math.min(rowA, rowB);
+  const hi = Math.max(rowA, rowB);
+  for (const n of notes) n.selected = n.row >= lo && n.row <= hi;
+}
+
+/**
+ * 左端鍵盤のマウス操作: down で pitch を鳴らし + そのピッチのノートを選択、held (グリッサンド)
+ * で pitch を鳴らし直し + 開始ピッチからの範囲を選択、up で消音。浮いた配置は down で確定する。
+ */
+function handleKeyboardEvent(ev) {
+  if (ev.type === "down") {
+    const row = rowAtY(ev.localY);
+    if (row == null) return;
+    finishPlacement(); // ピッチ選択へ移る前に浮いた配置を確定
+    _kbDrag = { startRow: row, curRow: row };
+    kbNoteOn(rowToMidi(row));
+    selectByPitchRange(row, row);
+  } else if (ev.type === "held" && _kbDrag) {
+    const row = rowAtY(ev.localY);
+    if (row != null && row !== _kbDrag.curRow) {
+      _kbDrag.curRow = row;
+      kbNoteOn(rowToMidi(row)); // グリッサンド
+      selectByPitchRange(_kbDrag.startRow, row); // 開始ピッチからの範囲を選択
+    }
+  } else if (ev.type === "up") {
+    kbNoteOff();
+    _kbDrag = null;
+  } else if (ev.type === "hover") {
+    wmRequestCursor("pointer");
+  }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  縦レイアウト (FOLD 対応。表示行の並びを 1 度計算してキャッシュ)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -509,6 +582,17 @@ function cellAt(lx, ly) {
   return { col, row: vl.rows[di] };
 }
 
+/** content 空間 Y → 表示行の実 row (無ければ null)。鍵盤クリックのピッチ判定に使う。 */
+function rowAtY(ly) {
+  if (ly < 0) return null;
+  const vl = vLayout();
+  for (let i = 0, y = 0; i < vl.R; i++) {
+    y += vl.lineThick[i] + cellH;
+    if (ly < y) return vl.rows[i];
+  }
+  return null;
+}
+
 /**
  * コンテンツ空間 X → 最寄りのグリッド線番号 (0..COLS)。判定はセル中央がしきい値:
  * クリックがセル中央より左なら左側の線 (= その列番号)、中央以上なら右側の線 (= 列番号+1)。
@@ -521,7 +605,8 @@ export function gridLineAtX(lx) {
 
 /** WM 管理スクロールの仮想コンテンツ寸法 */
 function onMeasure() {
-  return { w: tableW(), h: vLayout().totalH };
+  // 左端の鍵盤ぶん (KB_GRID_OFFSET) を足した横幅。これで鍵盤の右にグリッド全体をスクロールで巡れる。
+  return { w: KB_GRID_OFFSET + tableW(), h: vLayout().totalH };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -987,6 +1072,8 @@ function loadClip(clip) {
   _placeBefore = null; // 別ドキュメント: 浮いた配置トランザクションも破棄
   _playheadCol = 0; // 別ドキュメント: 再生位置線も先頭へ
   _lastSelStart = -1;
+  kbNoteOff(); // 鍵盤の発音を止める
+  _kbDrag = null;
   sounding.clear();
   resetHistory(); // 別ドキュメントなので Undo/Redo をまっさらに
 }
@@ -1425,7 +1512,22 @@ function endDrag() {
   }
 }
 
+/**
+ * 入力ルーティング: 左端の鍵盤領域 (frozen column) と グリッド領域を振り分ける。鍵盤は横スクロール
+ * 非追従なので、content 空間 X が [scrollX, scrollX+KB_W) のとき鍵盤 (画面左端固定)。鍵盤ドラッグ中は
+ * 領域外へ出ても鍵盤へ。グリッドへ渡すときは X を鍵盤ぶん (KB_GRID_OFFSET) 戻してグリッド内部座標にする。
+ */
 function onInput(ev) {
+  const scrollX = winId >= 0 ? wmGetScroll(winId).x : 0;
+  const inKb = ev.localX != null && ev.localX >= scrollX && ev.localX < scrollX + KB_W;
+  if (_kbDrag || (inKb && (ev.type === "down" || (ev.type === "hover" && !drag)))) {
+    handleKeyboardEvent(ev);
+    return;
+  }
+  onGridInput(ev.localX != null ? { ...ev, localX: ev.localX - KB_GRID_OFFSET } : ev);
+}
+
+function onGridInput(ev) {
   if (ev.type === "wheel") {
     if (ev.ctrl) zoomWheel(ev); // 通常/Shift ホイールは WM のスクロールへ
     return;
@@ -1816,6 +1918,43 @@ export function drawPlayheadGlyph(ox, oy, oh, gridThick) {
   fillRect(ox, oy, gridThick, oh, 1); // グリッド線上の黒 (太さ gridThick)
 }
 
+/**
+ * 1 段鍵盤のキー 1 個を絶対矩形へ描く (レイアウト非依存の純関数)。ASCII 仕様どおり、黒罫線 +
+ * 白 1px 余白 + 内部塗り。上枠の太さ tb は行境界 (拍/オクターブ) に合わせる。下枠は描かず次キーの
+ * 上枠が兼ねる (キー同士で罫線を共有)。右枠は 2px (1.1.1 の小節線 = ロールの左フレーム)。
+ *   white   … 内部を白 (= 白鍵)
+ *   black   … 内部に 1px 白余白を挟んで黒塗り (= 黒鍵)
+ *   pressed … 同じ内部を市松 (四隅黒始まり)。drawCheckerboard は原点基準 phase=0 なので絶対位置
+ *             (縦スクロール) に依らず四隅が黒始まりで、ズームで寸法が変わっても四隅を黒へ補正する。
+ * @param {"white"|"black"|"pressed"} kind
+ */
+export function drawKeyGlyph(ox, oy, ow, oh, tb, kind) {
+  if (ow <= 0 || oh <= 0) return;
+  fillRect(ox, oy, ow, oh, 1); // 黒で埋める (枠のベース)
+  const ix = ox + 1; // 左枠 1px の内側
+  const iy = oy + tb; // 上枠 tb の内側
+  const iw = ow - 3; // 左 1 + 右 2 を除く内側幅
+  const ih = oh - tb; // 上枠を除く (下枠は次キーが担うので引かない)
+  if (iw <= 0 || ih <= 0) return;
+  fillRect(ix, iy, iw, ih, 0); // 内側を白 (白鍵。白 1px 余白込み)
+  if (kind === "white") return;
+  // 黒鍵 / 押下: 白 1px 余白の内側を塗る
+  const fx = ix + 1;
+  const fy = iy + 1;
+  const fw = iw - 2;
+  const fh = ih - 2;
+  if (fw <= 0 || fh <= 0) return;
+  if (kind === "black") {
+    fillRect(fx, fy, fw, fh, 1); // 黒塗り
+  } else {
+    drawCheckerboard(fx, fy, fw, fh, 1, 0); // 市松 (原点=黒始まり。位置不変)
+    pset(fx, fy, 1); // 四隅を必ず黒に (偶数寸法でも位相を揃える)
+    pset(fx + fw - 1, fy, 1);
+    pset(fx, fy + fh - 1, 1);
+    pset(fx + fw - 1, fy + fh - 1, 1);
+  }
+}
+
 /** レイアウトからノートの描画矩形 (絶対座標) を求める。FOLD で非表示の行は null。 */
 function noteRect(cr, col, row, len, vl) {
   const di = vl.rowToDi.get(row);
@@ -1838,6 +1977,21 @@ function drawGhostNoteAt(cr, col, row, len, sounding, vl) {
   if (r) drawNoteGlyph(r.ox, r.oy, r.ow, r.oh, sounding ? "hollow" : "ghost");
 }
 
+/** 左端の 1 段鍵盤を描く (ox = 固定した左端 X, oy = 行に追従する上端 Y = グリッドと同じ)。
+ *  各表示行に 1 キー。マウス発音中のキーは押下 (市松)、黒鍵は黒、白鍵は白。上枠は行境界の
+ *  太さに合わせ、下枠は次キーが兼ねる (最後だけ下端フレームを描く)。 */
+function drawKeyboard(ox, oy, vl) {
+  fillRect(ox, oy, KB_W, vl.totalH, 0); // 列全体を白で初期化
+  for (let di = 0; di < vl.R; di++) {
+    const midi = rowToMidi(vl.rows[di]);
+    const keyTop = oy + vl.interiorY[di] - vl.lineThick[di]; // 上の横罫線から
+    const keyH = vl.lineThick[di] + cellH; // 上罫線 + セル (下罫線は次キーが担う)
+    const kind = midi === _kbNote ? "pressed" : isBlackKey(midi) ? "black" : "white";
+    drawKeyGlyph(ox, keyTop, KB_W, keyH, vl.lineThick[di], kind);
+  }
+  fillRect(ox, oy + vl.totalH - BOLD, KB_W, BOLD, 1); // 下端フレーム (グリッド下端に合わせる)
+}
+
 function onDraw(cr) {
   if (!isCapturing()) handleKeys(); // CAPTURE の二度描きでキー二重発火を抑止
   updatePlayback(); // 発音・位置更新はフォーカスに依らず継続
@@ -1849,19 +2003,30 @@ function onDraw(cr) {
   const tw = tableW();
   const th = vl.totalH;
 
-  // 縦罫線 (列境界) — 時間方向の階層: 小節線=2px 実線 / 拍線=1px 実線 / ステップ=1px 点線。
-  // 拍境界 (小節を含む) は実線、それ以外の細かいステップは点線。点線は横罫線の行を避けて
-  // 内寸だけに点を打つので、横線と交差しても線が潰れず隙間が横線に重なる (ASCII 位相)。
-  for (let c = 0, x = cr.x; c <= COLS; c++) {
+  // 左端の鍵盤は横スクロールに追従せず固定表示 (frozen column)。グリッドは鍵盤ぶん右へずらして
+  // 描き、鍵盤の右端 (viewportX+KB_W) 以降にクリップする。viewportX は WM が渡す scrolled cr から
+  // scrollX を足し戻して求める (cr.x = viewportX - scrollX)。
+  const scrollX = winId >= 0 ? wmGetScroll(winId).x : 0;
+  const viewportX = cr.x + scrollX;
+  const gcr = { x: cr.x + KB_GRID_OFFSET, y: cr.y, w: cr.w - KB_GRID_OFFSET, h: cr.h };
+
+  // ── グリッド (鍵盤の右側だけにクリップして描く) ──
+  pushClip(viewportX + KB_W, cr.y, cr.w, th);
+
+  // 縦罫線 (列境界) — 小節線=2px 実線 / 拍線=1px 実線 / ステップ=1px 点線。c=0 の線は鍵盤の
+  // 右枠 2px (小節線) が兼ねるので省く (二重罫線の回避)。
+  for (let c = 0, x = gcr.x; c <= COLS; c++) {
     const t = vThick(c);
-    if (c % STEPS_PER_BEAT === 0) fillRect(x, cr.y, t, th, 1); // 小節線(2px)/拍線(1px)=実線
-    else drawStepDots(x, cr.y, vl.interiorY, vl.R, cellH); // ステップ=1px 点線
+    if (c !== 0) {
+      if (c % STEPS_PER_BEAT === 0) fillRect(x, gcr.y, t, th, 1); // 小節線(2px)/拍線(1px)=実線
+      else drawStepDots(x, gcr.y, vl.interiorY, vl.R, cellH); // ステップ=1px 点線
+    }
     x += t + (c < COLS ? cellW : 0);
   }
   // 横罫線 (表示行の境界)
-  for (let di = 0, y = cr.y; di <= vl.R; di++) {
+  for (let di = 0, y = gcr.y; di <= vl.R; di++) {
     const t = vl.lineThick[di];
-    fillRect(cr.x, y, tw, t, 1);
+    fillRect(gcr.x, y, tw, t, 1);
     y += t + (di < vl.R ? cellH : 0);
   }
 
@@ -1878,7 +2043,7 @@ function onDraw(cr) {
     const audible = song.isAudible(ti);
     for (const gn of song.getClip(ti).notes) {
       const sounding = audible && playStep >= gn.start && playStep < gn.start + gn.len;
-      drawGhostNoteAt(cr, gn.start, ROWS - 1 - gn.pitch, gn.len, sounding, vl);
+      drawGhostNoteAt(gcr, gn.start, ROWS - 1 - gn.pitch, gn.len, sounding, vl);
     }
   }
 
@@ -1890,26 +2055,33 @@ function onDraw(cr) {
   const selAudible = song.isAudible(selIdx);
   for (const n of notes) {
     if (n.selected) continue; // 選択は後段で前面に描く
-    drawNoteAt(cr, n.col, n.row, n.len, selAudible && isNoteSounding(n, playStep), vl);
+    drawNoteAt(gcr, n.col, n.row, n.len, selAudible && isNoteSounding(n, playStep), vl);
   }
   for (const n of notes) {
     if (!n.selected) continue;
     if (moving && !dup && drag.sel.includes(n)) continue; // 移動: 掴んだ実体は隠す (preview で描く)
-    drawNoteAt(cr, n.col, n.row, n.len, true, vl); // 選択 = 白抜き (前面)
+    drawNoteAt(gcr, n.col, n.row, n.len, true, vl); // 選択 = 白抜き (前面)
   }
   if (moving) {
-    for (const n of drag.sel) drawNoteAt(cr, n.col + drag.dCol, n.row + drag.dRow, n.len, false, vl);
+    for (const n of drag.sel) drawNoteAt(gcr, n.col + drag.dCol, n.row + drag.dRow, n.len, false, vl);
   }
 
   // 再生位置線 (playhead) を最前面に描く (グリッド線に重ねた黒 + 左右の白)。
   const pc = playheadCol();
   const pt = vThick(pc);
-  drawPlayheadGlyph(cr.x + colInnerX(pc) - pt, cr.y, th, pt);
+  drawPlayheadGlyph(gcr.x + colInnerX(pc) - pt, gcr.y, th, pt);
 
-  // ラバー選択の矩形 (破線マーキー。コンテンツ空間 → 画面座標へ cr で変換)
+  // ラバー選択の矩形 (破線マーキー。グリッド内部座標 → 画面座標へ gcr で変換)
   if (drag && drag.mode === "rubber" && drag.moved) {
-    drawDashedRect(cr.x + drag.x0, cr.y + drag.y0, cr.x + drag.x1, cr.y + drag.y1);
+    drawDashedRect(gcr.x + drag.x0, gcr.y + drag.y0, gcr.x + drag.x1, gcr.y + drag.y1);
   }
+
+  popClip();
+
+  // ── 左端の 1 段鍵盤を固定描画 (横スクロール非追従、縦は行に追従) ──
+  pushClip(viewportX, cr.y, KB_W, th);
+  drawKeyboard(viewportX, cr.y, vl);
+  popClip();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1977,6 +2149,8 @@ const ABOUT_TEXT = [
   "ROLL is a step-grid MIDI editor. Four bars of 16 steps across, all 128 MIDI pitches down. Notes play through SYNTH's voice when it is open, else a built-in fallback.",
   "",
   "MOUSE",
+  "- Left keyboard: click to play a pitch",
+  "- Left keyboard: drag to select notes by pitch",
   "- Double-click empty: place note",
   "- Double-click a note: delete",
   "- Click a note: select it",
@@ -2034,6 +2208,8 @@ function cleanupOnClose() {
   _wasPlaying = false;
   sounding.clear();
   previewStop(); // プレビュー音を止める
+  kbNoteOff(); // 鍵盤の発音を止める
+  _kbDrag = null;
   if (_previewSynth) _previewSynth.allNotesOff(); // 専用プレビュー音源のリリース残りも消す
   releaseAudioAwake(); // キープアライブ解放 (開いた時の keepAudioAwake と対)
   winId = -1;
