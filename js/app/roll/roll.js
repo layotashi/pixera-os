@@ -1524,24 +1524,46 @@ function handleArrows(now, shift) {
     repeatCode = null;
   }
 }
+/** どのトラックにも打ち込みノートが 1 つも無ければ false。FOLD はノートのある行だけを
+ *  表示するため、ノート皆無だと 0 行 (空のピアノロール) になる。その混乱を避ける番人。 */
+function hasAnyNote() {
+  if (notes.length) return true; // アクティブトラック (編集バッファ)
+  const selIdx = song.getSelectedIndex();
+  for (let ti = 0; ti < song.getTrackCount(); ti++) {
+    if (ti === selIdx) continue;
+    const c = song.getClip(ti);
+    if (c && c.notes.length) return true;
+  }
+  return false;
+}
+
+/** FOLD ON: 通常表示のスクロールを退避してから畳む。 */
+function enterFold() {
+  _scrollBeforeFold = wmGetScroll(winId);
+  fold = true;
+}
+
 /**
- * FOLD を切り替える。ON にする直前の (通常表示の) スクロール位置を覚えておき、OFF に戻した
- * ときにそこへ復帰する。こうしないと、FOLD 中はコンテンツが短くスクロールが 0 付近へ寄るため、
- * OFF に戻した瞬間に全 128 音高グリッドの最上部 (最高音域・通常は空) へ飛んでしまう。
- * FOLD 表示中のスクロールは破棄する (打ち込んでいた音域へ戻すのが目的なので通常位置だけ保つ)。
+ * FOLD OFF: 通常表示へ戻し、ON にする直前のスクロール位置へ復帰する。こうしないと FOLD 中は
+ * コンテンツが短くスクロールが 0 付近へ寄るため、OFF に戻した瞬間に全 128 音高グリッドの最上部
+ * (最高音域・通常は空) へ飛んでしまう。FOLD 表示中のスクロールは破棄する (打ち込み音域へ戻すのが目的)。
+ * wmSetScroll は onMeasure で新レイアウト (縦=128 行) の寸法へ同期してからクランプするので位置は正しく収まる。
  */
+function exitFold() {
+  fold = false;
+  if (_scrollBeforeFold) {
+    wmSetScroll(winId, _scrollBeforeFold.x, _scrollBeforeFold.y);
+    _scrollBeforeFold = null;
+  }
+}
+
+/** FOLD を切り替える。ノートが 1 つも無いときは FOLD へ入らない (0 行の空表示を防ぐ)。 */
 function toggleFold() {
   if (!fold) {
-    _scrollBeforeFold = wmGetScroll(winId); // ON へ: 通常表示のスクロールを退避
-    fold = true;
+    if (!hasAnyNote()) return; // ノート皆無なら遷移させない (急に空のロールが出る混乱を回避)
+    enterFold();
   } else {
-    fold = false; // OFF へ: レイアウトを通常表示へ戻してから退避位置を復元
-    if (_scrollBeforeFold) {
-      // wmSetScroll は onMeasure で新レイアウト (縦=128 行) の寸法に同期してからクランプするので
-      // 退避した通常表示の位置が正しく収まる。
-      wmSetScroll(winId, _scrollBeforeFold.x, _scrollBeforeFold.y);
-      _scrollBeforeFold = null;
-    }
+    exitFold();
   }
 }
 
@@ -1669,6 +1691,8 @@ function onDraw(cr) {
   if (!isCapturing()) handleKeys(); // CAPTURE の二度描きでキー二重発火を抑止
   updatePlayback(); // 発音・位置更新はフォーカスに依らず継続
   updatePreview(); // 単発プレビューの自動消音
+  // FOLD 中に全ノートを削除すると 0 行の空表示になる。混乱を避けるため通常表示へ自動復帰する。
+  if (fold && !hasAnyNote()) exitFold();
   const vl = vLayout();
   const tw = tableW();
   const th = vl.totalH;
