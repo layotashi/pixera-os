@@ -99,10 +99,12 @@ const WAVE_ITEMS = ["SAW", "TRI", "SQ50", "SQ25", "SQ12", "SINE", "NOISE"];
 const WAVE_IDS = ["saw", "tri", "sq50", "sq25", "sq12", "sine", "noise"];
 const waveIndexMap = Object.fromEntries(WAVE_IDS.map((id, i) => [id, i]));
 
-/** 最大同時発音数 (VOICES) の選択肢。既定 16 は PolySynth の DEFAULT_MAX_VOICES に一致 */
-const VOICE_VALUES = [4, 8, 16, 32];
-const VOICE_ITEMS = VOICE_VALUES.map(String);
-const VOICE_DEFAULT_INDEX = VOICE_VALUES.indexOf(16);
+/** 最大同時発音数 (VOICES) の選択肢。先頭は Monophonic (1 声) で、モノ/ポリの選択を 1 つの
+ *  ドロップダウンに集約する (MONO を選べばポリの発音数は隠れる)。チップチューンは 1 声主体
+ *  なので既定は MONO。ポリを選ぶと 4/8/16/32 声。値 1 は音源側 (chip/PolySynth) のモノ相当。 */
+const VOICE_VALUES = [1, 4, 8, 16, 32];
+const VOICE_ITEMS = VOICE_VALUES.map((v) => (v === 1 ? "MONO" : String(v)));
+const VOICE_DEFAULT_INDEX = VOICE_VALUES.indexOf(1);
 
 /** ── SYNTH の初期音色 (チップチューン向け既定値) ──
  *  波形 = SQ50 (チップチューンで最も汎用。SAW は使用頻度が低いため既定にはしない)。

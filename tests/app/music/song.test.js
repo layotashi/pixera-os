@@ -26,7 +26,7 @@ describe("song モデル (4 トラック固定)", () => {
     expect(song.getPatch(3).waveform).toBe("noise");
   });
 
-  it("全トラックの ADSR = MIN/MIN/MAX/MIN、VOL=50、VOICES=16", () => {
+  it("全トラックの ADSR = MIN/MIN/MAX/MIN、VOL=50、VOICES=1 (MONO 既定)", () => {
     for (let i = 0; i < 4; i++) {
       expect(song.getPatch(i)).toMatchObject({
         a: 0,
@@ -34,7 +34,7 @@ describe("song モデル (4 トラック固定)", () => {
         s: 100,
         r: 0,
         volume: 50,
-        maxVoices: 16,
+        maxVoices: 1,
       });
     }
   });

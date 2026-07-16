@@ -48,7 +48,9 @@ const DEFAULT_TRACKS = [
 /** 全トラック共通の既定 patch 値 (波形 / 名前以外)。 */
 const DEFAULT_ADSR = { a: 0, d: 0, s: 100, r: 0 };
 const DEFAULT_VOLUME = 50;
-const DEFAULT_MAX_VOICES = 16;
+/** 既定は Monophonic (1 声)。チップチューンは 1 チャンネル 1 声が基本で 1 声の需要が高く、
+ *  発音リソースの節約 (遅延回避) にもなる。ポリが要るトラックは SYNTH の VOICES で上げる。 */
+const DEFAULT_MAX_VOICES = 1;
 
 function makeTrack(i) {
   const d = DEFAULT_TRACKS[i] || { name: "TRACK" + (i + 1), waveform: "sq50" };

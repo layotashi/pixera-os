@@ -54,7 +54,7 @@ const DEFAULT_PATCH = {
   s: 100,
   r: 0,
   volume: 50,
-  maxVoices: 16,
+  maxVoices: 1, // 既定は Monophonic (チップチューン。live モデル DEFAULT_MAX_VOICES と一致)
 };
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
