@@ -82,6 +82,40 @@ export function getStepsPerBeat() {
 export function getPosition() {
   return _pos;
 }
+
+/**
+ * 保存用スナップショット (.song に含める全トランスポート状態)。位置・テンポ・ループ・拍子・
+ * メトロノームをまとめて返す。再生状態は保存しない (読み込み後は停止から始める)。
+ * @returns {{bpm:number,beatsPerBar:number,loopStart:number,loopEnd:number,loopOn:boolean,metronome:boolean,position:number}}
+ */
+export function snapshot() {
+  return {
+    bpm: _bpm,
+    beatsPerBar: _beatsPerBar,
+    loopStart: _loopStart,
+    loopEnd: _loopEnd,
+    loopOn: _loopOn,
+    metronome: _metroOn,
+    position: _pos,
+  };
+}
+
+/**
+ * スナップショットを適用する (.song 読み込み)。読み込み後は必ず停止状態にする。
+ * 各フィールドは防御的に扱い、欠けていれば現状を保つ。
+ * @param {object} s snapshot() 形式
+ */
+export function apply(s) {
+  if (!s || typeof s !== "object") return;
+  stop();
+  if (s.bpm > 0) _bpm = s.bpm;
+  if (s.beatsPerBar > 0) _beatsPerBar = s.beatsPerBar | 0;
+  if (Number.isFinite(s.loopStart) && Number.isFinite(s.loopEnd)) {
+    setLoop(s.loopStart, s.loopEnd, !!s.loopOn);
+  }
+  _metroOn = !!s.metronome;
+  if (Number.isFinite(s.position)) setPosition(s.position);
+}
 /** 位置を beat で設定する (再生中でも再アンカーする)。 */
 export function setPosition(beat) {
   _pos = beat;

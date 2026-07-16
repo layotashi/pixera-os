@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "d163370",
-  count: 333,
+  hash: "0ea95d6",
+  count: 334,
   notes: [
+    { date: "2026-07-16", hash: "0ea95d6", text: "New CHORD app shows the name of the chord currently sounding" },
     { date: "2026-07-16", hash: "d163370", text: "ROLL now has a left-side keyboard to play pitches and select notes by pitch" },
     { date: "2026-07-16", hash: "8f5005e", text: "ROLL now shows a play head that snaps to the grid" },
     { date: "2026-07-16", hash: "0f62a73", text: "TRACK now has per-track Solo and Mute" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-16", hash: "b6be8a8", text: "Fold view now requires at least one note" },
     { date: "2026-07-16", hash: "f4e470b", text: "Rubber-band select now previews the notes together as a chord" },
     { date: "2026-07-16", hash: "1ab6b91", text: "Playing notes now highlight on every track, and stop lighting up wrongly" },
-    { date: "2026-07-16", hash: "2e52697", text: "Space plays from the top, Shift plus Space resumes from the cursor" },
   ],
 };

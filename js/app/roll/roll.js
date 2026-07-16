@@ -1109,9 +1109,13 @@ song.onSelectionChange(onTrackSwitch);
  *  選択トラックを ROLL の編集バッファへ読み込む。旧データは残らない (混在しない)。 */
 function loadSong(data) {
   _loadingSong = true;
-  song.applySong(data); // 全トラックを一括差し替え + 選択設定 (ROLL の onTrackSwitch は抑止)
+  song.applySong(data); // 全トラックを一括差し替え + 選択 + solo/mute (ROLL の onTrackSwitch は抑止)
   _loadingSong = false;
-  loadClip(song.getClip(song.getSelectedIndex())); // 選択トラックを編集バッファへ
+  if (data.transport) transport.apply(data.transport); // bpm/loop/metro/拍子/位置を復元 (停止状態)
+  fold = !!(data.view && data.view.fold); // 表示状態 (fold) を復元
+  loadClip(song.getClip(song.getSelectedIndex())); // 選択トラックを編集バッファへ (playhead は 0 へ)
+  // playhead を保存位置へ (loadClip で 0 に戻された後に設定)。
+  _playheadCol = clampInt(Math.round(transport.getPosition() * STEPS_PER_BEAT), 0, COLS);
 }
 
 /** dirty なら破棄確認、無ければ即実行 */
@@ -1126,7 +1130,17 @@ function confirmDiscard(onOk) {
 /** 保存前に選択トラックの編集を song へ確定する (毎フレームの commit と冪等だが、次フレームを
  *  待たずスナップショットへ確実に載せるため保存時に明示する)。 */
 function flushForSave() {
+  finishPlacement(); // 浮いた配置を確定してから保存 (重なりを解決した状態で残す)
   commitSelectedClip();
+}
+
+/** 保存する完全な .song データを組み立てる: 4 トラック (音色/ノート/solo/mute) + 共有トランスポート
+ *  (bpm/loop/metro/拍子/位置) + view (fold)。ROLL が保存/読込を仕切るので各サービスからここで集める。 */
+function buildSongData() {
+  const s = song.snapshotSong(); // { selected, tracks:[{name,patch,notes,solo,mute}] }
+  s.transport = transport.snapshot();
+  s.view = { fold };
+  return s;
 }
 
 /** 名前を付けて保存 (FileDialog)。4 トラック丸ごとを .song として保存する。 */
@@ -1142,7 +1156,7 @@ function saveSongAs() {
       if (!path) return;
       currentFilePath = path;
       flushForSave();
-      VFS.writeFile(path, serializeSong(song.snapshotSong()));
+      VFS.writeFile(path, serializeSong(buildSongData()));
       isDirty = false;
       refreshTitle();
     },
@@ -1156,7 +1170,7 @@ function saveSong() {
     return;
   }
   flushForSave();
-  VFS.writeFile(currentFilePath, serializeSong(song.snapshotSong()));
+  VFS.writeFile(currentFilePath, serializeSong(buildSongData()));
   isDirty = false;
   refreshTitle();
 }

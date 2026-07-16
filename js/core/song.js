@@ -16,11 +16,15 @@
  * ── song 構造 ──
  *   {
  *     stepsPerBeat, steps,               // 全トラック共通の時間解像度 / パターン長
- *     selected,                          // 編集中トラック index (0..3)
+ *     selected,                          // 編集中 (アクティブ) トラック index (0..3)
+ *     transport: {                       // 共有トランスポート状態 (再生状態は保存しない)
+ *       bpm, beatsPerBar, loopStart, loopEnd, loopOn, metronome, position },
+ *     view: { fold },                    // ROLL などの表示状態
  *     tracks: [ {                        // 固定 4 トラック
  *       name,                            // 表示名 (省略可)
  *       patch: { waveform, a, d, s, r, volume, maxVoices },  // 音色 (トラック単位)
  *       notes: [ { pitch, start, len, vel } ],               // clip.js と同一のノート形状
+ *       solo, mute,                      // 発音制御 (1 トラック内で排他)
  *     } ]
  *   }
  *
@@ -38,7 +42,9 @@ import { createClip, DEFAULT_STEPS, DEFAULT_STEPS_PER_BEAT } from "./clip.js";
 
 // ── 形式メタ ──
 export const SONG_FORMAT = "pixera-song";
-export const SONG_VERSION = 1;
+/** v2: トランスポート (bpm/loop/metro/position/拍子)・view (fold)・トラックの solo/mute を追加。
+ *  v1 (それらを持たない) も既定値で補って読める (前方・後方互換)。 */
+export const SONG_VERSION = 2;
 /** 楽曲プロジェクトの拡張子 */
 export const SONG_EXT = ".song";
 /** 固定トラック数 (app/music/song.js の TRACK_COUNT と一致。将来可変) */
@@ -57,11 +63,49 @@ const DEFAULT_PATCH = {
   maxVoices: 1, // 既定は Monophonic (チップチューン。live モデル DEFAULT_MAX_VOICES と一致)
 };
 
+/** 全トラック共通のトランスポート状態の既定 (transport.js の既定に一致)。 */
+const DEFAULT_TRANSPORT = {
+  bpm: 120,
+  beatsPerBar: 4,
+  loopStart: 0,
+  loopEnd: 16,
+  loopOn: true,
+  metronome: false,
+  position: 0,
+};
+/** ROLL などの表示状態の既定。 */
+const DEFAULT_VIEW = { fold: false };
+
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)));
 
 function num(v, def) {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
+}
+
+function nonNeg(v, def) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : def;
+}
+
+/** トランスポート状態を正規化する (欠け/不正は既定へ)。 */
+function normalizeTransport(t) {
+  t = t && typeof t === "object" ? t : {};
+  return {
+    bpm: clampInt(num(t.bpm, DEFAULT_TRANSPORT.bpm), 1, 1000),
+    beatsPerBar: Math.max(1, Math.round(num(t.beatsPerBar, DEFAULT_TRANSPORT.beatsPerBar))),
+    loopStart: nonNeg(t.loopStart, DEFAULT_TRANSPORT.loopStart),
+    loopEnd: nonNeg(t.loopEnd, DEFAULT_TRANSPORT.loopEnd),
+    loopOn: t.loopOn === undefined ? DEFAULT_TRANSPORT.loopOn : !!t.loopOn,
+    metronome: !!t.metronome,
+    position: nonNeg(t.position, DEFAULT_TRANSPORT.position),
+  };
+}
+
+/** 表示状態を正規化する。 */
+function normalizeView(v) {
+  v = v && typeof v === "object" ? v : {};
+  return { fold: !!v.fold };
 }
 
 function posInt(v, def) {
@@ -106,15 +150,25 @@ export function createSong(src = {}) {
     const t = rawTracks[i] && typeof rawTracks[i] === "object" ? rawTracks[i] : {};
     // ノートは clip.js のスキーマ検証・整列を再利用する (モデルを二重に作らない)。
     const clip = createClip({ stepsPerBeat, steps, notes: t.notes });
+    const solo = !!t.solo;
     tracks.push({
       name: typeof t.name === "string" ? t.name : "",
       patch: normalizePatch(t.patch),
       notes: clip.notes,
+      solo, // SOLO / MUTE は 1 トラック内で排他 (SOLO 優先で正規化)
+      mute: !!t.mute && !solo,
     });
   }
 
   const selected = clampInt(num(src.selected, 0), 0, SONG_TRACK_COUNT - 1);
-  return { stepsPerBeat, steps, selected, tracks };
+  return {
+    stepsPerBeat,
+    steps,
+    selected,
+    transport: normalizeTransport(src.transport),
+    view: normalizeView(src.view),
+    tracks,
+  };
 }
 
 /**
@@ -132,10 +186,14 @@ export function serializeSong(song) {
       stepsPerBeat: s.stepsPerBeat,
       steps: s.steps,
       selected: s.selected,
+      transport: s.transport,
+      view: s.view,
       tracks: s.tracks.map((t) => ({
         name: t.name,
         patch: t.patch,
         notes: t.notes,
+        solo: t.solo,
+        mute: t.mute,
       })),
     },
     null,

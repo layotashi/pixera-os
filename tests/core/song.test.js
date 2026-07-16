@@ -84,6 +84,76 @@ describe("createSong — トラックを常に 4 本へ正規化", () => {
   });
 });
 
+describe("createSong — トランスポート / view / solo-mute (v2)", () => {
+  it("未指定なら既定のトランスポート / view / solo-mute を補う", () => {
+    const s = createSong();
+    expect(s.transport).toEqual({
+      bpm: 120,
+      beatsPerBar: 4,
+      loopStart: 0,
+      loopEnd: 16,
+      loopOn: true,
+      metronome: false,
+      position: 0,
+    });
+    expect(s.view).toEqual({ fold: false });
+    for (const t of s.tracks) {
+      expect(t.solo).toBe(false);
+      expect(t.mute).toBe(false);
+    }
+  });
+
+  it("指定したトランスポート / view / solo-mute を保持・正規化する", () => {
+    const s = createSong({
+      transport: { bpm: 140, loopStart: 4, loopEnd: 12, loopOn: false, metronome: true, position: 6 },
+      view: { fold: true },
+      tracks: [{ solo: true }, { mute: true }],
+    });
+    expect(s.transport.bpm).toBe(140);
+    expect(s.transport).toMatchObject({ loopStart: 4, loopEnd: 12, loopOn: false, metronome: true, position: 6 });
+    expect(s.view.fold).toBe(true);
+    expect(s.tracks[0].solo).toBe(true);
+    expect(s.tracks[1].mute).toBe(true);
+  });
+
+  it("SOLO と MUTE が両方 true なら SOLO 優先 (MUTE を落とす)", () => {
+    const s = createSong({ tracks: [{ solo: true, mute: true }] });
+    expect(s.tracks[0].solo).toBe(true);
+    expect(s.tracks[0].mute).toBe(false);
+  });
+
+  it("往復 (serialize→parse) でトランスポート / view / solo-mute が保たれる", () => {
+    const src = {
+      transport: { bpm: 90, beatsPerBar: 3, loopStart: 8, loopEnd: 24, loopOn: false, metronome: true, position: 10 },
+      view: { fold: true },
+      tracks: [{ solo: true }, {}, { mute: true }, {}],
+    };
+    const round = parseSong(serializeSong(src));
+    expect(round.transport).toEqual(createSong(src).transport);
+    expect(round.view.fold).toBe(true);
+    expect(round.tracks[0].solo).toBe(true);
+    expect(round.tracks[2].mute).toBe(true);
+  });
+
+  it("v1 形式 (transport/view/solo-mute 無し) も既定で補って読める (後方互換)", () => {
+    const v1 = JSON.stringify({
+      format: SONG_FORMAT,
+      version: 1,
+      stepsPerBeat: 4,
+      steps: 64,
+      selected: 1,
+      tracks: [{ name: "LEAD", patch: { waveform: "sq25" }, notes: [] }],
+    });
+    const s = parseSong(v1);
+    expect(s).not.toBeNull();
+    expect(s.selected).toBe(1);
+    expect(s.transport.bpm).toBe(120); // 既定
+    expect(s.view.fold).toBe(false);
+    expect(s.tracks[0].solo).toBe(false);
+    expect(s.tracks[0].mute).toBe(false);
+  });
+});
+
 describe("serializeSong / parseSong — 往復と防御的パース", () => {
   const src = {
     stepsPerBeat: 4,

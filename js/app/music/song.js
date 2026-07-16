@@ -308,6 +308,8 @@ export function snapshotSong() {
       name: t.name,
       patch: { ...t.patch },
       notes: t.clip.notes.map((n) => ({ ...n })),
+      solo: !!t.solo,
+      mute: !!t.mute,
     })),
   };
 }
@@ -335,6 +337,9 @@ export function applySong(data) {
       Object.assign(_tracks[i].patch, td.patch);
       _applyPatch(_tracks[i]); // 音源が生成済みなら即反映 (未生成なら getInstrument 時に反映)
     }
+    // SOLO/MUTE も復元 (両立しないよう SOLO 優先で正規化)。
+    _tracks[i].solo = !!(td && td.solo);
+    _tracks[i].mute = !!(td && td.mute) && !_tracks[i].solo;
   }
   let sel = Number.isFinite(Number(data && data.selected))
     ? Math.round(Number(data.selected))
