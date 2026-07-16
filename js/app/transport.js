@@ -225,8 +225,26 @@ function handleKeys() {
   }
 }
 
+/** NumberBox / トグルの値を共有トランスポートの状態へ同期する (外部での変更 = .song 読み込みや
+ *  SYNESTA 新規起動の初期化を UI へ反映する)。直接代入なので onChange は発火しない。ユーザーが
+ *  ウィジェットを操作しても onChange 経由でモデルが同値になるので競合しない。 */
+function syncWidgetsFromModel() {
+  const bpm = transport.getTempo();
+  if (bpmBox.value !== bpm) bpmBox.value = bpm;
+  const loop = transport.getLoop();
+  const bpb = transport.getBeatsPerBar();
+  const startBar = Math.floor(loop.start / bpb) + 1;
+  const endBar = Math.max(startBar, Math.round(loop.end / bpb));
+  if (startBarBox.value !== startBar) startBarBox.value = startBar;
+  if (endBarBox.value !== endBar) endBarBox.value = endBar;
+  if (loopToggle.value !== loop.on) loopToggle.value = loop.on;
+  const metro = transport.isMetronomeEnabled();
+  if (metroToggle.value !== metro) metroToggle.value = metro;
+}
+
 /** ボタン/アイコンの見た目を共有トランスポートの状態に同期する。 */
 function syncState() {
+  syncWidgetsFromModel();
   const playing = transport.isPlaying();
   playBtn.value = playing;
   playBtn.icon = playing ? "pause" : "play";

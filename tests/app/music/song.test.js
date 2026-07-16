@@ -78,6 +78,29 @@ describe("song モデル (4 トラック固定)", () => {
     expect(song.isSolo(0)).toBe(false);
   });
 
+  it("reset: ノート・音色・solo/mute・選択を既定へ戻し onReset を通知する", () => {
+    // 状態を汚す
+    song.setClipNotes(1, [{ pitch: 60, start: 0, len: 4, vel: 100 }]);
+    song.updatePatch(1, { waveform: "saw", volume: 90 });
+    song.setSolo(2, true);
+    song.setSelectedIndex(3);
+    let reset = 0;
+    song.onReset(() => reset++);
+
+    song.reset();
+
+    expect(reset).toBe(1); // onReset 通知
+    expect(song.getSelectedIndex()).toBe(0); // 選択は先頭へ
+    expect(song.getClip(1).notes).toEqual([]); // ノートは空
+    expect(song.getPatch(1).waveform).toBe("sq12"); // トラック 1 の既定波形
+    expect(song.getPatch(1).volume).toBe(50); // 既定 VOL
+    expect(song.isSolo(2)).toBe(false); // solo 解除
+    for (let i = 0; i < 4; i++) {
+      expect(song.getClip(i).notes).toEqual([]);
+      expect(song.isMute(i)).toBe(false);
+    }
+  });
+
   it("SOLO/MUTE の変更は onChange を通知する", () => {
     let n = 0;
     song.onChange(() => n++);

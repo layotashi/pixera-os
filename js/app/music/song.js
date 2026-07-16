@@ -289,6 +289,43 @@ export function onChange(cb) {
   _changeListeners.push(cb);
 }
 
+/** モデルの初期化 (reset) を購読する。ROLL が編集バッファを空へ戻すために使う。 */
+const _resetListeners = [];
+export function onReset(cb) {
+  _resetListeners.push(cb);
+}
+
+/**
+ * 全トラックを初期状態へ戻す (デスクトップ/ランチャーから SYNESTA を新規起動したとき用)。ノート・
+ * 音色・solo/mute・選択を既定へ戻し、発音を止める。音源・購読リスナは保持する (_resetSong と違い
+ * 実行時に使える)。onReset を先に呼んで ROLL の編集バッファを空にしてから、選択・変更を通知する
+ * (先に空にしないと、後続の onTrackSwitch が古いノートをモデルへ書き戻してしまう)。
+ */
+export function reset() {
+  allNotesOff();
+  const prev = _selected;
+  for (let i = 0; i < TRACK_COUNT; i++) {
+    const d = makeTrack(i); // 既定値 (名前 / 波形 / ADSR / volume / voices)
+    const t = _tracks[i];
+    t.name = d.name;
+    Object.assign(t.patch, d.patch);
+    t.clip = { steps: t.clip.steps, stepsPerBeat: t.clip.stepsPerBeat, notes: [] };
+    t.solo = false;
+    t.mute = false;
+    _applyPatch(t); // 音源へ既定音色を反映 (未生成なら getInstrument 時に反映)
+  }
+  _selected = 0;
+  for (const cb of _resetListeners) {
+    try {
+      cb();
+    } catch (e) {
+      console.error("[song] reset listener error:", e);
+    }
+  }
+  _notifyChange(); // patch 変更 → SYNTH 同期
+  _notifySel(0, prev); // 選択 → SYNTH/TRACK 同期 (ROLL の onTrackSwitch は空バッファ保存で無害)
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  永続化 (.song 保存 / 読込のブリッジ)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

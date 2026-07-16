@@ -308,6 +308,10 @@ WM.wmRegister(APP_NAME, () => {
     about:
       "A plain text editor. Type to write, and save notes to the filesystem.",
   });
+  // デスクトップ/ランチャーからの新規起動は必ず初期状態で表示する (factory は閉じた状態から
+  // 開くときだけ呼ばれるので再フォーカスでは走らない)。ファイルを開く経路 (notepadOpenFile) は
+  // この後に内容を上書きするので競合しない。
+  resetState();
   // エディタの縦(行)・横(桁)スクロール状態を WM 標準スクロールバー chrome へ接続する。
   // 以降 WM が枠端の縦横バー + ステッパー + コーナーを描画・操作し、エディタは本文と
   // content/viewport 同期に専念する。ステップは行/桁単位なので 1。

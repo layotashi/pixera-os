@@ -1118,6 +1118,18 @@ function loadSong(data) {
   _playheadCol = clampInt(Math.round(transport.getPosition() * STEPS_PER_BEAT), 0, COLS);
 }
 
+/** 共有ソングモデルがリセットされたら (SYNESTA を新規起動したとき)、ROLL も初期状態へ戻す:
+ *  編集バッファを空クリップで読み込み直し、fold・playhead・ファイル状態をまっさらにする。
+ *  song.reset は onTrackSwitch より先にこれを呼ぶので、古いノートがモデルへ書き戻されない。
+ *  ファイルから開く経路 (rollOpenSong) はリセットを経由しないので競合しない。 */
+song.onReset(() => {
+  fold = false;
+  currentFilePath = null;
+  isDirty = false;
+  loadClip(song.getClip(song.getSelectedIndex())); // 空クリップを読み込み、編集状態を初期化
+  refreshTitle();
+});
+
 /** dirty なら破棄確認、無ければ即実行 */
 function confirmDiscard(onOk) {
   if (!isDirty) {

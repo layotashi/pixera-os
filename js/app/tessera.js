@@ -1438,6 +1438,10 @@ WM.wmRegister(
         "selection and shortcuts all work, so you can live-code the piece. Esc exits.",
       onRelayout: relayout,
     });
+    // デスクトップ/ランチャーからの新規起動は必ず初期状態で表示する (factory は閉じた状態から
+    // 開くときだけ呼ばれるので再フォーカスでは走らない)。ファイルを開く経路はこの後に内容を
+    // 上書きするので競合しない。
+    resetState();
     refreshTitle();
     return winId;
   },

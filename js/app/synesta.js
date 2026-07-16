@@ -30,6 +30,8 @@ import {
   wmIsOpenByName,
   wmCloseByName,
 } from "../wm/index.js";
+import * as song from "./music/song.js";
+import * as transport from "./music/transport.js";
 
 const APP_NAME = "SYNESTA";
 
@@ -58,8 +60,18 @@ function isRunning() {
   return _session || openCount() > 0;
 }
 
-/** SYNESTA を起動する: メンバーを一括で開く (開いているものは最前面へ)。 */
+/** SYNESTA を起動する: メンバーを一括で開く (開いているものは最前面へ)。
+ *  閉じた状態からの新規起動時は共有の楽曲データ (ソングモデル・トランスポート・ROLL の編集
+ *  バッファ・表示状態) をまっさらに初期化する。既に起動中の再フォーカスでは初期化しない
+ *  (作業中の内容を消さない)。保存済み .song を FILES から開く経路は rollOpenSong が別途
+ *  内容を読み込むため、この初期化とは競合しない。 */
 function launch() {
+  if (!isRunning()) {
+    // 新規起動 (閉じた状態から) のときだけ共有の楽曲データを初期化する。song.reset が
+    // ROLL の編集バッファも onReset 経由で空へ戻し、SYNTH/TRACK は通知で既定表示へ揃う。
+    transport.reset();
+    song.reset();
+  }
   _session = true;
   for (const name of MEMBERS) wmOpenOrFocus(name);
 }

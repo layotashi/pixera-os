@@ -8,9 +8,11 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "0ea95d6",
-  count: 334,
+  hash: "be18f33",
+  count: 336,
   notes: [
+    { date: "2026-07-16", hash: "be18f33", text: "Launching SYNESTA, NOTEPAD, or TESSERA from its icon now starts fresh" },
+    { date: "2026-07-16", hash: "23fd6fb", text: "Saved songs now keep BPM, loop, metronome, playhead, fold, and solo/mute" },
     { date: "2026-07-16", hash: "0ea95d6", text: "New CHORD app shows the name of the chord currently sounding" },
     { date: "2026-07-16", hash: "d163370", text: "ROLL now has a left-side keyboard to play pitches and select notes by pitch" },
     { date: "2026-07-16", hash: "8f5005e", text: "ROLL now shows a play head that snaps to the grid" },
@@ -21,7 +23,5 @@ export const BUILD = {
     { date: "2026-07-16", hash: "c931872", text: "Ghost note checkerboard now always keeps white corners" },
     { date: "2026-07-16", hash: "a15aabf", text: "Notes now float while selected and only settle overlaps when you deselect" },
     { date: "2026-07-16", hash: "b6be8a8", text: "Fold view now requires at least one note" },
-    { date: "2026-07-16", hash: "f4e470b", text: "Rubber-band select now previews the notes together as a chord" },
-    { date: "2026-07-16", hash: "1ab6b91", text: "Playing notes now highlight on every track, and stop lighting up wrongly" },
   ],
 };

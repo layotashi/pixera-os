@@ -152,6 +152,24 @@ describe("playback clock", () => {
   });
 });
 
+describe("reset — 新規起動の初期化", () => {
+  it("bpm/ループ/メトロノーム/位置/再生状態をすべて既定へ戻す", () => {
+    T.setTempo(150);
+    T.setBeatsPerBar(3);
+    T.setLoop(4, 12, false);
+    T.setMetronomeEnabled(true);
+    T.setPosition(8);
+    T.play(8);
+    T.reset();
+    expect(T.isPlaying()).toBe(false);
+    expect(T.getTempo()).toBe(120);
+    expect(T.getBeatsPerBar()).toBe(4);
+    expect(T.getLoop()).toEqual({ start: 0, end: 16, on: true });
+    expect(T.isMetronomeEnabled()).toBe(false);
+    expect(T.getPosition()).toBe(0);
+  });
+});
+
 describe("toggleFromSpace — Space キーの共有仕様", () => {
   it("停止中の素 Space は 1.1.1 (beat 0) から再生", () => {
     T.setPosition(8); // 現在位置を先へ動かしておく

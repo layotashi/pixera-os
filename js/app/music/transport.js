@@ -306,6 +306,20 @@ export function rewind() {
   setPosition(_loopOn ? _loopStart : 0);
 }
 
+/** 全トランスポート状態を既定へ戻す (SYNESTA を新規起動したときの初期化)。停止・先頭・120BPM・
+ *  4/4・ループ 0..16 ON・メトロノーム OFF へ。読み込み (apply) とは別に「まっさら」へ戻す入口。 */
+export function reset() {
+  stop();
+  _bpm = 120;
+  _beatsPerBar = 4;
+  _loopStart = 0;
+  _loopEnd = 16;
+  _loopOn = true;
+  _metroOn = false;
+  _metroLastBeat = -Infinity;
+  setPosition(0);
+}
+
 /** 毎フレーム呼ぶ。位置を進め、ループが有効なら折り返す。冪等 (時刻ベース)。 */
 export function update() {
   if (!_playing) return;
